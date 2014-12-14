@@ -12,7 +12,7 @@ setup(
     # metadata for upload to PyPI
     author="Dimas Abreu Dutra",
     author_email="dimasadutra@gmail.com",
-    description="QW filtering library.",
+    description='"QW" filtering and smoothing library.',
     license="MIT",
     url="http://github.com/dimasad/qwfilter",
 )
