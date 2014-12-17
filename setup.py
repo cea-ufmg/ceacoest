@@ -7,7 +7,7 @@ setup(
     name="qwfilter",
     version="0.1",
     packages=find_packages(),
-    install_requires=["numpy"],
+    install_requires=["numpy", "scipy"],
     
     # metadata for upload to PyPI
     author="Dimas Abreu Dutra",
