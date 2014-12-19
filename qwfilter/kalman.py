@@ -14,12 +14,14 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
                  save_pred_xcov=True, save_likelihood=True, **options):
         self.model = model
         '''The underlying system model.'''
-
+        
         self.mean = np.asarray(mean, dtype=float)
         '''The latest filtered state mean.'''
-
+        assert (self.model.nx,) == self.mean.shape
+        
         self.cov = np.asarray(cov, dtype=float)
         '''The latest filtered state covariance.'''
+        assert (self.model.nx, self.model.nx) == self.cov.shape
         
         self.save_history = save_history
         '''Whether to save the filtering history or just the latest values.'''
@@ -126,7 +128,7 @@ def unscented_transform(f, mean, cov, return_xcov=False, kappa=0, sqrt='svd'):
     [input_dev, weights] = sigma_points(mean, cov, kappa, sqrt)
     
     output_sigma = np.array([f(mean + dev) for dev in input_dev])
-    output_mean = np.dot(output_sigma, weights)
+    output_mean = np.dot(weights, output_sigma)
     output_dev = output_sigma - output_mean
     output_cov = np.einsum('ki,kj,k', output_dev, output_dev, weights)
     
@@ -154,7 +156,7 @@ class DTUnscentedPredictor(DTUnscentedBase):
         '''Predict the state distribution at the next time index.'''
 
         aug_mean = np.hstack([self.mean, np.zeros(self.model.nw)])
-        aug_cov = scipy.linalg.block_diag([self.cov, self.model.w_cov])
+        aug_cov = scipy.linalg.block_diag(self.cov, self.model.w_cov)
         def aug_f(aug_x):
             x = aug_x[:self.model.nx]
             w = aug_x[self.model.nx:]
@@ -177,14 +179,14 @@ class DTUnscentedCorrector(DTUnscentedBase):
         '''Correct the state distribution, given the measurement vector.'''
         
         h_mean, h_cov, h_xcov = unscented_transform(
-            lambda x: self.model.h(k, x, u), self.mean, self.cov, 
+            lambda x: self.model.h(self.k, x, u), self.mean, self.cov, 
             return_xcov=True, kappa=self.kappa, sqrt=self.sqrt
         )
         
         y_cov = h_cov + self.model.v_cov
-        y_cov_chol = scipy.linalg.cholesky(ycov, lower=True)
-        y_cov_chol_inv = np.linalg.inv(y_cov_chol)
-        y_cov_inv = ycov_chol_inv.T.dot(y_cov_chol_inv)
+        y_cov_chol = scipy.linalg.cholesky(y_cov, lower=True)
+        y_cov_chol_inv = scipy.linalg.inv(y_cov_chol)
+        y_cov_inv = y_cov_chol_inv.T.dot(y_cov_chol_inv)
         
         err = y - h_mean
         gain = np.dot(h_xcov, y_cov_inv)

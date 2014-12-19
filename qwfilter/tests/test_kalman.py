@@ -1,6 +1,8 @@
 '''Kalman filtering / smoothing test module.'''
 
 
+import numpy as np
+
 from .. import kalman
 
 
@@ -15,7 +17,7 @@ class EulerDiscretizedAtmosphericReentry:
     
     def f(self, k, x, u=None, w=None):
         [x1, x2, x3, x4, x5] = x
-        [w1, w2] = w if w is not None else [0, 0]
+        [w1, w2] = w if w is not None else [0.0, 0.0]
         
         beta0 = -0.59783
         H0 = 13.406
@@ -33,20 +35,23 @@ class EulerDiscretizedAtmosphericReentry:
         dx3 = D * x3 + G * x1
         dx4 = D * x4 + G * x2
         dx5 = np.zeros_like(x5)
+        drift = np.array([dx1, dx2, dx3, dx4, dx5])
+        
+        perturb = np.zeros((5,) + np.shape(w1))
+        perturb[2] = w1
+        perturb[3] = w2
         
         T = 0.05
-        f = np.array([dx1, dx2, dx3, dx4, dx5])
-        perturb = np.array([0, 0, w1, w2, 0])
-        return x + f * T + perturb * np.sqrt(T)
+        return x + drift * T + perturb * np.sqrt(T)
     
     def h(self, t, x, u=None):
-        [x1, x2, x3, x4, x5] = x
+        [x1, x2, x3, x4, x5] = np.asarray(x)
         
         xr = 6374
         yr = 0
         
         rr = np.hypot(x1 - xr, x2 - yr)
-        theta = np.atan2(x2 - yr, x1 - xr)
+        theta = np.arctan2(x2 - yr, x1 - xr)
         
         return np.array([rr, theta])
 
@@ -54,9 +59,22 @@ class EulerDiscretizedAtmosphericReentry:
 def sim():
     model = EulerDiscretizedAtmosphericReentry()
     
-    x = np.zeros((4000, model.nx))
+    N = 4001
+    x = np.zeros((N, model.nx))
     x[0] = [6500.4, 349.14, -1.8093, -6.7967, 0.6932]
+    w = np.random.multivariate_normal([0, 0], model.w_cov, N)
     
-    for k, xk in enumerate(x[:-1]):
-        wk = np.random.multivariate_normal([0, 0], model.w_cov)
-        x[k+1] = model.f(k, xk, [], wk)
+    for k in range(N-1):
+        x[k+1] = model.f(k, x[k], [], w[k])
+    
+    v = np.random.multivariate_normal([0, 0], model.w_cov, N)
+    y = model.h(None, x.T).T + v
+    
+    return [x, y]
+
+
+if __name__ == '__main__':
+    x0_mean = [6500.4, 349.14, -1.8093, -6.7967, 0]
+    x0_cov = np.diag([1e-6, 1e-6, 1e-6, 1e-6, 1])
+    
+    [x_sim, y] = sim()
