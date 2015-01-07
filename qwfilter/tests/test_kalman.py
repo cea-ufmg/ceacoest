@@ -70,11 +70,14 @@ def sim():
     v = np.random.multivariate_normal([0, 0], model.w_cov, N)
     y = model.h(None, x.T).T + v
     
-    return [x, y]
+    return [x, y, model]
 
 
-if __name__ == '__main__':
+if __name__ == '__main__':    
+    [x_sim, y, model] = sim()
+    
     x0_mean = [6500.4, 349.14, -1.8093, -6.7967, 0]
     x0_cov = np.diag([1e-6, 1e-6, 1e-6, 1e-6, 1])
-    
-    [x_sim, y] = sim()
+    filter = kalman.DTUnscentedKalmanFilter(model, x0_mean, x0_cov)
+    filter.filter(y)
+
