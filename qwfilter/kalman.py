@@ -129,34 +129,34 @@ class UnscentedTransform:
         
         if sqrt == 'svd':
             [U, s, Vh] = scipy.linalg.svd((n + kappa) * cov)
-            cov_sqrt = (U * np.sqrt(s)).T
+            cov_sqrt = U * np.sqrt(s)
         elif sqrt == 'cholesky':
-            cov_sqrt = scipy.linalg.cholesky((n + kappa) * cov, lower=False)
+            cov_sqrt = scipy.linalg.cholesky((n + kappa) * cov, lower=True)
         elif isinstance(sqrt, collections.Callable):
             cov_sqrt = sqrt((n + kappa) * cov)
         else:
             raise ValueError("Unknown option for 'sqrt' argument.")
         
-        dev = np.vstack([cov_sqrt, -cov_sqrt])
+        dev = np.hstack((cov_sqrt, -cov_sqrt))
         weights = np.repeat(0.5 / (n + kappa), 2 * n)
         
         if kappa != 0:
-            dev = np.vstack([np.zeros_like(mean), dev])
+            dev = np.hstack((np.zeros_like(mean), dev))
             weights = np.hstack([kappa / (n + kappa), weights])
         
         self.input_dev = dev
         self.weights = weights
-        self.input_sigma = dev + mean
+        self.input_sigma = dev + mean[:, None]
         
         return (self.input_sigma, weights)
     
     def unscented_transform(self, f, mean, cov):
         [input_sigma, weights] = self._gen_sigma_points(mean, cov)
         
-        output_sigma = [f(x) for x in input_sigma]
-        output_mean = np.dot(weights, output_sigma)
-        output_dev = output_sigma - output_mean
-        output_cov = np.einsum('ki,kj,k', output_dev, output_dev, weights)
+        output_sigma = f(input_sigma)
+        output_mean = np.dot(output_sigma, weights)
+        output_dev = output_sigma - output_mean[:, None]
+        output_cov = np.einsum('ik,jk,k', output_dev, output_dev, weights)
         
         self.output_dev = output_dev
         return (output_mean, output_cov)
@@ -171,11 +171,7 @@ class UnscentedTransform:
                 "Unscented transform must be done before requesting xcov."
             )
         
-        return np.einsum('ki,kj,k', input_dev, output_dev, weights)
-
-# Transpose dev and sigma
-# Transpose sqrt
-# Apply f(sigma) vectorized
+        return np.einsum('ik,jk,k', input_dev, output_dev, weights)
 
 
 class DTUnscentedPredictor(DTKalmanFilterBase, UnscentedTransform):
