@@ -74,6 +74,10 @@ def test_linear_ut(ut, vec_4, cov_4, mat_4):
 
     desired_cov = mat_4.dot(cov_4).dot(mat_4.T)
     np.testing.assert_allclose(ut_cov, desired_cov)
+    
+    ut_xcov = ut.transform_xcov()
+    desired_xcov = cov_4.dot(mat_4.T)
+    np.testing.assert_allclose(ut_xcov, desired_xcov)
 
 
 class EulerDiscretizedAtmosphericReentry:
