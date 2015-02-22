@@ -2,8 +2,78 @@
 
 
 import numpy as np
+import numpy.testing
+import pytest
 
 from .. import kalman
+
+
+@pytest.fixture(params=range(3))
+def seed(request):
+    '''Random number generator seed.'''
+    np.random.seed(request.param)
+    return request.param
+
+
+@pytest.fixture
+def vec_4(seed):
+    '''Random length 4 vector.'''
+    return np.random.randn(4)
+
+
+@pytest.fixture
+def cov_4(seed):
+    '''Random 4x4 positive definite symmetric matrix.'''
+    A = np.random.randn(4, 10)
+    return A.dot(A.T)
+
+
+@pytest.fixture
+def mat_4(seed):
+    '''Random 4x4 matrix.'''
+    A = np.random.randn(4, 4)
+    return A
+
+
+@pytest.fixture(params=['cholesky', 'svd'])
+def ut_sqrt(request):
+    '''Unscented transform square root option.'''
+    return request.param
+
+
+@pytest.fixture(params=[0, 0.5, 1])
+def ut_kappa(request):
+    '''Unscented transform kappa parameter.'''
+    return request.param
+
+
+@pytest.fixture
+def ut(ut_sqrt, ut_kappa):
+    '''Standalone UnscentedTransform object.'''
+    return kalman.UnscentedTransform(sqrt=ut_sqrt, kappa=ut_kappa)
+
+
+def test_sigma_points(ut, vec_4, cov_4):
+    '''Test if the mean and covariance of the sigma-points is sane.'''
+    [sigma, weights] = ut.gen_sigma_points(vec_4, cov_4)
+    ut_mean = sigma.dot(weights)
+    np.testing.assert_allclose(ut_mean, vec_4)
+
+    dev = sigma - ut_mean[:, None]
+    ut_cov = np.einsum('ik,jk,k', dev, dev, weights)
+    np.testing.assert_allclose(ut_cov, cov_4)
+
+
+def test_linear_ut(ut, vec_4, cov_4, mat_4):
+    '''Test the unscented transform of a linear function.'''
+    f = lambda x: mat_4.dot(x) + 1
+    [ut_mean, ut_cov] = ut.unscented_transform(f, vec_4, cov_4)
+    
+    desired_mean = f(vec_4)
+    np.testing.assert_allclose(ut_mean, desired_mean)
+
+    desired_cov = mat_4.dot(cov_4).dot(mat_4.T)
+    np.testing.assert_allclose(ut_cov, desired_cov)
 
 
 class EulerDiscretizedAtmosphericReentry:

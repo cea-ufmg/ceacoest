@@ -118,7 +118,7 @@ class UnscentedTransform:
     def sqrt(self):
         return self.options.get('sqrt', 'svd')
     
-    def _gen_sigma_points(self, mean, cov):
+    def gen_sigma_points(self, mean, cov):
         '''Generate sigma-points deviations and weights.'''
         mean = np.asarray(mean)
         cov = np.asarray(cov)
@@ -141,7 +141,7 @@ class UnscentedTransform:
         weights = np.repeat(0.5 / (n + kappa), 2 * n)
         
         if kappa != 0:
-            dev = np.hstack((np.zeros_like(mean), dev))
+            dev = np.hstack((np.zeros((n, 1)), dev))
             weights = np.hstack([kappa / (n + kappa), weights])
         
         self.input_dev = dev
@@ -151,7 +151,7 @@ class UnscentedTransform:
         return (self.input_sigma, weights)
     
     def unscented_transform(self, f, mean, cov):
-        [input_sigma, weights] = self._gen_sigma_points(mean, cov)
+        [input_sigma, weights] = self.gen_sigma_points(mean, cov)
         
         output_sigma = f(input_sigma)
         output_mean = np.dot(output_sigma, weights)
