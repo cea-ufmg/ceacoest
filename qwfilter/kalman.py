@@ -5,6 +5,7 @@ import abc
 import collections
 
 import numpy as np
+import numpy.ma as ma
 import scipy.linalg
 
 
@@ -178,7 +179,7 @@ class DTUnscentedPredictor(DTKalmanFilterBase, UnscentedTransform):
     
     def predict(self, u=[]):
         '''Predict the state distribution at the next time index.'''
-
+        
         aug_mean = np.hstack([self.mean, np.zeros(self.model.nw)])
         aug_cov = scipy.linalg.block_diag(self.cov, self.model.w_cov)
         def aug_f(aug_x):
@@ -199,17 +200,28 @@ class DTUnscentedCorrector(DTKalmanFilterBase, UnscentedTransform):
     
     def correct(self, y, u=[]):
         '''Correct the state distribution, given the measurement vector.'''
+        mask = ma.getmaskarray(y)
+        if np.all(mask):
+            return
         
-        h_mean, h_cov = self.unscented_transform(
-            lambda x: self.model.h(self.k, x, u), self.mean, self.cov
-        )
+        #Remove inactive outputs
+        active = ~mask
+        y = ma.compressed(y)
+        v_cov = self.model.v_cov[np.ix_(active, active)]
+        def meas_fun(x):
+            return self.model.h(self.k, x, u)[active]
+        
+        #Perform unscented transform
+        h_mean, h_cov = self.unscented_transform(meas_fun, self.mean, self.cov)
         h_xcov = self.transform_xcov()
         
-        y_cov = h_cov + self.model.v_cov
+        #Factorize covariance
+        y_cov = h_cov + v_cov
         y_cov_chol = scipy.linalg.cholesky(y_cov, lower=True)
         y_cov_chol_inv = scipy.linalg.inv(y_cov_chol)
         y_cov_inv = y_cov_chol_inv.T.dot(y_cov_chol_inv)
         
+        #Perform correction
         err = y - h_mean
         gain = np.dot(h_xcov, y_cov_inv)
         pred_mean = self.mean + gain.dot(err)

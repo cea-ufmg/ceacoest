@@ -2,6 +2,7 @@
 
 
 import numpy as np
+import numpy.ma as ma
 import numpy.testing
 import pytest
 
@@ -135,14 +136,19 @@ def sim():
     
     N = 4001
     x = np.zeros((N, model.nx))
-    x[0] = [6500.4, 349.14, -1.8093, -6.7967, 0.6932]
+    x[0] = np.random.multivariate_normal(
+        [6500.4, 349.14, -1.8093, -6.7967, 0.6932], 
+        np.diag([1e-6, 1e-6, 1e-6, 1e-6, 0])
+    )
     w = np.random.multivariate_normal([0, 0], model.w_cov, N)
     
     for k in range(N-1):
         x[k+1] = model.f(k, x[k], [], w[k])
-    
-    v = np.random.multivariate_normal([0, 0], model.w_cov, N)
-    y = model.h(None, x.T).T + v
+
+    y = ma.zeros((N, 2))
+    v = np.random.multivariate_normal([0, 0], model.w_cov, (N + 1) // 2)
+    y[::2] = model.h(None, x[::2].T).T + v
+    y[1::2] = ma.masked
     
     return [x, y, model]
 
@@ -152,6 +158,8 @@ if __name__ == '__main__':
     
     x0_mean = [6500.4, 349.14, -1.8093, -6.7967, 0]
     x0_cov = np.diag([1e-6, 1e-6, 1e-6, 1e-6, 1])
-    filter = kalman.DTUnscentedKalmanFilter(model, x0_mean, x0_cov)
+    filter = kalman.DTUnscentedKalmanFilter(
+        model, x0_mean, x0_cov, sqrt='cholesky', kappa=0.5
+    )
     filter.filter(y)
 
