@@ -8,6 +8,7 @@ setup(
     version="0.1",
     packages=find_packages(),
     install_requires=["numpy", "scipy"],
+    test_requires=["pytest"],
     
     # metadata for upload to PyPI
     author="Dimas Abreu Dutra",

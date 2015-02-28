@@ -6,7 +6,7 @@ import numpy.ma as ma
 import numpy.testing
 import pytest
 
-from .. import kalman
+from qwfilter import kalman
 
 
 @pytest.fixture(params=range(3))
@@ -153,7 +153,7 @@ def sim():
     return [x, y, model]
 
 
-if __name__ == '__main__':    
+def run_filter():
     [x_sim, y, model] = sim()
     
     x0_mean = [6500.4, 349.14, -1.8093, -6.7967, 0]
@@ -162,4 +162,6 @@ if __name__ == '__main__':
         model, x0_mean, x0_cov, sqrt='cholesky', kappa=0.5
     )
     filter.filter(y)
+
+    return [filter, x_sim, y, model]
 

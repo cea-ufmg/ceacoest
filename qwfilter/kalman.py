@@ -24,8 +24,7 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         '''The latest filtered state covariance.'''
         assert (self.model.nx, self.model.nx) == self.cov.shape
         
-        self.options = options
-        '''Filter options.'''
+        self.initialize_options(options)
         
         self.k = 0
         '''The latest working sample number.'''
@@ -50,21 +49,23 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         if self.save_likelihood:
             self.loglikelihood = 0
             '''Measurement log-likelihood.'''
- 
-    @property
-    def save_history(self):
-        '''Whether to save the filtering history or just the latest values.'''
-        return self.options.get('save_history', True)
+    
+    def initialize_options(self, options):
+        #Initialize any other inherited options
+        try:
+            super().set_options(options)
+        except AttributeError:
+            pass
+        
+        #Whether to save the filtering history or just the latest values
+        self.save_history = options.get('save_history', True)
+        
+        #Whether to save the measurement likelihood
+        self.save_likelihood = options.get('save_likelihood', True)
 
-    @property
-    def save_likelihood(self):
-        '''Whether to save the measurement likelihood.'''
-        return self.options.get('save_likelihood', True)
-
-    @property
-    def save_pred_xcov(self):
-        '''Whether to save the prediction cross-covariance matrices.'''
-        return self.save_history and self.options.get('save_pred_xcov', True)
+        #Whether to save the prediction cross-covariance matrices
+        self.save_pred_xcov = (self.save_history and 
+                               options.get('save_pred_xcov', True))
     
     def _save_prediction(self, mean, cov):
         '''Save the prection data and update time index.'''
@@ -106,18 +107,57 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         self.correct(y[-1], [] if u is None else u[-1])
 
 
+def svd_sqrt(mat):
+    '''SVD-based square root of a symmetric positive-semidefinite matrix.
+
+    Used for unscented transform.
+    
+    Example
+    -------
+    Generate a random positive-semidefinite symmetric matrix.
+    >>> A = np.random.randn(4, 4)
+    >>> Q = np.dot(A, A.T)
+    
+    The suare root should satisfy SS' = Q
+    >>> S = svd_sqrt(Q)
+    >>> SST = np.dot(S, S.T)
+    >>> np.testing.assert_allclose(Q, SST)
+    
+    '''
+    [U, s, Vh] = scipy.linalg.svd(mat)
+    return U * np.sqrt(s)
+
+
+def cholesky_sqrt(mat):
+    '''Lower triangular Cholesky decomposition for unscented transform.'''
+    return scipy.linalg.cholesky(mat, lower=True)
+
+
 class UnscentedTransform:
     
     def __init__(self, **options):
-        self.options = options
+        self.initialize_options(options)
     
-    @property
-    def kappa(self):
-        return self.options.get('kappa', 0.0)
-    
-    @property
-    def sqrt(self):
-        return self.options.get('sqrt', 'svd')
+    def initialize_options(self, options):
+        #Initialize any other inherited options
+        try:
+            super().set_options(options)
+        except AttributeError:
+            pass
+        
+        #Weight of center sigma point
+        self.kappa = options.get('kappa', 0.0)
+
+        #Matrix "square root" used to generate sigma points.
+        sqrt_opt = options.get('sqrt', 'svd')
+        if sqrt_opt == 'svd':
+            self.sqrt = svd_sqrt
+        elif sqrt_opt == 'cholesky':
+            self.sqrt = cholesky_sqrt
+        elif isinstance(sqrt_opt, collections.Callable):
+            self.sqrt = sqrt_opt
+        else:
+            raise ValueError("Invalid value for 'sqrt' option.")
     
     def gen_sigma_points(self, mean, cov):
         '''Generate sigma-points deviations and weights.'''
@@ -125,19 +165,9 @@ class UnscentedTransform:
         cov = np.asarray(cov)
         n = len(mean)
         kappa = self.kappa
-        sqrt = self.sqrt
         assert n + kappa != 0
-        
-        if sqrt == 'svd':
-            [U, s, Vh] = scipy.linalg.svd((n + kappa) * cov)
-            cov_sqrt = U * np.sqrt(s)
-        elif sqrt == 'cholesky':
-            cov_sqrt = scipy.linalg.cholesky((n + kappa) * cov, lower=True)
-        elif isinstance(sqrt, collections.Callable):
-            cov_sqrt = sqrt((n + kappa) * cov)
-        else:
-            raise ValueError("Unknown option for 'sqrt' argument.")
-        
+    
+        cov_sqrt = self.sqrt((n + kappa) * cov)
         dev = np.hstack((cov_sqrt, -cov_sqrt))
         weights = np.repeat(0.5 / (n + kappa), 2 * n)
         
