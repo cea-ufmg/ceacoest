@@ -6,7 +6,7 @@ import numpy.ma as ma
 import numpy.testing
 import pytest
 
-from qwfilter import kalman
+from qwfilter import kalman, utils
 
 
 @pytest.fixture(params=range(3))
@@ -42,6 +42,15 @@ def ut_sqrt(request):
     return request.param
 
 
+@pytest.fixture
+def ut_sqrt_func(ut_sqrt):
+    '''Function corresponding to the square root option.'''
+    if ut_sqrt == 'svd':
+        return kalman.svd_sqrt
+    elif ut_sqrt == 'cholesky':
+        return kalman.cholesky_sqrt
+
+
 @pytest.fixture(params=[0, 0.5, 1])
 def ut_kappa(request):
     '''Unscented transform kappa parameter.'''
@@ -52,6 +61,24 @@ def ut_kappa(request):
 def ut(ut_sqrt, ut_kappa):
     '''Standalone UnscentedTransform object.'''
     return kalman.UnscentedTransform(sqrt=ut_sqrt, kappa=ut_kappa)
+
+
+def test_ut_sqrt(ut_sqrt_func, cov_4):
+    S = ut_sqrt_func(cov_4)
+    SST = np.dot(S, S.T)
+    np.testing.assert_allclose(SST, cov_4)
+
+
+def test_ut_sqrt_grad(ut_sqrt_func, cov_4):
+    S = ut_sqrt_func(cov_4)
+    cov_grad = np.zeros(cov_4.shape + (np.prod(cov_4.shape),))
+    for i, j in np.ndindex(*cov_4.shape):
+        cov_grad[i, j, np.ravel_multi_index((i,j), cov_4.shape)] = 1
+    
+    grad = kalman.ut_sqrt_grad(S, cov_grad)
+    numerical_grad = utils.central_diff(ut_sqrt_func, cov_4)
+    numerical_grad.shape = cov_4.shape + (-1,)
+    np.assert_allclose(grad, numerical_grad)
 
 
 def test_sigma_points(ut, vec_4, cov_4):
@@ -76,9 +103,9 @@ def test_linear_ut(ut, vec_4, cov_4, mat_4):
     desired_cov = mat_4.dot(cov_4).dot(mat_4.T)
     np.testing.assert_allclose(ut_cov, desired_cov)
     
-    ut_xcov = ut.transform_xcov()
-    desired_xcov = cov_4.dot(mat_4.T)
-    np.testing.assert_allclose(ut_xcov, desired_xcov)
+    ut_crosscov = ut.transform_crosscov()
+    desired_crosscov = cov_4.dot(mat_4.T)
+    np.testing.assert_allclose(ut_crosscov, desired_crosscov)
 
 
 class EulerDiscretizedAtmosphericReentry:
@@ -87,8 +114,8 @@ class EulerDiscretizedAtmosphericReentry:
     nw = 2
     ny = 2
     
-    w_cov = np.diag([2.4064e-5, 2.4064e-5])
-    v_cov = np.diag([0.017, 0.001]) ** 2
+    wcov = np.diag([2.4064e-5, 2.4064e-5])
+    vcov = np.diag([0.017, 0.001]) ** 2
     
     def f(self, k, x, u=None, w=None):
         [x1, x2, x3, x4, x5] = x

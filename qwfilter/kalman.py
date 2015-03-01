@@ -41,31 +41,52 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
             
             self.corr_cov = [self.cov]
             '''Corrected state covariance history.'''
-    
-        if self.save_pred_xcov:
-            self.pred_xcov = []
+        
+        if self.save_pred_crosscov:
+            self.pred_crosscov = []
             '''State prediction cross-covariance history.'''
         
         if self.save_likelihood:
             self.loglikelihood = 0
             '''Measurement log-likelihood.'''
+        
+        if self.calculate_gradients:
+            self.cov_grad = np.zeros((self.model.nx, self.model.nx))
     
     def initialize_options(self, options):
+        '''Initialize and validate filter options, given as a dictionary.
+        
+        Options
+        -------
+        save_history :
+            Whether to save the filtering history or just the latest values.
+            True by default.
+        save_likelihood :
+            Whether to save the measurement likelihood. True by default.
+        save_pred_crosscov :
+            Whether to save the prediction cross-covariance matrices. True by
+            default, automatically false if save_history is false.
+        calculate_gradients :
+            Whether to calculate the filter gradients with respect to the
+            parameter vector p. False by default.
+        initial_mean_grad : (nx,) array_like
+            Gradient of mean of inital states. Zero by default.
+        
+        '''
         #Initialize any other inherited options
         try:
             super().set_options(options)
         except AttributeError:
             pass
         
-        #Whether to save the filtering history or just the latest values
         self.save_history = options.get('save_history', True)
-        
-        #Whether to save the measurement likelihood
         self.save_likelihood = options.get('save_likelihood', True)
-
-        #Whether to save the prediction cross-covariance matrices
-        self.save_pred_xcov = (self.save_history and 
-                               options.get('save_pred_xcov', True))
+        self.save_pred_crosscov = (self.save_history and 
+                               options.get('save_pred_crosscov', True))
+        self.calculate_gradients = options.get('calculate_gradients', False)
+        if self.calculate_gradients:
+            self.mean_grad = options.get('initial_mean_grad',
+                                         np.zeros(self.model.nx))
     
     def _save_prediction(self, mean, cov):
         '''Save the prection data and update time index.'''
@@ -133,22 +154,47 @@ def cholesky_sqrt(mat):
     return scipy.linalg.cholesky(mat, lower=True)
 
 
+def ut_sqrt_grad(sqrt, mat_grad):
+    n, m = mat_grad.shape[1:]
+    ret = np.zeros_like((n, n, m))
+    for k in range(m):
+        A = np.zeros((n,) * 4)
+        b = mat_grad[..., k].flatten()
+        for i, j in np.ndindex(n, n):
+            A[i, j, j] += sqrt[i]
+            A[i, j, i] += sqrt[j]
+        x = scipy.linalg.solve(A.reshape((n * n, n * n)), b)
+        ret[..., k] = x.reshape((n, n))
+    return ret
+
+
 class UnscentedTransform:
     
     def __init__(self, **options):
         self.initialize_options(options)
     
     def initialize_options(self, options):
+        '''Initialize and validate filter options, given as a dictionary.
+        
+        Options
+        -------
+        kappa :
+            Weight of the center sigma point. Zero by default.
+        sqrt : str or callable
+            Matrix "square root" used to generate sigma points. If equal to
+            'svd' or 'cholesky' then svd_sqrt or cholesky_sqrt are used,
+            respectively. Otherwise, if it is a callable the object is used.
+            Equal to 'svd' by default.
+        
+        '''
         #Initialize any other inherited options
         try:
             super().set_options(options)
         except AttributeError:
             pass
         
-        #Weight of center sigma point
         self.kappa = options.get('kappa', 0.0)
-
-        #Matrix "square root" used to generate sigma points.
+        
         sqrt_opt = options.get('sqrt', 'svd')
         if sqrt_opt == 'svd':
             self.sqrt = svd_sqrt
@@ -166,7 +212,7 @@ class UnscentedTransform:
         n = len(mean)
         kappa = self.kappa
         assert n + kappa != 0
-    
+        
         cov_sqrt = self.sqrt((n + kappa) * cov)
         dev = np.hstack((cov_sqrt, -cov_sqrt))
         weights = np.repeat(0.5 / (n + kappa), 2 * n)
@@ -192,38 +238,70 @@ class UnscentedTransform:
         self.output_dev = output_dev
         return (output_mean, output_cov)
     
-    def transform_xcov(self):
+    def transform_crosscov(self):
         try:
             input_dev = self.input_dev
             output_dev = self.output_dev
             weights = self.weights
         except AttributeError:
             raise RuntimeError(
-                "Unscented transform must be done before requesting xcov."
+                "Unscented transform must be done before requesting crosscov."
             )
         
         return np.einsum('ik,jk,k', input_dev, output_dev, weights)
 
+    def transform_grad(self, f_grad, mean_grad, cov_grad):
+        raise NotImplementedError()
 
+    
 class DTUnscentedPredictor(DTKalmanFilterBase, UnscentedTransform):
     
     def predict(self, u=[]):
         '''Predict the state distribution at the next time index.'''
         
-        aug_mean = np.hstack([self.mean, np.zeros(self.model.nw)])
-        aug_cov = scipy.linalg.block_diag(self.cov, self.model.w_cov)
-        def aug_f(aug_x):
-            x = aug_x[:self.model.nx]
-            w = aug_x[self.model.nx:]
+        aug_mean = np.concatenate([self.mean, np.zeros(self.model.nw)])
+        aug_cov = scipy.linalg.block_diag(self.cov, self.model.wcov)
+        def faug(xaug):
+            x = xaug[:self.model.nx]
+            w = xaug[self.model.nx:]
             return self.model.f(self.k, x, u, w)
         
-        pred_mean, pred_cov = self.unscented_transform(aug_f, aug_mean, aug_cov)
-        self._save_prediction(pred_mean, pred_cov)
+        pred_mean, pred_cov = self.unscented_transform(faug, aug_mean, aug_cov)
         
-        if self.save_pred_xcov:
-            aug_xcov = self.transform_xcov()
-            pred_xcov = aug_xcov[:self.model.nx]
-            self.pred_xcov.append(pred_xcov)
+        if self.calculate_gradients:
+            self._calculate_prediction_grad(u, aug_mean, aug_cov)
+        
+        if self.save_pred_crosscov:
+            aug_crosscov = self.transform_crosscov()
+            pred_crosscov = aug_crosscov[:self.model.nx]
+            self.pred_crosscov.append(pred_crosscov)
+        
+        self._save_prediction(pred_mean, pred_cov)
+    
+    def _calculate_prediction_grad(self, u=[]):
+        nx = self.model.nx
+        nw = self.model.nw
+        npar = self.model.np
+        
+        aug_mean_grad = np.concatenate([self.mean_grad, np.zeros(nw, npar)])
+        aug_cov_grad = np.zeros((nx + nw, nx + nw, npar))
+        aug_cov_grad[:nx, :nx] = self.cov_grad
+        aug_cov_grad[nx:, nx:] = self.model.dwcov_dp
+        
+        def faug_grad(xaug, dxaug_dp):
+            x = xaug[:nx]
+            w = xaug[nx:]
+            dx_dp = dxaug_dp[:nx]
+            dw_dp = dxaug_dp[nx:]
+            
+            df_dp = self.model.df_dp(self.k, x, u, w)
+            df_dx = self.model.df_dx(self.k, x, u, w)
+            df_dw = self.model.df_dw(self.k, x, u, w)
+            return (df_dp + np.einsum('...x,x...', df_dx, dx_dp) +
+                    np.einsum('...w,w...', df_dw, dw_dp))
+        
+        grads = self.transform_grad(faug_grad, aug_mean_grad, aug_cov_grad)
+        self.mean_grad, self.cov_grad = grads
 
 
 class DTUnscentedCorrector(DTKalmanFilterBase, UnscentedTransform):
@@ -237,30 +315,30 @@ class DTUnscentedCorrector(DTKalmanFilterBase, UnscentedTransform):
         #Remove inactive outputs
         active = ~mask
         y = ma.compressed(y)
-        v_cov = self.model.v_cov[np.ix_(active, active)]
+        vcov = self.model.vcov[np.ix_(active, active)]
         def meas_fun(x):
             return self.model.h(self.k, x, u)[active]
         
         #Perform unscented transform
-        h_mean, h_cov = self.unscented_transform(meas_fun, self.mean, self.cov)
-        h_xcov = self.transform_xcov()
+        hmean, hcov = self.unscented_transform(meas_fun, self.mean, self.cov)
+        hcrosscov = self.transform_crosscov()
         
         #Factorize covariance
-        y_cov = h_cov + v_cov
-        y_cov_chol = scipy.linalg.cholesky(y_cov, lower=True)
-        y_cov_chol_inv = scipy.linalg.inv(y_cov_chol)
-        y_cov_inv = y_cov_chol_inv.T.dot(y_cov_chol_inv)
+        ycov = hcov + vcov
+        ycov_chol = scipy.linalg.cholesky(ycov, lower=True)
+        ycov_chol_inv = scipy.linalg.inv(ycov_chol)
+        ycov_inv = ycov_chol_inv.T.dot(ycov_chol_inv)
         
         #Perform correction
-        err = y - h_mean
-        gain = np.dot(h_xcov, y_cov_inv)
+        err = y - hmean
+        gain = np.dot(hcrosscov, ycov_inv)
         pred_mean = self.mean + gain.dot(err)
-        pred_cov = self.cov - gain.dot(y_cov).dot(gain.T)
+        pred_cov = self.cov - gain.dot(ycov).dot(gain.T)
         self._save_correction(pred_mean, pred_cov)
         
         if self.save_likelihood:
-            self.loglikelihood += (-0.5 * err.dot(y_cov_inv).dot(err) +
-                                   -np.log(np.diag(y_cov_chol)).sum())
+            self.loglikelihood += (-0.5 * err.dot(ycov_inv).dot(err) +
+                                   -np.log(np.diag(ycov_chol)).sum())
 
 
 class DTUnscentedKalmanFilter(DTUnscentedPredictor, DTUnscentedCorrector):
