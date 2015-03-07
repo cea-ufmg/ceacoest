@@ -69,16 +69,12 @@ def test_ut_sqrt(ut_sqrt_func, cov_4):
     np.testing.assert_allclose(SST, cov_4)
 
 
-def test_ut_sqrt_grad(ut_sqrt_func, cov_4):
-    S = ut_sqrt_func(cov_4)
-    cov_grad = np.zeros(cov_4.shape + (np.prod(cov_4.shape),))
-    for i, j in np.ndindex(*cov_4.shape):
-        cov_grad[i, j, np.ravel_multi_index((i,j), cov_4.shape)] = 1
+def test_cholesky_sqrt_jac(cov_4):
+    S = kalman.cholesky_sqrt(cov_4)
     
-    grad = kalman.ut_sqrt_grad(S, cov_grad)
-    numerical_grad = utils.central_diff(ut_sqrt_func, cov_4)
-    numerical_grad.shape = cov_4.shape + (-1,)
-    np.assert_allclose(grad, numerical_grad)
+    jac = kalman.cholesky_sqrt_jac(S)
+    numerical_jac = utils.central_diff(kalman.cholesky_sqrt, cov_4)
+    np.testing.assert_allclose(jac, numerical_jac)
 
 
 def test_sigma_points(ut, vec_4, cov_4):

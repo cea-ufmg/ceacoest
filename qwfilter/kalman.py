@@ -154,6 +154,32 @@ def cholesky_sqrt(mat):
     return scipy.linalg.cholesky(mat, lower=True)
 
 
+def cholesky_sqrt_jac(sqrt):
+    '''Jacobian of lower triangular Cholesky decomposition.'''
+    n = len(sqrt)
+    i, j = np.tril_indices_from(sqrt)
+    nnz = len(i)
+    k = np.arange(n)
+    ix, jx, kx = np.ix_(i, j, k)
+    
+    A = np.zeros((n, n, n, n))
+    A[ix, jx, ix, kx] = sqrt[jx, kx]
+    A[ix, jx, jx, kx] += sqrt[ix, kx]
+    Atril = A[i, j][..., i, j]
+    Atril_inv = scipy.linalg.inv(Atril)
+    
+    B = np.zeros((nnz, n, n))
+    B[np.arange(nnz), i, j] = 1
+    
+    D_tril = np.einsum('ab,bcd', Atril_inv, B)
+    D = np.zeros((n, n, n, n))
+    D[i, j] = D_tril
+
+    i_offdiag, j_offdiag = np.tril_indices_from(sqrt, -1)
+    D[..., j_offdiag, i_offdiag] = D[..., i_offdiag, j_offdiag]
+    return D
+
+
 def ut_sqrt_grad(sqrt, mat_grad):
     n, m = mat_grad.shape[1:]
     ret = np.zeros_like((n, n, m))
