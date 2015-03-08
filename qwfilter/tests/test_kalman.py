@@ -16,23 +16,29 @@ def seed(request):
     return request.param
 
 
-@pytest.fixture
-def vec_4(seed):
-    '''Random length 4 vector.'''
-    return np.random.randn(4)
+@pytest.fixture(params=range(1, 5))
+def n(request):
+    '''Length of test vector or matrix.'''
+    return request.param
 
 
 @pytest.fixture
-def cov_4(seed):
-    '''Random 4x4 positive definite symmetric matrix.'''
-    A = np.random.randn(4, 10)
-    return A.dot(A.T)
+def vec(seed, n):
+    '''Random vector.'''
+    return np.random.randn(n)
 
 
 @pytest.fixture
-def mat_4(seed):
-    '''Random 4x4 matrix.'''
-    A = np.random.randn(4, 4)
+def cov(seed, n):
+    '''Random n by n positive definite symmetric matrix.'''
+    M = np.random.randn(n, n + 1)
+    return M.dot(M.T)
+
+
+@pytest.fixture
+def mat(seed, n):
+    '''Random n by n matrix.'''
+    A = np.random.randn(n, n)
     return A
 
 
@@ -63,44 +69,51 @@ def ut(ut_sqrt, ut_kappa):
     return kalman.UnscentedTransform(sqrt=ut_sqrt, kappa=ut_kappa)
 
 
-def test_ut_sqrt(ut_sqrt_func, cov_4):
-    S = ut_sqrt_func(cov_4)
+def test_ut_sqrt(ut_sqrt_func, cov):
+    S = ut_sqrt_func(cov)
     SST = np.dot(S, S.T)
-    np.testing.assert_allclose(SST, cov_4)
+    np.testing.assert_allclose(SST, cov)
 
 
-def test_cholesky_sqrt_jac(cov_4):
-    S = kalman.cholesky_sqrt(cov_4)
+def test_cholesky_sqrt_jac(cov, n):
+    S = kalman.cholesky_sqrt(cov)
+    def f(x):
+        Q = cov.copy()
+        Q[i,j] += x
+        if i != j:
+            Q[j, i] += x
+        return kalman.cholesky_sqrt(Q)
     
     jac = kalman.cholesky_sqrt_jac(S)
-    numerical_jac = utils.central_diff(kalman.cholesky_sqrt, cov_4)
-    np.testing.assert_allclose(jac, numerical_jac)
+    for i, j in np.ndindex(n, n):
+        numerical = utils.central_diff(f, 0)
+        np.testing.assert_allclose(jac[..., i, j], numerical, atol=1e-7)
 
 
-def test_sigma_points(ut, vec_4, cov_4):
+def test_sigma_points(ut, vec, cov):
     '''Test if the mean and covariance of the sigma-points is sane.'''
-    [sigma, weights] = ut.gen_sigma_points(vec_4, cov_4)
+    [sigma, weights] = ut.gen_sigma_points(vec, cov)
     ut_mean = sigma.dot(weights)
-    np.testing.assert_allclose(ut_mean, vec_4)
+    np.testing.assert_allclose(ut_mean, vec)
 
     dev = sigma - ut_mean[:, None]
     ut_cov = np.einsum('ik,jk,k', dev, dev, weights)
-    np.testing.assert_allclose(ut_cov, cov_4)
+    np.testing.assert_allclose(ut_cov, cov)
 
 
-def test_linear_ut(ut, vec_4, cov_4, mat_4):
+def test_linear_ut(ut, vec, cov, mat):
     '''Test the unscented transform of a linear function.'''
-    f = lambda x: mat_4.dot(x) + 1
-    [ut_mean, ut_cov] = ut.unscented_transform(f, vec_4, cov_4)
+    f = lambda x: mat.dot(x) + 1
+    [ut_mean, ut_cov] = ut.unscented_transform(f, vec, cov)
     
-    desired_mean = f(vec_4)
+    desired_mean = f(vec)
     np.testing.assert_allclose(ut_mean, desired_mean)
 
-    desired_cov = mat_4.dot(cov_4).dot(mat_4.T)
+    desired_cov = mat.dot(cov).dot(mat.T)
     np.testing.assert_allclose(ut_cov, desired_cov)
     
     ut_crosscov = ut.transform_crosscov()
-    desired_crosscov = cov_4.dot(mat_4.T)
+    desired_crosscov = cov.dot(mat.T)
     np.testing.assert_allclose(ut_crosscov, desired_crosscov)
 
 

@@ -180,20 +180,6 @@ def cholesky_sqrt_jac(sqrt):
     return D
 
 
-def ut_sqrt_grad(sqrt, mat_grad):
-    n, m = mat_grad.shape[1:]
-    ret = np.zeros_like((n, n, m))
-    for k in range(m):
-        A = np.zeros((n,) * 4)
-        b = mat_grad[..., k].flatten()
-        for i, j in np.ndindex(n, n):
-            A[i, j, j] += sqrt[i]
-            A[i, j, i] += sqrt[j]
-        x = scipy.linalg.solve(A.reshape((n * n, n * n)), b)
-        ret[..., k] = x.reshape((n, n))
-    return ret
-
-
 class UnscentedTransform:
     
     def __init__(self, **options):
