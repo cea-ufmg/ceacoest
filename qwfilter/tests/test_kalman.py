@@ -75,7 +75,7 @@ def test_ut_sqrt(ut_sqrt_func, cov):
     np.testing.assert_allclose(SST, cov)
 
 
-def test_cholesky_sqrt_jac(cov, n):
+def test_cholesky_sqrt_diff(cov, n):
     S = kalman.cholesky_sqrt(cov)
     def f(x):
         Q = cov.copy()
@@ -84,7 +84,7 @@ def test_cholesky_sqrt_jac(cov, n):
             Q[j, i] += x
         return kalman.cholesky_sqrt(Q)
     
-    jac = kalman.cholesky_sqrt_jac(S)
+    jac = kalman.cholesky_sqrt_diff(S)
     for i, j in np.ndindex(n, n):
         numerical = utils.central_diff(f, 0)
         np.testing.assert_allclose(jac[..., i, j], numerical, atol=1e-7)

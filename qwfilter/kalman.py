@@ -154,29 +154,51 @@ def cholesky_sqrt(mat):
     return scipy.linalg.cholesky(mat, lower=True)
 
 
-def cholesky_sqrt_jac(sqrt):
-    '''Jacobian of lower triangular Cholesky decomposition.'''
-    n = len(sqrt)
-    i, j = np.tril_indices_from(sqrt)
-    nnz = len(i)
+def cholesky_sqrt_diff(S, dQ=None):
+    '''Derivatives of lower triangular Cholesky decomposition.
+    
+    Parameters
+    ----------
+    S : (n, n) array_like
+        The lower triangular Cholesky decomposition of a matrix `Q`, i.e.,
+        `S * S.T == Q`.
+    dQ : (n, n, ...) array_like or None
+        The derivatives of `Q` with respect to some parameters. Must be
+        symmetric with respect to the first two axes, i.e., 
+        `dQ[i,j,...] == dQ[j,i,...]`. If `dQ` is `None` then the derivatives
+        are taken with respect to `Q`, i.e., `dQ[i,j,i,j] = 1` and
+        `dQ[i,j,j,i] = 1`.
+    
+    Returns
+    -------
+    dS : (n, n, ...) array_like
+        The derivative of `S` with respect to some parameters or with respect
+        to `Q` if `dQ` is `None`.
+    
+    '''
+    n = len(S)
     k = np.arange(n)
+    i, j = np.tril_indices_from(S)
     ix, jx, kx = np.ix_(i, j, k)
     
     A = np.zeros((n, n, n, n))
-    A[ix, jx, ix, kx] = sqrt[jx, kx]
-    A[ix, jx, jx, kx] += sqrt[ix, kx]
-    Atril = A[i, j][..., i, j]
-    Atril_inv = scipy.linalg.inv(Atril)
+    A[ix, jx, ix, kx] = S[jx, kx]
+    A[ix, jx, jx, kx] += S[ix, kx]
+    A_tril = A[i, j][..., i, j]
+    A_tril_inv = scipy.linalg.inv(A_tril)
     
-    B = np.zeros((nnz, n, n))
-    B[np.arange(nnz), i, j] = 1
+    if dQ is None:
+        nnz = len(i)
+        dQ_tril = np.zeros((nnz, n, n))
+        dQ_tril[np.arange(nnz), i, j] = 1
+        dQ_tril[np.arange(nnz), j, i] = 1
+    else:
+        dQ_tril = dQ[i, j]
     
-    D_tril = np.einsum('ab,bcd', Atril_inv, B)
+    D_tril = np.einsum('ab,b...->a...', A_tril_inv, dQ_tril)
     D = np.zeros((n, n, n, n))
     D[i, j] = D_tril
-
-    i_offdiag, j_offdiag = np.tril_indices_from(sqrt, -1)
-    D[..., j_offdiag, i_offdiag] = D[..., i_offdiag, j_offdiag]
+    
     return D
 
 
