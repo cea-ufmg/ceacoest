@@ -68,7 +68,7 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
             default, automatically false if save_history is false.
         calculate_gradients :
             Whether to calculate the filter gradients with respect to the
-            parameter vector p. False by default.
+            parameter vector q. False by default.
         initial_mean_grad : (nx,) array_like
             Gradient of mean of inital states. Zero by default.
         
@@ -82,11 +82,14 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         self.save_history = options.get('save_history', True)
         self.save_likelihood = options.get('save_likelihood', True)
         self.save_pred_crosscov = (self.save_history and 
-                               options.get('save_pred_crosscov', True))
+                                   options.get('save_pred_crosscov', True))
         self.calculate_gradients = options.get('calculate_gradients', False)
+        
         if self.calculate_gradients:
-            self.mean_grad = options.get('initial_mean_grad',
-                                         np.zeros(self.model.nx))
+            try:
+                self.mean_grad = options['initial_mean_grad']
+            except KeyError:
+                self.mean_grad = np.zeros((self.model.nx, self.model.nq))
     
     def _save_prediction(self, mean, cov):
         '''Save the prection data and update time index.'''
@@ -202,6 +205,9 @@ def cholesky_sqrt_diff(S, dQ=None):
     return D
 
 
+cholesky_sqrt.diff = cholesky_sqrt_diff
+
+
 class UnscentedTransform:
     
     def __init__(self, **options):
@@ -218,7 +224,7 @@ class UnscentedTransform:
             Matrix "square root" used to generate sigma points. If equal to
             'svd' or 'cholesky' then svd_sqrt or cholesky_sqrt are used,
             respectively. Otherwise, if it is a callable the object is used.
-            Equal to 'svd' by default.
+            Equal to 'cholesky' by default.
         
         '''
         #Initialize any other inherited options
@@ -229,11 +235,11 @@ class UnscentedTransform:
         
         self.kappa = options.get('kappa', 0.0)
         
-        sqrt_opt = options.get('sqrt', 'svd')
-        if sqrt_opt == 'svd':
-            self.sqrt = svd_sqrt
-        elif sqrt_opt == 'cholesky':
+        sqrt_opt = options.get('sqrt', 'cholesky')
+        if sqrt_opt == 'cholesky':
             self.sqrt = cholesky_sqrt
+        elif sqrt_opt == 'svd':
+            self.sqrt = svd_sqrt
         elif isinstance(sqrt_opt, collections.Callable):
             self.sqrt = sqrt_opt
         else:
@@ -248,7 +254,7 @@ class UnscentedTransform:
         assert n + kappa != 0
         
         cov_sqrt = self.sqrt((n + kappa) * cov)
-        dev = np.hstack((cov_sqrt, -cov_sqrt))
+        dev = np.hstack((-cov_sqrt, cov_sqrt))
         weights = np.repeat(0.5 / (n + kappa), 2 * n)
         
         if kappa != 0:
@@ -278,14 +284,49 @@ class UnscentedTransform:
             output_dev = self.output_dev
             weights = self.weights
         except AttributeError:
-            raise RuntimeError(
-                "Unscented transform must be done before requesting crosscov."
-            )
+            msg = "Transform must be done before requesting crosscov."
+            raise RuntimeError(msg)
         
         return np.einsum('ik,jk,k', input_dev, output_dev, weights)
 
-    def transform_grad(self, f_grad, mean_grad, cov_grad):
-        raise NotImplementedError()
+    def sigma_points_diff(self, mean_diff, cov_diff):
+        '''Derivative of sigma-points.'''
+        try:
+            input_dev = self.input_dev
+        except AttributeError:
+            msg = "Transform must be done before requesting derivatives."
+            raise RuntimeError(msg)
+        
+        n = len(mean)
+        kappa = self.kappa
+        
+        cov_sqrt = input_dev[-n:]
+        cov_sqrt_diff = self.sqrt.diff(input_dev, (n + kappa) * cov_diff)
+        dev_diff = np.hstack((-cov_sqrt_diff, cov_sqrt_diff))
+        
+        if kappa != 0:
+            dev_diff = np.hstack((zeros_like(mean_diff), dev_diff))
+        
+        input_sigma_diff = dev_diff + mean_diff[:, None]        
+        return input_sigma_diff
+    
+    def transform_diff(self, f_diff, mean_diff, cov_diff):
+        try:
+            input_dev = self.input_dev
+            weights = self.weights
+        except AttributeError:
+            msg = "Transform must be done before requesting derivatives."
+            raise RuntimeError(msg)
+        
+        input_sigma_diff = self.sigma_points_diff(mean_diff, cov_diff)
+        output_sigma_diff = f(input_sigma, input_sigma_diff)
+        
+        output_mean_diff = np.dot(output_sigma_diff, weights)
+        output_dev = output_sigma_diff - output_mean_diff[:, None]
+        output_cov_diff = np.einsum(
+            'ik...,jk...,k->ij...', output_dev_diff, output_dev_diff, weights
+        )
+        return (output_mean_diff, output_cov_diff)
 
     
 class DTUnscentedPredictor(DTKalmanFilterBase, UnscentedTransform):
@@ -315,26 +356,26 @@ class DTUnscentedPredictor(DTKalmanFilterBase, UnscentedTransform):
     def _calculate_prediction_grad(self, u=[]):
         nx = self.model.nx
         nw = self.model.nw
-        npar = self.model.np
+        nq = self.model.nq
         
-        aug_mean_grad = np.concatenate([self.mean_grad, np.zeros(nw, npar)])
-        aug_cov_grad = np.zeros((nx + nw, nx + nw, npar))
+        aug_mean_grad = np.concatenate([self.mean_grad, np.zeros(nw, nq)])
+        aug_cov_grad = np.zeros((nx + nw, nx + nw, nq))
         aug_cov_grad[:nx, :nx] = self.cov_grad
-        aug_cov_grad[nx:, nx:] = self.model.dwcov_dp
+        aug_cov_grad[nx:, nx:] = self.model.dwcov_dq
         
-        def faug_grad(xaug, dxaug_dp):
+        def faug_grad(xaug, dxaug_dq):
             x = xaug[:nx]
             w = xaug[nx:]
-            dx_dp = dxaug_dp[:nx]
-            dw_dp = dxaug_dp[nx:]
+            dx_dq = dxaug_dq[:nx]
+            dw_dq = dxaug_dq[nx:]
             
-            df_dp = self.model.df_dp(self.k, x, u, w)
+            df_dq = self.model.df_dq(self.k, x, u, w)
             df_dx = self.model.df_dx(self.k, x, u, w)
             df_dw = self.model.df_dw(self.k, x, u, w)
-            return (df_dp + np.einsum('...x,x...', df_dx, dx_dp) +
-                    np.einsum('...w,w...', df_dw, dw_dp))
+            return (df_dq + np.einsum('...x,x...', df_dx, dx_dq) +
+                    np.einsum('...w,w...', df_dw, dw_dq))
         
-        grads = self.transform_grad(faug_grad, aug_mean_grad, aug_cov_grad)
+        grads = self.transform_diff(faug_grad, aug_mean_grad, aug_cov_grad)
         self.mean_grad, self.cov_grad = grads
 
 
