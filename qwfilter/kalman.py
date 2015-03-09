@@ -1,4 +1,10 @@
-'''Kalman filtering / smoothing module.'''
+'''Kalman filtering / smoothing module.
+
+TODO
+----
+ * Add derivative of SVD square root.
+
+'''
 
 
 import abc
@@ -199,7 +205,7 @@ def cholesky_sqrt_diff(S, dQ=None):
         dQ_tril = dQ[i, j]
     
     D_tril = np.einsum('ab,b...->a...', A_tril_inv, dQ_tril)
-    D = np.zeros((n, n, n, n))
+    D = np.zeros((n, n) + dQ_tril.shape[1:])
     D[i, j] = D_tril
     
     return D
@@ -297,7 +303,7 @@ class UnscentedTransform:
             msg = "Transform must be done before requesting derivatives."
             raise RuntimeError(msg)
         
-        n = len(mean)
+        n = len(input_dev)
         kappa = self.kappa
         
         cov_sqrt = input_dev[-n:]
@@ -313,13 +319,14 @@ class UnscentedTransform:
     def transform_diff(self, f_diff, mean_diff, cov_diff):
         try:
             input_dev = self.input_dev
+            input_sigma = self.input_sigma
             weights = self.weights
         except AttributeError:
             msg = "Transform must be done before requesting derivatives."
             raise RuntimeError(msg)
         
         input_sigma_diff = self.sigma_points_diff(mean_diff, cov_diff)
-        output_sigma_diff = f(input_sigma, input_sigma_diff)
+        output_sigma_diff = f_diff(input_sigma, input_sigma_diff)
         
         output_mean_diff = np.dot(output_sigma_diff, weights)
         output_dev = output_sigma_diff - output_mean_diff[:, None]
@@ -328,7 +335,7 @@ class UnscentedTransform:
         )
         return (output_mean_diff, output_cov_diff)
 
-    
+
 class DTUnscentedPredictor(DTKalmanFilterBase, UnscentedTransform):
     
     def predict(self, u=[]):

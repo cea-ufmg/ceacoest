@@ -117,6 +117,33 @@ def test_linear_ut(ut, vec, cov, mat):
     np.testing.assert_allclose(ut_crosscov, desired_crosscov)
 
 
+def test_transform_diff_wrt_q(ut, n, vec, cov):
+    '''Test the derivatives of unscented transform.'''
+    if ut.sqrt is kalman.svd_sqrt:
+        pytest.skip("`svd_sqrt_diff` not implemented yet.")
+    
+    def ut_mean(q):
+        return ut.unscented_transform(lambda x: q[:, None] * x, vec, cov)[0]
+    
+    def ut_cov(q):
+        return ut.unscented_transform(lambda x: q[:, None] * x, vec, cov)[1]
+    
+    def f_diff(x, dx):
+        return np.diag(x)
+    
+    q0 = np.arange(n) + 1
+    num_mean_diff = utils.central_diff(ut_mean, q0)
+    num_cov_diff = utils.central_diff(ut_cov, q0)    
+    
+    mean_diff = np.zeros((n, n))
+    cov_diff = np.zeros((n, n, n))
+    ut.unscented_transform(lambda x: q0[:, None] * x, vec, cov)
+    mean_diff, cov_diff = ut.transform_diff(f_diff, mean_diff, cov_diff)
+    
+    np.testing.assert_allclose(mean_diff, num_mean_diff)
+    np.testing.assert_allclose(cov_diff, num_cov_diff)
+
+
 class EulerDiscretizedAtmosphericReentry:
     nx = 5
     nu = 0
