@@ -121,19 +121,26 @@ def test_transform_diff_wrt_q(ut, n, vec, cov):
     '''Test the derivatives of unscented transform.'''
     if ut.sqrt is kalman.svd_sqrt:
         pytest.skip("`svd_sqrt_diff` not implemented yet.")
-    
+
+    def f(x, q):
+        return np.cumsum(q)[:, None] * x
+        
     def ut_mean(q):
-        return ut.unscented_transform(lambda x: q[:, None] * x, vec, cov)[0]
+        return ut.unscented_transform(lambda x: f(x, q), vec, cov)[0]
     
     def ut_cov(q):
-        return ut.unscented_transform(lambda x: q[:, None] * x, vec, cov)[1]
-    
-    def f_diff(x, dx):
-        return np.diag(x)
-    
+        return ut.unscented_transform(lambda x: f(x, q), vec, cov)[1]
+        
     q0 = np.arange(n) + 1
     num_mean_diff = utils.central_diff(ut_mean, q0)
     num_cov_diff = utils.central_diff(ut_cov, q0)    
+
+    def f_diff(x, dx):
+        assert np.all(dx == 0)
+        i, j = np.tril_indices(n)
+        ret = np.zeros_like(dx)
+        ret[i, :, j] = x[i]
+        return ret
     
     mean_diff = np.zeros((n, n))
     cov_diff = np.zeros((n, n, n))

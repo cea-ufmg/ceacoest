@@ -313,27 +313,29 @@ class UnscentedTransform:
         if kappa != 0:
             dev_diff = np.hstack((zeros_like(mean_diff), dev_diff))
         
-        input_sigma_diff = dev_diff + mean_diff[:, None]        
+        input_sigma_diff = dev_diff + mean_diff[:, None]
         return input_sigma_diff
     
     def transform_diff(self, f_diff, mean_diff, cov_diff):
         try:
             input_dev = self.input_dev
+            output_dev = self.output_dev
             input_sigma = self.input_sigma
             weights = self.weights
         except AttributeError:
             msg = "Transform must be done before requesting derivatives."
             raise RuntimeError(msg)
         
-        input_sigma_diff = self.sigma_points_diff(mean_diff, cov_diff)
-        output_sigma_diff = f_diff(input_sigma, input_sigma_diff)
+        in_sigma_diff = self.sigma_points_diff(mean_diff, cov_diff)
+        out_sigma_diff = f_diff(input_sigma, in_sigma_diff)
         
-        output_mean_diff = np.dot(output_sigma_diff, weights)
-        output_dev = output_sigma_diff - output_mean_diff[:, None]
-        output_cov_diff = np.einsum(
-            'ik...,jk...,k->ij...', output_dev_diff, output_dev_diff, weights
-        )
-        return (output_mean_diff, output_cov_diff)
+        out_mean_diff = np.einsum('xs...,s->x...', out_sigma_diff, weights)
+        out_dev_diff = out_sigma_diff - out_mean_diff[:, None]
+        out_cov_diff = np.einsum('ik...,jk,k->ij...', out_dev_diff, 
+                                 output_dev, weights)
+        out_cov_diff += np.swapaxes(out_cov_diff, 1, 0)
+        
+        return (out_mean_diff, out_cov_diff)
 
 
 class DTUnscentedPredictor(DTKalmanFilterBase, UnscentedTransform):
