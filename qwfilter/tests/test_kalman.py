@@ -89,6 +89,12 @@ def test_cholesky_sqrt_diff(cov, n):
         numerical = utils.central_diff(f, 0)
         np.testing.assert_allclose(jac[..., i, j], numerical, atol=1e-7)
 
+        dQ = np.zeros((n, n))
+        dQ[i, j] = 1
+        dQ[j, i] = 1
+        jac_ij = kalman.cholesky_sqrt_diff(S, dQ)
+        np.testing.assert_allclose(jac[..., i, j], jac_ij)
+
 
 def test_sigma_points(ut, vec, cov):
     '''Test if the mean and covariance of the sigma-points is sane.'''
@@ -117,11 +123,26 @@ def test_linear_ut(ut, vec, cov, mat):
     np.testing.assert_allclose(ut_crosscov, desired_crosscov)
 
 
-def test_transform_diff_wrt_q(ut, n, vec, cov):
-    '''Test the derivatives of unscented transform.'''
-    if ut.sqrt is kalman.svd_sqrt:
+def test_sigma_points_diff(ut, ut_sqrt, vec, cov, n):
+    '''Test the derivative of the unscented transform sigma points.'''
+    if ut_sqrt == 'svd':
         pytest.skip("`svd_sqrt_diff` not implemented yet.")
+    
+    def sigma(mean, cov):
+        return ut.gen_sigma_points(mean, cov)[0]
+    
+    ds_dmean_num = utils.central_diff(lambda x: sigma(x, cov), vec)
+    
+    sigma(vec, cov)
+    ds_dmean = ut.sigma_points_diff(np.identity(n), np.zeros((n, n, n)))
+    np.testing.assert_allclose(ds_dmean_num, ds_dmean)
 
+
+def test_transform_diff_wrt_q(ut, ut_sqrt, n, vec, cov):
+    '''Test the derivatives of unscented transform.'''
+    if ut_sqrt == 'svd':
+        pytest.skip("`svd_sqrt_diff` not implemented yet.")
+    
     def f(x, q):
         return np.cumsum(q)[:, None] * x
         
@@ -135,7 +156,7 @@ def test_transform_diff_wrt_q(ut, n, vec, cov):
     num_mean_diff = utils.central_diff(ut_mean, q0)
     num_cov_diff = utils.central_diff(ut_cov, q0)    
 
-    def f_diff(x, dx):
+    def f_diff(x, dx=0):
         assert np.all(dx == 0)
         i, j = np.tril_indices(n)
         ret = np.zeros_like(dx)

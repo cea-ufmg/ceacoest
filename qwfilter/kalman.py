@@ -4,6 +4,12 @@ TODO
 ----
  * Add derivative of SVD square root.
 
+Improvement ideas
+-----------------
+ * Make the unscented transform object a member variable of the predictor
+   instead of superclass, so that it is not shared among prediction and
+   correction. Weights can also be generated in the constructor.
+
 '''
 
 
@@ -306,12 +312,13 @@ class UnscentedTransform:
         n = len(input_dev)
         kappa = self.kappa
         
-        cov_sqrt = input_dev[-n:]
-        cov_sqrt_diff = self.sqrt.diff(input_dev, (n + kappa) * cov_diff)
+        cov_sqrt = input_dev[:, -n:]
+        cov_sqrt_diff = self.sqrt.diff(cov_sqrt, (n + kappa) * cov_diff)
         dev_diff = np.hstack((-cov_sqrt_diff, cov_sqrt_diff))
         
         if kappa != 0:
-            dev_diff = np.hstack((zeros_like(mean_diff), dev_diff))
+            center_point_diff = np.zeros((n, 1) + mean_diff.shape[1:])
+            dev_diff = np.hstack((center_point_diff, dev_diff))
         
         input_sigma_diff = dev_diff + mean_diff[:, None]
         return input_sigma_diff
@@ -333,7 +340,8 @@ class UnscentedTransform:
         out_dev_diff = out_sigma_diff - out_mean_diff[:, None]
         out_cov_diff = np.einsum('ik...,jk,k->ij...', out_dev_diff, 
                                  output_dev, weights)
-        out_cov_diff += np.swapaxes(out_cov_diff, 1, 0)
+        out_cov_diff += np.einsum('ik,jk...,k->ij...', output_dev,
+                                  out_dev_diff, weights)
         
         return (out_mean_diff, out_cov_diff)
 
