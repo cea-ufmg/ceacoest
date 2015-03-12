@@ -151,10 +151,10 @@ def test_transform_diff_wrt_q(ut, ut_sqrt, n, vec, cov):
     
     def ut_cov(q):
         return ut.unscented_transform(lambda x: f(x, q), vec, cov)[1]
-        
+    
     q0 = np.arange(n) + 1
     num_mean_diff = utils.central_diff(ut_mean, q0)
-    num_cov_diff = utils.central_diff(ut_cov, q0)    
+    num_cov_diff = utils.central_diff(ut_cov, q0)
 
     def f_diff(x, dx=0):
         assert np.all(dx == 0)
@@ -165,11 +165,11 @@ def test_transform_diff_wrt_q(ut, ut_sqrt, n, vec, cov):
     
     mean_diff = np.zeros((n, n))
     cov_diff = np.zeros((n, n, n))
-    ut.unscented_transform(lambda x: q0[:, None] * x, vec, cov)
+    ut.unscented_transform(lambda x: f(x, q0), vec, cov)
     mean_diff, cov_diff = ut.transform_diff(f_diff, mean_diff, cov_diff)
     
-    np.testing.assert_allclose(mean_diff, num_mean_diff)
-    np.testing.assert_allclose(cov_diff, num_cov_diff)
+    np.testing.assert_allclose(mean_diff, num_mean_diff, atol=1e-8)
+    np.testing.assert_allclose(cov_diff, num_cov_diff, atol=1e-8)
 
 
 class EulerDiscretizedAtmosphericReentry:
