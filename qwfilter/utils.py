@@ -19,7 +19,7 @@ def central_diff(f, x, min_step=1e-7, rel_step=1e-7):
     >>> f = lambda x: [np.sin(x[0]), np.cos(x[1]) + np.exp(x[0])]
     >>> x = [1, 2]
     >>> numerical_diff = central_diff(f, x)
-    >>> analytical_diff = [[np.cos(x[0]), 0], [np.exp(x[0]), -np.sin(x[1])]]
+    >>> analytical_diff = [[np.cos(x[0]), np.exp(x[0])], [0, -np.sin(x[1])]]
     >>> np.allclose(numerical_diff, analytical_diff)
     True
     
@@ -37,9 +37,9 @@ def central_diff(f, x, min_step=1e-7, rel_step=1e-7):
         fminus = np.asarray(f(xminus))
         
         if diff is None:
-            diff = np.empty(fplus.shape + x.shape)
+            diff = np.empty(x.shape + fplus.shape)
         
-        diff[(...,) + i] = 0.5*(fplus - fminus)/hi
+        diff[i] = 0.5*(fplus - fminus)/hi
     
     return diff
 
@@ -60,7 +60,7 @@ def forward_diff(f, x, min_step=1e-7, rel_step=1e-7):
     >>> f = lambda x: [np.sin(x[0]), np.cos(x[1]) + np.exp(x[0])]
     >>> x = [1, 2]
     >>> numerical_diff = forward_diff(f, x)
-    >>> analytical_diff = [[np.cos(x[0]), 0], [np.exp(x[0]), -np.sin(x[1])]]
+    >>> analytical_diff = [[np.cos(x[0]), np.exp(x[0])], [0, -np.sin(x[1])]]
     >>> np.allclose(numerical_diff, analytical_diff)
     True
     
@@ -69,11 +69,10 @@ def forward_diff(f, x, min_step=1e-7, rel_step=1e-7):
     h = np.maximum(x*rel_step, min_step)
     f0 = np.asarray(f(x))
     
-    diff = np.empty(f0.shape + x.shape)
+    diff = np.empty(x.shape + f0.shape)
     for i, hi in np.ndenumerate(h):
         xi = x.copy()
         xi[i] += hi
-        diff[(...,) + i] = (f(xi) - f0)/hi
+        diff[i] = (f(xi) - f0)/hi
     
     return diff
-

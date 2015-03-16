@@ -9,6 +9,10 @@ import pytest
 from qwfilter import kalman, utils
 
 
+pytest_plugins = "qwfilter.testsupport.array_cmp"
+from qwfilter.testsupport.array_cmp import ArrayCmp
+
+
 @pytest.fixture(params=range(3))
 def seed(request):
     '''Random number generator seed.'''
@@ -71,15 +75,15 @@ def ut(ut_sqrt, ut_kappa):
 
 def test_ut_sqrt(ut_sqrt_func, cov):
     S = ut_sqrt_func(cov)
-    SST = np.dot(S, S.T)
-    np.testing.assert_allclose(SST, cov)
+    STS = np.dot(S.T, S)
+    assert ArrayCmp(STS) == cov
 
 
 def test_cholesky_sqrt_diff(cov, n):
     S = kalman.cholesky_sqrt(cov)
     def f(x):
         Q = cov.copy()
-        Q[i,j] += x
+        Q[i, j] += x
         if i != j:
             Q[j, i] += x
         return kalman.cholesky_sqrt(Q)
@@ -87,13 +91,13 @@ def test_cholesky_sqrt_diff(cov, n):
     jac = kalman.cholesky_sqrt_diff(S)
     for i, j in np.ndindex(n, n):
         numerical = utils.central_diff(f, 0)
-        np.testing.assert_allclose(jac[..., i, j], numerical, atol=1e-7)
-
+        assert ArrayCmp(jac[i, j], atol=1e-7) == numerical
+        
         dQ = np.zeros((n, n))
         dQ[i, j] = 1
         dQ[j, i] = 1
         jac_ij = kalman.cholesky_sqrt_diff(S, dQ)
-        np.testing.assert_allclose(jac[..., i, j], jac_ij)
+        assert ArrayCmp(jac[i, j]) == jac_ij
 
 
 def test_sigma_points(ut, vec, cov):
@@ -255,4 +259,9 @@ def run_filter():
     filter.filter(y)
 
     return [filter, x_sim, y, model]
+
+
+def test_dummy():
+    a = np.asarray([1,3])
+    assert ArrayCmp(a) == [2, 3]
 
