@@ -262,12 +262,9 @@ cholesky_sqrt.diff = cholesky_sqrt_diff
 
 class UnscentedTransform:
     
-    def __init__(self, nin, nout=None, **options):
+    def __init__(self, nin, **options):
         self.nin = nin
         '''Number of inputs.'''
-        
-        self.nout = nin if nout is None else nout
-        '''Number of outputs.'''
         
         self.initialize_options(options)
         
@@ -316,9 +313,9 @@ class UnscentedTransform:
         cov_sqrt = self.sqrt((nin + kappa) * cov)
         self.in_dev = np.zeros((self.nsigma,) + mean.shape)
         self.in_dev[:nin] = cov_sqrt
-        self.in_dev[nin:(2 * nin)] = -cov_sqrt        
+        self.in_dev[nin:(2 * nin)] = -cov_sqrt
         self.in_sigma = self.in_dev + mean        
-        return in_sigma
+        return self.in_sigma
     
     def unscented_transform(self, f, mean, cov):
         in_sigma = self.gen_sigma_points(mean, cov)
@@ -327,7 +324,7 @@ class UnscentedTransform:
         out_sigma = f(in_sigma)
         out_mean = np.tensordot(out_sigma, weights, axes=(0, 0))
         out_dev = out_sigma - out_mean
-        out_cov = np.einsum('k...i,k...j->...ij', out_dev, out_dev, weights)
+        out_cov = np.einsum('k...i,k...j,k->...ij', out_dev, out_dev, weights)
         
         self.out_dev = out_dev
         return (out_mean, out_cov)
@@ -336,7 +333,7 @@ class UnscentedTransform:
         weights = self.weights
         try:
             in_dev = self.in_dev
-            out_dev = self.output_dev
+            out_dev = self.out_dev
         except AttributeError:
             msg = "Transform must be done before requesting crosscov."
             raise RuntimeError(msg)
@@ -356,7 +353,7 @@ class UnscentedTransform:
         
         cov_sqrt = in_dev[nin:]
         cov_sqrt_diff = self.sqrt.diff(cov_sqrt, (nin + kappa) * cov_diff)
-        dev_diff = np.zeros((self.nsigma,) + self.mean_diff.shape)
+        dev_diff = np.zeros((self.nsigma,) + mean_diff.shape)
         dev_diff[:nin] = cov_sqrt_diff
         dev_diff[nin:(2 * nin)] = -cov_sqrt_diff
         

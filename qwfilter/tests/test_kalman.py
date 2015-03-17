@@ -21,28 +21,40 @@ def seed(request):
 
 
 @pytest.fixture(params=range(1, 5))
-def n(request):
-    '''Length of test vector or matrix.'''
+def nx(request):
+    '''Number of states to test with.'''
+    return request.param
+
+
+@pytest.fixture(params=range(1, 2))
+def np_(request):
+    '''Number of parameters to test with.'''
     return request.param
 
 
 @pytest.fixture
-def vec(seed, n):
-    '''Random vector.'''
-    return np.random.randn(n)
+def x(seed, nx):
+    '''Random state vector.'''
+    return np.random.randn(nx)
 
 
 @pytest.fixture
-def cov(seed, n):
-    '''Random n by n positive definite symmetric matrix.'''
-    M = np.random.randn(n, n + 1)
+def p(seed, np_):
+    '''Random parameter vector.'''
+    return np.random.randn(np_)
+
+
+@pytest.fixture
+def cov(seed, nx):
+    '''Random x covariance matrix.'''
+    M = np.random.randn(nx, nx + 1)
     return M.dot(M.T)
 
 
 @pytest.fixture
-def mat(seed, n):
-    '''Random n by n matrix.'''
-    A = np.random.randn(n, n)
+def A(seed, nx):
+    '''Random state transition matrix.'''
+    A = np.random.randn(nx, nx)
     return A
 
 
@@ -68,9 +80,46 @@ def ut_kappa(request):
 
 
 @pytest.fixture
-def ut(ut_sqrt, ut_kappa):
+def ut(ut_sqrt, ut_kappa, nx):
     '''Standalone UnscentedTransform object.'''
-    return kalman.UnscentedTransform(sqrt=ut_sqrt, kappa=ut_kappa)
+    return kalman.UnscentedTransform(nx, sqrt=ut_sqrt, kappa=ut_kappa)
+
+
+class NonlinearFunction:
+    def __init__(self, nx, np_):
+        self.nx = nx
+        self.np_ = np_
+
+    def __call__(self, x, p):
+        f = np.zeros_like(x)
+        for i, j, k in np.ndindex(self.nx, self.nx, self.np_):
+            if i <= j:
+                f[..., j] += p[k] * x[i] ** (k + j)
+        return f
+    
+    def d_dp(self, x, p):
+        df_dp = np.zeros((self.np_,) + np.shape(x))
+        for i, j, k in np.ndindex(self.nx, self.nx, self.np_):
+            if i <= j:
+                df_dp[k, ..., j] +=  x[i] ** (k + j)
+        return df_dp
+    
+    def d_dx(self, x, p):
+        df_dx = np.zeros((self.nx,) + np.shape(x))
+        for i, j, k in np.ndindex(self.nx, self.nx, self.np_):
+            if i <= j and k + j != 0:
+                df_dx[i, ..., j] += p[k] * (k + j) * x[i] ** (k + j - 1)
+        return df_dx
+
+
+@pytest.fixture
+def nlfunction(nx, np_):
+    return NonlinearFunction(nx, np_)
+
+
+def test_nlfunction_dx(nlfunction, vec):
+    ################################# TODO
+    pass
 
 
 def test_ut_sqrt(ut_sqrt_func, cov):
@@ -79,7 +128,7 @@ def test_ut_sqrt(ut_sqrt_func, cov):
     assert ArrayCmp(STS) == cov
 
 
-def test_cholesky_sqrt_diff(cov, n):
+def test_cholesky_sqrt_diff(cov, nx):
     S = kalman.cholesky_sqrt(cov)
     def f(x):
         Q = cov.copy()
@@ -89,45 +138,45 @@ def test_cholesky_sqrt_diff(cov, n):
         return kalman.cholesky_sqrt(Q)
     
     jac = kalman.cholesky_sqrt_diff(S)
-    for i, j in np.ndindex(n, n):
+    for i, j in np.ndindex(nx, nx):
         numerical = utils.central_diff(f, 0)
         assert ArrayCmp(jac[i, j], atol=1e-7) == numerical
         
-        dQ = np.zeros((n, n))
+        dQ = np.zeros((nx, nx))
         dQ[i, j] = 1
         dQ[j, i] = 1
         jac_ij = kalman.cholesky_sqrt_diff(S, dQ)
         assert ArrayCmp(jac[i, j]) == jac_ij
 
 
-def test_sigma_points(ut, vec, cov):
+def test_sigma_points(ut, x, cov):
     '''Test if the mean and covariance of the sigma-points is sane.'''
-    [sigma, weights] = ut.gen_sigma_points(vec, cov)
-    ut_mean = sigma.dot(weights)
-    np.testing.assert_allclose(ut_mean, vec)
-
-    dev = sigma - ut_mean[:, None]
-    ut_cov = np.einsum('ik,jk,k', dev, dev, weights)
-    np.testing.assert_allclose(ut_cov, cov)
-
-
-def test_linear_ut(ut, vec, cov, mat):
-    '''Test the unscented transform of a linear function.'''
-    f = lambda x: mat.dot(x) + 1
-    [ut_mean, ut_cov] = ut.unscented_transform(f, vec, cov)
+    sigma = ut.gen_sigma_points(x, cov)
+    ut_mean = np.dot(ut.weights, sigma)
+    assert ArrayCmp(ut_mean) == x
     
-    desired_mean = f(vec)
-    np.testing.assert_allclose(ut_mean, desired_mean)
+    dev = sigma - ut_mean
+    ut_cov = np.einsum('ki,kj,k', dev, dev, ut.weights)
+    assert ArrayCmp(ut_cov) == cov
 
-    desired_cov = mat.dot(cov).dot(mat.T)
-    np.testing.assert_allclose(ut_cov, desired_cov)
+
+def test_affine_ut(ut, x, cov, A, nx):
+    '''Test the unscented transform of an affine function.'''
+    f = lambda x: np.dot(x, A.T) + np.arange(nx)
+    [ut_mean, ut_cov] = ut.unscented_transform(f, x, cov)
+    
+    desired_mean = f(x)
+    assert ArrayCmp(ut_mean) == desired_mean
+
+    desired_cov = A.dot(cov).dot(A.T)
+    assert ArrayCmp(ut_cov) == desired_cov
     
     ut_crosscov = ut.transform_crosscov()
-    desired_crosscov = cov.dot(mat.T)
-    np.testing.assert_allclose(ut_crosscov, desired_crosscov)
+    desired_crosscov = np.dot(cov, A.T)
+    assert ArrayCmp(ut_crosscov) == desired_crosscov
 
 
-def test_sigma_points_diff(ut, ut_sqrt, vec, cov, n):
+def test_sigma_points_diff(ut, ut_sqrt, x, cov, nx):
     '''Test the derivative of the unscented transform sigma points.'''
     if ut_sqrt == 'svd':
         pytest.skip("`svd_sqrt_diff` not implemented yet.")
@@ -135,13 +184,17 @@ def test_sigma_points_diff(ut, ut_sqrt, vec, cov, n):
     def sigma(mean, cov):
         return ut.gen_sigma_points(mean, cov)[0]
     
-    ds_dmean_num = utils.central_diff(lambda x: sigma(x, cov), vec)
+    ds_dmean_num = utils.central_diff(lambda x: sigma(x, cov), x)
     
-    sigma(vec, cov)
-    ds_dmean = ut.sigma_points_diff(np.identity(n), np.zeros((n, n, n)))
-    np.testing.assert_allclose(ds_dmean_num, ds_dmean)
+    sigma(x, cov)
+    ds_dmean = ut.sigma_points_diff(np.identity(nx), np.zeros((nx, nx, nx)))
+    assert ArrayCmp(ds_dmean_num) == ds_dmean
 
 
+#######################################################################
+############# TODO: update below to use nlfunction, x instead of vec 
+############# and nx instead of n.
+#######################################################################
 def test_transform_diff_wrt_q(ut, ut_sqrt, n, vec, cov):
     '''Test the derivatives of unscented transform.'''
     if ut_sqrt == 'svd':
