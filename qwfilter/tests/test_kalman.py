@@ -26,7 +26,7 @@ def nx(request):
     return request.param
 
 
-@pytest.fixture(params=range(1, 2))
+@pytest.fixture(params=range(1, 3))
 def np_(request):
     '''Number of parameters to test with.'''
     return request.param
@@ -88,25 +88,25 @@ def ut(ut_sqrt, ut_kappa, nx):
 class NonlinearFunction:
     def __init__(self, nx, np_):
         self.nx = nx
-        self.np_ = np_
+        self.np = np_
 
     def __call__(self, x, p):
         f = np.zeros_like(x)
-        for i, j, k in np.ndindex(self.nx, self.nx, self.np_):
+        for i, j, k in np.ndindex(self.nx, self.nx, self.np):
             if i <= j:
                 f[..., j] += p[k] * x[i] ** (k + j)
         return f
     
     def d_dp(self, x, p):
-        df_dp = np.zeros((self.np_,) + np.shape(x))
-        for i, j, k in np.ndindex(self.nx, self.nx, self.np_):
+        df_dp = np.zeros((self.np,) + np.shape(x))
+        for i, j, k in np.ndindex(self.nx, self.nx, self.np):
             if i <= j:
                 df_dp[k, ..., j] +=  x[i] ** (k + j)
         return df_dp
     
     def d_dx(self, x, p):
         df_dx = np.zeros((self.nx,) + np.shape(x))
-        for i, j, k in np.ndindex(self.nx, self.nx, self.np_):
+        for i, j, k in np.ndindex(self.nx, self.nx, self.np):
             if i <= j and k + j != 0:
                 df_dx[i, ..., j] += p[k] * (k + j) * x[i] ** (k + j - 1)
         return df_dx
@@ -117,9 +117,16 @@ def nlfunction(nx, np_):
     return NonlinearFunction(nx, np_)
 
 
-def test_nlfunction_dx(nlfunction, vec):
-    ################################# TODO
-    pass
+def test_nlfunction_dx(nlfunction, x, p):
+    numerical = utils.central_diff(lambda x: nlfunction(x, p), x)
+    analytical = nlfunction.d_dx(x, p)
+    assert ArrayCmp(analytical) == numerical
+
+
+def test_nlfunction_dp(nlfunction, x, p):
+    numerical = utils.central_diff(lambda p: nlfunction(x, p), p)
+    analytical = nlfunction.d_dp(x, p)
+    assert ArrayCmp(analytical) == numerical
 
 
 def test_ut_sqrt(ut_sqrt_func, cov):
