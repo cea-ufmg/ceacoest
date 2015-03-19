@@ -27,7 +27,7 @@ def nx(request):
 
 
 @pytest.fixture(params=range(1, 3))
-def np_(request):
+def nq(request):
     '''Number of parameters to test with.'''
     return request.param
 
@@ -39,9 +39,9 @@ def x(seed, nx):
 
 
 @pytest.fixture
-def p(seed, np_):
+def q(seed, nq):
     '''Random parameter vector.'''
-    return np.random.randn(np_)
+    return np.random.randn(nq)
 
 
 @pytest.fixture
@@ -86,56 +86,62 @@ def ut(ut_sqrt, ut_kappa, nx):
 
 
 class NonlinearFunction:
-    def __init__(self, nx, np_):
+    '''Parametrized nonlinear function.'''
+    def __init__(self, nx, nq):
         self.nx = nx
-        self.np = np_
+        self.nq = nq
 
-    def __call__(self, x, p):
+    def __call__(self, x, q):
         f = np.zeros_like(x)
-        for i, j, k in np.ndindex(self.nx, self.nx, self.np):
+        for i, j, k in np.ndindex(self.nx, self.nx, self.nq):
             if i <= j:
-                f[..., j] += p[k] * x[i] ** (k + j)
+                f[..., j] += q[..., k] * x[..., i] ** (k + j)
         return f
     
-    def d_dp(self, x, p):
-        df_dp = np.zeros((self.np,) + np.shape(x))
-        for i, j, k in np.ndindex(self.nx, self.nx, self.np):
+    def d_dq(self, x, q):
+        df_dq = np.zeros((self.nq,) + np.shape(x))
+        for i, j, k in np.ndindex(self.nx, self.nx, self.nq):
             if i <= j:
-                df_dp[k, ..., j] +=  x[i] ** (k + j)
-        return df_dp
+                df_dq[k, ..., j] +=  x[..., i] ** (k + j)
+        return df_dq
     
-    def d_dx(self, x, p):
+    def d_dx(self, x, q):
         df_dx = np.zeros((self.nx,) + np.shape(x))
-        for i, j, k in np.ndindex(self.nx, self.nx, self.np):
+        for i, j, k in np.ndindex(self.nx, self.nx, self.nq):
             if i <= j and k + j != 0:
-                df_dx[i, ..., j] += p[k] * (k + j) * x[i] ** (k + j - 1)
+                df_dx[i, ..., j] += q[..., k] * (k + j) * x[..., i]**(k + j - 1)
         return df_dx
 
 
 @pytest.fixture
-def nlfunction(nx, np_):
-    return NonlinearFunction(nx, np_)
+def nlfunction(nx, nq):
+    '''Parametrized nonlinear function.'''
+    return NonlinearFunction(nx, nq)
 
 
-def test_nlfunction_dx(nlfunction, x, p):
-    numerical = utils.central_diff(lambda x: nlfunction(x, p), x)
-    analytical = nlfunction.d_dx(x, p)
+def test_nlfunction_dx(nlfunction, x, q):
+    '''Assert that nlfunction's derivative with respect to x is correct.'''
+    numerical = utils.central_diff(lambda x: nlfunction(x, q), x)
+    analytical = nlfunction.d_dx(x, q)
     assert ArrayCmp(analytical) == numerical
 
 
-def test_nlfunction_dp(nlfunction, x, p):
-    numerical = utils.central_diff(lambda p: nlfunction(x, p), p)
-    analytical = nlfunction.d_dp(x, p)
+def test_nlfunction_dq(nlfunction, x, q):
+    '''Assert that nlfunction's derivative with respect to p is correct.'''
+    numerical = utils.central_diff(lambda q: nlfunction(x, q), q)
+    analytical = nlfunction.d_dq(x, q)
     assert ArrayCmp(analytical) == numerical
 
 
 def test_ut_sqrt(ut_sqrt_func, cov):
+    '''Test if the ut_sqrt functions satisfy their definition.'''
     S = ut_sqrt_func(cov)
     STS = np.dot(S.T, S)
     assert ArrayCmp(STS) == cov
 
 
 def test_cholesky_sqrt_diff(cov, nx):
+    '''Check the derivative of the Cholesky decomposition.'''
     S = kalman.cholesky_sqrt(cov)
     def f(x):
         Q = cov.copy()
@@ -189,7 +195,7 @@ def test_sigma_points_diff(ut, ut_sqrt, x, cov, nx):
         pytest.skip("`svd_sqrt_diff` not implemented yet.")
     
     def sigma(mean, cov):
-        return ut.gen_sigma_points(mean, cov)[0]
+        return ut.gen_sigma_points(mean, cov)
     
     ds_dmean_num = utils.central_diff(lambda x: sigma(x, cov), x)
     
@@ -198,42 +204,32 @@ def test_sigma_points_diff(ut, ut_sqrt, x, cov, nx):
     assert ArrayCmp(ds_dmean_num) == ds_dmean
 
 
-#######################################################################
-############# TODO: update below to use nlfunction, x instead of vec 
-############# and nx instead of n.
-#######################################################################
-def test_transform_diff_wrt_q(ut, ut_sqrt, n, vec, cov):
+def test_transform_diff_wrt_q(ut, ut_sqrt, nlfunction, x, q, cov, nx, nq):
     '''Test the derivatives of unscented transform.'''
     if ut_sqrt == 'svd':
         pytest.skip("`svd_sqrt_diff` not implemented yet.")
     
-    def f(x, q):
-        return np.cumsum(q)[:, None] * x
-        
+    pytest.skip()
+    
     def ut_mean(q):
-        return ut.unscented_transform(lambda x: f(x, q), vec, cov)[0]
+        return ut.unscented_transform(lambda x: nlfunction(x, q), x, cov)[0]
     
     def ut_cov(q):
-        return ut.unscented_transform(lambda x: f(x, q), vec, cov)[1]
+        return ut.unscented_transform(lambda x: nlfunction(x, q), x, cov)[1]
     
-    q0 = np.arange(n) + 1
-    num_mean_diff = utils.central_diff(ut_mean, q0)
-    num_cov_diff = utils.central_diff(ut_cov, q0)
-
-    def f_diff(x, dx=0):
-        assert np.all(dx == 0)
-        i, j = np.tril_indices(n)
-        ret = np.zeros_like(dx)
-        ret[i, :, j] = x[i]
-        return ret
+    num_mean_diff = utils.central_diff(ut_mean, q)
+    num_cov_diff = utils.central_diff(ut_cov, q)
     
-    mean_diff = np.zeros((n, n))
-    cov_diff = np.zeros((n, n, n))
-    ut.unscented_transform(lambda x: f(x, q0), vec, cov)
-    mean_diff, cov_diff = ut.transform_diff(f_diff, mean_diff, cov_diff)
+    def f_diff(x, dx):
+        return nlfunction.d_dq(x, q)
     
-    np.testing.assert_allclose(mean_diff, num_mean_diff, atol=1e-8)
-    np.testing.assert_allclose(cov_diff, num_cov_diff, atol=1e-8)
+    in_mean_diff = np.zeros((nq, nx))
+    in_cov_diff = np.zeros((nq, nx, nx))
+    ut.unscented_transform(lambda x: nlfunction(x, q), x, cov)
+    mean_diff, cov_diff = ut.transform_diff(f_diff, in_mean_diff, in_cov_diff)
+    
+    assert ArrayCmp(mean_diff) == num_mean_diff
+    assert ArrayCmp(cov_diff) == num_cov_diff
 
 
 class EulerDiscretizedAtmosphericReentry:
@@ -319,9 +315,3 @@ def run_filter():
     filter.filter(y)
 
     return [filter, x_sim, y, model]
-
-
-def test_dummy():
-    a = np.asarray([1,3])
-    assert ArrayCmp(a) == [2, 3]
-

@@ -3,7 +3,7 @@
 TODO
 ----
  * Add derivative of SVD square root.
- * Vectorize cholesky_sqrt_diff.
+ * Vectorize cholesky_sqrt_diff, sigma_points_diff and transform_diff.
  * Make docstrings for all constructors.
 
 Improvement ideas
@@ -82,8 +82,8 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
             self.loglikelihood = 0
         
         if self.calculate_gradients:
-            default_mean_grad = np.zeros((self.model.np,) + self.mean.shape)
-            default_cov_grad = np.zeros((self.model.np,) + self.cov.shape)
+            default_mean_grad = np.zeros((self.model.nq,) + self.mean.shape)
+            default_cov_grad = np.zeros((self.model.nq,) + self.cov.shape)
             self.mean_grad = options.get('initial_mean_grad', default_mean_grad)
             self.cov_grad = options.get('initial_cov_grad', default_cov_grad)
     
@@ -202,6 +202,7 @@ def svd_sqrt(mat):
     return np.rollaxis(U * np.sqrt(s), -1)
 
 
+################################# REMOVE ROLLAXIS!!!
 def cholesky_sqrt(mat):
     '''Upper triangular Cholesky decomposition for unscented transform.'''
     lower_chol = numpy.linalg.cholesky(mat)
@@ -349,15 +350,16 @@ class UnscentedTransform:
             raise RuntimeError(msg)
         
         nin = self.nin
+        nq = len(mean_diff)
         kappa = self.kappa
         
         cov_sqrt = in_dev[nin:]
         cov_sqrt_diff = self.sqrt.diff(cov_sqrt, (nin + kappa) * cov_diff)
-        dev_diff = np.zeros((self.nsigma,) + mean_diff.shape)
-        dev_diff[:nin] = cov_sqrt_diff
-        dev_diff[nin:(2 * nin)] = -cov_sqrt_diff
-        
-        in_sigma_diff = dev_diff + mean_diff
+        dev_diff = np.zeros((nq, self.nsigma, nin))
+        dev_diff[:, :nin] = cov_sqrt_diff
+        dev_diff[:, nin:(2 * nin)] = -cov_sqrt_diff
+
+        in_sigma_diff = dev_diff + mean_diff[:, None, :]
         return in_sigma_diff
     
     def transform_diff(self, f_diff, mean_diff, cov_diff):
@@ -409,10 +411,10 @@ class DTUnscentedPredictor(DTKalmanFilterBase, UnscentedTransform):
     def _calculate_prediction_grad(self, u=[]):
         nx = self.model.nx
         nw = self.model.nw
-        np_ = self.model.np #Trailing underscore to differentiate from numpy
+        nq = self.model.nq
         
-        aug_mean_grad = np.concatenate([self.mean_grad, np.zeros(nw, np_)])
-        aug_cov_grad = np.zeros((nx + nw, nx + nw, np_))
+        aug_mean_grad = np.concatenate([self.mean_grad, np.zeros(nw, nq)])
+        aug_cov_grad = np.zeros((nx + nw, nx + nw, nq))
         aug_cov_grad[:nx, :nx] = self.cov_grad
         aug_cov_grad[nx:, nx:] = self.model.dwcov_dq
         
