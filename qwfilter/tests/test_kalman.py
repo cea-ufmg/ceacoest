@@ -184,7 +184,7 @@ def test_affine_ut(ut, x, cov, A, nx):
     desired_cov = A.dot(cov).dot(A.T)
     assert ArrayCmp(ut_cov) == desired_cov
     
-    ut_crosscov = ut.transform_crosscov()
+    ut_crosscov = ut.crosscov()
     desired_crosscov = np.dot(cov, A.T)
     assert ArrayCmp(ut_crosscov) == desired_crosscov
 

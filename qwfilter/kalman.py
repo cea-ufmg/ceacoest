@@ -11,6 +11,8 @@ Improvement ideas
  * Make the unscented transform object a member variable of the predictor
    instead of superclass, so that it is not shared among prediction and
    correction. Weights can also be generated in the constructor.
+ * Since the transition noise is independent from the states, the unscented
+   transform for the prediction can be devided in two simpler ones.
 
 '''
 
@@ -40,7 +42,10 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         self.cov = np.asarray(cov, float)
         '''The latest filtered state covariance.'''
         assert self.cov.shape == self.mean.shape + (model.nx,)
-        
+
+        self.base_shape = self.mean.shape[:-1]
+        '''Shape of scalar element for filter vectorization.'''
+                
         self.k = 0
         '''The latest working sample number.'''
         
@@ -330,7 +335,7 @@ class UnscentedTransform:
         self.out_dev = out_dev
         return (out_mean, out_cov)
     
-    def transform_crosscov(self):
+    def crosscov(self):
         weights = self.weights
         try:
             in_dev = self.in_dev
@@ -398,21 +403,22 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
     
     def predict(self, u=[]):
         '''Predict the state distribution at the next time index.'''
-        aug_mean = np.concatenate([self.mean, np.zeros(self.model.nw)])
+        w_mean = np.zeros(self.base_shape + (self.model.nw,))
+        aug_mean = np.concatenate([self.mean, w_mean], -1)
         aug_cov = scipy.linalg.block_diag(self.cov, self.model.wcov)
         def faug(xaug):
-            x = xaug[:self.model.nx]
-            w = xaug[self.model.nx:]
+            x = xaug[..., :self.model.nx]
+            w = xaug[..., self.model.nx:]
             return self.model.f(self.k, x, u, w)
         
-        pred_mean, pred_cov = self.transform(faug, aug_mean, aug_cov)
+        pred_mean, pred_cov = self.__ut.transform(faug, aug_mean, aug_cov)
         self._save_prediction(pred_mean, pred_cov)
         
         if self.calculate_gradients:
             self._calculate_prediction_grad(u, aug_mean, aug_cov)
         
         if self.calculate_pred_crosscov:
-            aug_crosscov = self.transform_crosscov()
+            aug_crosscov = self.crosscov()
             pred_crosscov = aug_crosscov[:self.model.nx]
             self._save_prediction_crosscov(pred_crosscov)
         
@@ -422,26 +428,29 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
         nx = self.model.nx
         nw = self.model.nw
         nq = self.model.nq
+        naug = nx + nw
+        base_shape = self.base_shape
         
-        aug_mean_grad = np.concatenate([self.mean_grad, np.zeros(nw, nq)])
-        aug_cov_grad = np.zeros((nx + nw, nx + nw, nq))
-        aug_cov_grad[:nx, :nx] = self.cov_grad
-        aug_cov_grad[nx:, nx:] = self.model.dwcov_dq
+        w_mean_grad = np.zeros((nq,) + base_shape + (nw,))
+        aug_mean_grad = np.concatenate([self.mean_grad, w_mean_grad], axis=-1)
+        aug_cov_grad = np.zeros((nq,) + base_shape + (naug, naug))
+        aug_cov_grad[..., :nx, :nx] = self.cov_grad
         
         def faug_grad(xaug, dxaug_dq):
-            x = xaug[:nx]
-            w = xaug[nx:]
-            dx_dq = dxaug_dq[:nx]
-            dw_dq = dxaug_dq[nx:]
+            x = xaug[..., :nx]
+            w = xaug[..., nx:]
+            dx_dq = dxaug_dq[..., :nx]
+            dw_dq = dxaug_dq[..., nx:]
             
             df_dq = self.model.df_dq(self.k, x, u, w)
             df_dx = self.model.df_dx(self.k, x, u, w)
             df_dw = self.model.df_dw(self.k, x, u, w)
-            return (df_dq + np.einsum('...x,x...', df_dx, dx_dq) +
-                    np.einsum('...w,w...', df_dw, dw_dq))
+            return (df_dq + np.einsum('i...k,k...j->i...j', dx_dq, df_dx) +
+                    np.einsum('i...k,k...j->i...j', dw_dq, df_dw))
         
         grads = self.transform_diff(faug_grad, aug_mean_grad, aug_cov_grad)
-        self.mean_grad, self.cov_grad = grads
+        self.mean_grad = grads[0]
+        self.cov_grad = grads[1]
 
 
 class DTUnscentedCorrector(DTKalmanFilterBase, UnscentedTransform):
@@ -461,7 +470,7 @@ class DTUnscentedCorrector(DTKalmanFilterBase, UnscentedTransform):
         
         #Perform unscented transform
         hmean, hcov = self.transform(meas_fun, self.mean, self.cov)
-        hcrosscov = self.transform_crosscov()
+        hcrosscov = self.crosscov()
         
         #Factorize covariance
         ycov = hcov + vcov
