@@ -1,4 +1,10 @@
-'''Kalman filtering / smoothing test module.'''
+'''Kalman filtering / smoothing test module.
+
+TODO
+----
+ * Test filter vectorization.
+
+'''
 
 
 import numpy as np
@@ -252,7 +258,7 @@ def test_transform_diff_wrt_q(ut, ut_sqrt, nlfunction, x, q, cov, nx, nq):
     in_cov_diff = np.zeros((nq, nx, nx))
     mean_diff, cov_diff = ut.transform_diff(f_diff, in_mean_diff, in_cov_diff)
     
-    assert ArrayCmp(mean_diff, tol=2e-6) == num_mean_diff
+    assert ArrayCmp(mean_diff, tol=1e-6) == num_mean_diff
     assert ArrayCmp(cov_diff, tol=2e-6) == num_cov_diff
 
 

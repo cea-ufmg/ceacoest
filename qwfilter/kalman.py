@@ -269,21 +269,12 @@ cholesky_sqrt.diff = cholesky_sqrt_diff
 class UnscentedTransform:
     
     def __init__(self, nin, **options):
-        self.nin = nin
-        '''Number of inputs.'''
+        '''Unscented transform object constructor.
         
-        self.initialize_options(options)
-        
-        self.nsigma = 2 * nin + (self.kappa != 0)
-        '''Number of sigma points.'''
-        
-        self.weights = np.repeat(0.5 / (nin + self.kappa), self.nsigma)
-        '''Transform weights.'''
-        if self.kappa != 0:
-            self.weights[-1] = self.kappa / (nin + self.kappa)
-    
-    def initialize_options(self, options):
-        '''Initialize and validate transform options, given as a dictionary.
+        Parameters
+        ----------
+        nin : int
+            Number of inputs
         
         Options
         -------
@@ -296,18 +287,32 @@ class UnscentedTransform:
             Equal to 'cholesky' by default.
         
         '''
+        self.nin = nin
+        '''Number of inputs.'''
+        
         self.kappa = options.get('kappa', 0.0)
+        '''Weight of the center sigma point.'''
         assert self.nin + self.kappa != 0
         
         sqrt_opt = options.get('sqrt', 'cholesky')
         if sqrt_opt == 'cholesky':
-            self.sqrt = cholesky_sqrt
+            sqrt = cholesky_sqrt
         elif sqrt_opt == 'svd':
-            self.sqrt = svd_sqrt
+            sqrt = svd_sqrt
         elif isinstance(sqrt_opt, collections.Callable):
-            self.sqrt = sqrt_opt
+            sqrt = sqrt_opt
         else:
             raise ValueError("Invalid value for `sqrt` option.")
+        self.sqrt = sqrt
+        '''Unscented transform square root method.'''
+        
+        self.nsigma = 2 * nin + (self.kappa != 0)
+        '''Number of sigma points.'''
+        
+        self.weights = np.repeat(0.5 / (nin + self.kappa), self.nsigma)
+        '''Transform weights.'''
+        if self.kappa != 0:
+            self.weights[-1] = self.kappa / (nin + self.kappa)
     
     def gen_sigma_points(self, mean, cov):
         '''Generate sigma-points and their deviations.'''
@@ -389,7 +394,7 @@ class UnscentedTransform:
 
 
 class DTUnscentedPredictor(DTKalmanFilterBase):
-
+    
     def __init__(self, model, mean, cov, **options):
         super().__init__(model, mean, cov, **options)
 
@@ -453,41 +458,57 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
         self.cov_grad = grads[1]
 
 
-class DTUnscentedCorrector(DTKalmanFilterBase, UnscentedTransform):
+class DTUnscentedCorrector(DTKalmanFilterBase):
+
+    def __init__(self, model, mean, cov, **options):
+        super().__init__(model, mean, cov, **options)
+        
+        ut_options = options.copy()
+        for key, val in options.items():
+            match = re.match('corr_ut_(?P<subkey>\w+)', key)
+            if match:
+                ut_options[match.group('subkey')] = val
+        
+        self.__ut = UnscentedTransform(model.nx, **ut_options)
     
     def correct(self, y, u=[]):
         '''Correct the state distribution, given the measurement vector.'''
+        assert np.shape(y) == (self.model.ny,), "No vectorization accepted in y"
+        
         mask = ma.getmaskarray(y)
         if np.all(mask):
             return
         
-        #Remove inactive outputs
+        # Remove inactive outputs
         active = ~mask
         y = ma.compressed(y)
         vcov = self.model.vcov[np.ix_(active, active)]
         def meas_fun(x):
-            return self.model.h(self.k, x, u)[active]
+            return self.model.h(self.k, x, u)[..., active]
         
-        #Perform unscented transform
-        hmean, hcov = self.transform(meas_fun, self.mean, self.cov)
-        hcrosscov = self.crosscov()
+        # Perform unscented transform
+        hmean, hcov = self.__ut.transform(meas_fun, self.mean, self.cov)
+        hcrosscov = self.__ut.crosscov()
         
-        #Factorize covariance
+        # Factorize covariance
         ycov = hcov + vcov
-        ycov_chol = scipy.linalg.cholesky(ycov, lower=True)
-        ycov_chol_inv = scipy.linalg.inv(ycov_chol)
-        ycov_inv = ycov_chol_inv.T.dot(ycov_chol_inv)
+        ycov_chol = numpy.linalg.cholesky(ycov)
+        ycov_chol_inv = numpy.linalg.inv(ycov_chol)
+        ycov_inv = np.einsum('...ki,...kj', ycov_chol_inv, ycov_chol_inv)
         
-        #Perform correction
+        # Perform correction
         err = y - hmean
-        gain = np.dot(hcrosscov, ycov_inv)
-        pred_mean = self.mean + gain.dot(err)
-        pred_cov = self.cov - gain.dot(ycov).dot(gain.T)
+        gain = np.einsum('...ik,...kj', hcrosscov, ycov_inv)
+        pred_mean = self.mean + np.einsum('...ij,...j', gain, err)
+        pred_cov = self.cov - np.einsum('...ik,...jl,...lk', gain, gain, ycov)
         self._save_correction(pred_mean, pred_cov)
         
         if self.save_likelihood:
-            self.loglikelihood += (-0.5 * err.dot(ycov_inv).dot(err) +
-                                   -np.log(np.diag(ycov_chol)).sum())
+            ycov_chol_diag = np.einsum('...kk->...k', ycov_chol)
+            self.loglikelihood += (
+                -0.5 * np.einsum('...i,...ij,...j', err, ycov_inv, err) -
+                np.log(ycov_chol_diag).sum(-1)
+            )
 
 
 class DTUnscentedKalmanFilter(DTUnscentedPredictor, DTUnscentedCorrector):
