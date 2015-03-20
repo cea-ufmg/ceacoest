@@ -13,11 +13,11 @@ def broadcastable(a, b):
 
 
 class ArrayCmp:
-    def __init__(self, array, rtol=1e-8, atol=1e-8):
+    def __init__(self, array, rtol=1e-8, atol=1e-8, tol=None):
         '''Class for numerical numpy array comparison.'''
         self.array = array
-        self.atol = atol
-        self.rtol = rtol
+        self.atol = tol or atol
+        self.rtol = tol or rtol
     
     def __eq__(self, other):
         '''Test that the arrays are within the tolerance.'''

@@ -153,7 +153,7 @@ def test_cholesky_sqrt_diff(cov, nx):
     jac = kalman.cholesky_sqrt_diff(S)
     for i, j in np.ndindex(nx, nx):
         numerical = utils.central_diff(f, 0)
-        assert ArrayCmp(jac[i, j], atol=1e-7) == numerical
+        assert ArrayCmp(jac[i, j], tol=1e-7) == numerical
         
         dQ = np.zeros((nx, nx))
         dQ[i, j] = 1
@@ -176,7 +176,7 @@ def test_sigma_points(ut, x, cov):
 def test_affine_ut(ut, x, cov, A, nx):
     '''Test the unscented transform of an affine function.'''
     f = lambda x: np.dot(x, A.T) + np.arange(nx)
-    [ut_mean, ut_cov] = ut.unscented_transform(f, x, cov)
+    [ut_mean, ut_cov] = ut.transform(f, x, cov)
     
     desired_mean = f(x)
     assert ArrayCmp(ut_mean) == desired_mean
@@ -197,10 +197,10 @@ def test_sigma_points_diff_wrt_mean(ut, ut_sqrt, x, cov, nx):
     def sigma(mean, cov):
         return ut.gen_sigma_points(mean, cov)
     
-    ds_dmean_num = utils.central_diff(lambda x: sigma(x, cov), x)
-    
     sigma(x, cov)
     ds_dmean = ut.sigma_points_diff(np.identity(nx), np.zeros((nx, nx, nx)))
+    ds_dmean_num = utils.central_diff(lambda x: sigma(x, cov), x)
+    
     assert ArrayCmp(ds_dmean_num) == ds_dmean
 
 
@@ -235,27 +235,51 @@ def test_transform_diff_wrt_q(ut, ut_sqrt, nlfunction, x, q, cov, nx, nq):
     if ut_sqrt == 'svd':
         pytest.skip("`svd_sqrt_diff` not implemented yet.")
     
-    pytest.skip()
-    
     def ut_mean(q):
-        return ut.unscented_transform(lambda x: nlfunction(x, q), x, cov)[0]
+        return ut.transform(lambda x: nlfunction(x, q), x, cov)[0]
     
     def ut_cov(q):
-        return ut.unscented_transform(lambda x: nlfunction(x, q), x, cov)[1]
-    
-    num_mean_diff = utils.central_diff(ut_mean, q)
-    num_cov_diff = utils.central_diff(ut_cov, q)
+        return ut.transform(lambda x: nlfunction(x, q), x, cov)[1]
     
     def f_diff(x, dx):
         return nlfunction.d_dq(x, q)
     
+    num_mean_diff = utils.central_diff(ut_mean, q)
+    num_cov_diff = utils.central_diff(ut_cov, q)
+
+    ut_mean(q)
     in_mean_diff = np.zeros((nq, nx))
     in_cov_diff = np.zeros((nq, nx, nx))
-    ut.unscented_transform(lambda x: nlfunction(x, q), x, cov)
     mean_diff, cov_diff = ut.transform_diff(f_diff, in_mean_diff, in_cov_diff)
     
-    assert ArrayCmp(mean_diff) == num_mean_diff
-    assert ArrayCmp(cov_diff) == num_cov_diff
+    assert ArrayCmp(mean_diff, tol=2e-6) == num_mean_diff
+    assert ArrayCmp(cov_diff, tol=2e-6) == num_cov_diff
+
+
+def test_transform_diff_wrt_mean(ut, ut_sqrt, nlfunction, x, q, cov, nx):
+    '''Test the derivatives of unscented transform.'''
+    if ut_sqrt == 'svd':
+        pytest.skip("`svd_sqrt_diff` not implemented yet.")
+    
+    def ut_mean(x):
+        return ut.transform(lambda x: nlfunction(x, q), x, cov)[0]
+    
+    def ut_cov(x):
+        return ut.transform(lambda x: nlfunction(x, q), x, cov)[1]
+    
+    def f_diff(x, dx):
+        return np.einsum('i...k,k...j->i...j', dx, nlfunction.d_dx(x, q))
+    
+    num_mean_diff = utils.central_diff(ut_mean, x)
+    num_cov_diff = utils.central_diff(ut_cov, x)
+    
+    ut_mean(x)
+    in_mean_diff = np.identity(nx)
+    in_cov_diff = np.zeros((nx, nx, nx))
+    mean_diff, cov_diff = ut.transform_diff(f_diff, in_mean_diff, in_cov_diff)
+    
+    assert ArrayCmp(mean_diff, tol=1e-7) == num_mean_diff
+    assert ArrayCmp(cov_diff, tol=1e-5) == num_cov_diff
 
 
 class EulerDiscretizedAtmosphericReentry:

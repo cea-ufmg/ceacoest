@@ -17,6 +17,7 @@ Improvement ideas
 
 import abc
 import collections
+import re
 
 import numpy as np
 import numpy.ma as ma
@@ -317,7 +318,7 @@ class UnscentedTransform:
         self.in_sigma = self.in_dev + mean[..., None, :]
         return self.in_sigma
     
-    def unscented_transform(self, f, mean, cov):
+    def transform(self, f, mean, cov):
         in_sigma = self.gen_sigma_points(mean, cov)
         weights = self.weights
         
@@ -373,20 +374,30 @@ class UnscentedTransform:
         
         in_sigma_diff = self.sigma_points_diff(mean_diff, cov_diff)
         out_sigma_diff = f_diff(in_sigma, in_sigma_diff)
-        out_mean_diff = np.tensordot(out_sigma_diff, weights, axes=(0, 0))
-        out_dev_diff = out_sigma_diff - out_mean_diff
-        out_cov_diff = np.einsum('k...i,k...j,k->...ij', 
+        out_mean_diff = np.dot(weights, out_sigma_diff)
+        out_dev_diff = out_sigma_diff - out_mean_diff[..., None, :]
+        out_cov_diff = np.einsum('...ki,...kj,k->...ij',
                                  out_dev_diff, out_dev, weights)
-        out_cov_diff += np.einsum('k...i,k...j,k->...ij', 
+        out_cov_diff += np.einsum('...ki,...kj,k->...ij',
                                   out_dev, out_dev_diff, weights)
         return (out_mean_diff, out_cov_diff)
 
 
-class DTUnscentedPredictor(DTKalmanFilterBase, UnscentedTransform):
+class DTUnscentedPredictor(DTKalmanFilterBase):
+
+    def __init__(self, model, mean, cov, **options):
+        super().__init__(model, mean, cov, **options)
+
+        ut_options = options.copy()
+        for key, val in options.items():
+            match = re.match('pred_ut_(?P<subkey>\w+)', key)
+            if match:
+                ut_options[match.group('subkey')] = val
+        
+        self.__ut = UnscentedTransform(model.nx, **ut_options)
     
     def predict(self, u=[]):
         '''Predict the state distribution at the next time index.'''
-        
         aug_mean = np.concatenate([self.mean, np.zeros(self.model.nw)])
         aug_cov = scipy.linalg.block_diag(self.cov, self.model.wcov)
         def faug(xaug):
@@ -394,7 +405,7 @@ class DTUnscentedPredictor(DTKalmanFilterBase, UnscentedTransform):
             w = xaug[self.model.nx:]
             return self.model.f(self.k, x, u, w)
         
-        pred_mean, pred_cov = self.unscented_transform(faug, aug_mean, aug_cov)
+        pred_mean, pred_cov = self.transform(faug, aug_mean, aug_cov)
         self._save_prediction(pred_mean, pred_cov)
         
         if self.calculate_gradients:
@@ -449,7 +460,7 @@ class DTUnscentedCorrector(DTKalmanFilterBase, UnscentedTransform):
             return self.model.h(self.k, x, u)[active]
         
         #Perform unscented transform
-        hmean, hcov = self.unscented_transform(meas_fun, self.mean, self.cov)
+        hmean, hcov = self.transform(meas_fun, self.mean, self.cov)
         hcrosscov = self.transform_crosscov()
         
         #Factorize covariance
