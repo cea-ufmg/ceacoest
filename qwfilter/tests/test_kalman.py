@@ -189,7 +189,7 @@ def test_affine_ut(ut, x, cov, A, nx):
     assert ArrayCmp(ut_crosscov) == desired_crosscov
 
 
-def test_sigma_points_diff(ut, ut_sqrt, x, cov, nx):
+def test_sigma_points_diff_wrt_mean(ut, ut_sqrt, x, cov, nx):
     '''Test the derivative of the unscented transform sigma points.'''
     if ut_sqrt == 'svd':
         pytest.skip("`svd_sqrt_diff` not implemented yet.")
@@ -202,6 +202,32 @@ def test_sigma_points_diff(ut, ut_sqrt, x, cov, nx):
     sigma(x, cov)
     ds_dmean = ut.sigma_points_diff(np.identity(nx), np.zeros((nx, nx, nx)))
     assert ArrayCmp(ds_dmean_num) == ds_dmean
+
+
+def test_sigma_points_diff_wrt_cov(ut, ut_sqrt, x, cov, nx):
+    '''Test the derivative of the unscented transform sigma points.'''
+    if ut_sqrt == 'svd':
+        pytest.skip("`svd_sqrt_diff` not implemented yet.")
+    
+    def sigma(cij):
+        Q = cov.copy()
+        Q[i[k], j[k]] = cij
+        Q[j[k], i[k]] = cij
+        return ut.gen_sigma_points(x, Q)
+
+    ut.gen_sigma_points(x, cov)
+    i, j = np.tril_indices(nx)
+    ntril = len(i)
+        
+    cov_diff = np.zeros((ntril, nx, nx))
+    cov_diff[np.arange(ntril), i, j] = 1
+    cov_diff[np.arange(ntril), j, i] = 1
+    dsigma_dcov = ut.sigma_points_diff(np.zeros((ntril, nx)), cov_diff)
+    
+    for k in range(ntril):
+        dsigma_dcij_num = utils.central_diff(lambda cij: sigma(cij), 
+                                             cov[i[k], j[k]])
+        assert ArrayCmp(dsigma_dcov[k]) == dsigma_dcij_num
 
 
 def test_transform_diff_wrt_q(ut, ut_sqrt, nlfunction, x, q, cov, nx, nq):

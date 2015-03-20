@@ -199,14 +199,13 @@ def svd_sqrt(mat):
     
     '''
     [U, s, Vh] = numpy.linalg.svd(mat)
-    return np.rollaxis(U * np.sqrt(s), -1)
+    return np.swapaxes(U * np.sqrt(s), -1, -2)
 
 
-################################# REMOVE ROLLAXIS!!!
 def cholesky_sqrt(mat):
     '''Upper triangular Cholesky decomposition for unscented transform.'''
     lower_chol = numpy.linalg.cholesky(mat)
-    return np.rollaxis(lower_chol, -1)
+    return np.swapaxes(lower_chol, -1, -2)
 
 
 def cholesky_sqrt_diff(S, dQ=None):
@@ -312,10 +311,10 @@ class UnscentedTransform:
         nin = self.nin
         
         cov_sqrt = self.sqrt((nin + kappa) * cov)
-        self.in_dev = np.zeros((self.nsigma,) + mean.shape)
-        self.in_dev[:nin] = cov_sqrt
-        self.in_dev[nin:(2 * nin)] = -cov_sqrt
-        self.in_sigma = self.in_dev + mean        
+        self.in_dev = np.zeros(mean.shape[:-1] + (self.nsigma, nin))
+        self.in_dev[..., :nin, :] = cov_sqrt
+        self.in_dev[..., nin:(2 * nin), :] = -cov_sqrt
+        self.in_sigma = self.in_dev + mean[..., None, :]
         return self.in_sigma
     
     def unscented_transform(self, f, mean, cov):
@@ -323,9 +322,9 @@ class UnscentedTransform:
         weights = self.weights
         
         out_sigma = f(in_sigma)
-        out_mean = np.tensordot(out_sigma, weights, axes=(0, 0))
+        out_mean = np.dot(weights, out_sigma)
         out_dev = out_sigma - out_mean
-        out_cov = np.einsum('k...i,k...j,k->...ij', out_dev, out_dev, weights)
+        out_cov = np.einsum('...ki,...kj,k->...ij', out_dev, out_dev, weights)
         
         self.out_dev = out_dev
         return (out_mean, out_cov)
@@ -339,7 +338,7 @@ class UnscentedTransform:
             msg = "Transform must be done before requesting crosscov."
             raise RuntimeError(msg)
         
-        return np.einsum('k...i,k...j,k->...ij', in_dev, out_dev, weights)
+        return np.einsum('...ki,...kj,k->...ij', in_dev, out_dev, weights)
     
     def sigma_points_diff(self, mean_diff, cov_diff):
         '''Derivative of sigma-points.'''
@@ -353,13 +352,13 @@ class UnscentedTransform:
         nq = len(mean_diff)
         kappa = self.kappa
         
-        cov_sqrt = in_dev[nin:]
+        cov_sqrt = in_dev[..., :nin, :]
         cov_sqrt_diff = self.sqrt.diff(cov_sqrt, (nin + kappa) * cov_diff)
-        dev_diff = np.zeros((nq, self.nsigma, nin))
-        dev_diff[:, :nin] = cov_sqrt_diff
-        dev_diff[:, nin:(2 * nin)] = -cov_sqrt_diff
-
-        in_sigma_diff = dev_diff + mean_diff[:, None, :]
+        dev_diff = np.zeros(mean_diff.shape[:-1] + (self.nsigma, nin))
+        dev_diff[..., :nin, :] = cov_sqrt_diff
+        dev_diff[..., nin:(2 * nin), :] = -cov_sqrt_diff
+        
+        in_sigma_diff = dev_diff + mean_diff[..., None, :]
         return in_sigma_diff
     
     def transform_diff(self, f_diff, mean_diff, cov_diff):
