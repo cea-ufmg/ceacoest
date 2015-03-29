@@ -20,7 +20,7 @@ Topic :: Software Development'''
 
 setup(
     name="qwfilter",
-    version="0.1.dev1",
+    version="0.1.dev2",
     packages=find_packages(),
     install_requires=["numpy", "scipy"],
     test_requires=["pytest"],
