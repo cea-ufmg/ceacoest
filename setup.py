@@ -2,10 +2,25 @@
 
 from setuptools import setup, find_packages
 
+DESCRIPTION = '''\
+Generates python code from sympy functions and models.
+'''
+
+CLASSIFIERS = '''\
+Intended Audience :: Developers
+Intended Audience :: Science/Research
+License :: OSI Approved
+Operating System :: POSIX
+Operating System :: Unix
+Programming Language :: Python
+Programming Language :: Python :: 3
+Programming Language :: Python :: 3 :: Only
+Topic :: Scientific/Engineering
+Topic :: Software Development'''
 
 setup(
     name="qwfilter",
-    version="0.1",
+    version="0.1.dev1",
     packages=find_packages(),
     install_requires=["numpy", "scipy"],
     test_requires=["pytest"],
@@ -14,6 +29,8 @@ setup(
     author="Dimas Abreu Dutra",
     author_email="dimasadutra@gmail.com",
     description='"QW" filtering and smoothing library.',
+    classifiers=CLASSIFIERS.split('\n'),
+    platforms=["Linux", "Unix"],
     license="MIT",
     url="http://github.com/dimasad/qwfilter",
 )
