@@ -22,7 +22,7 @@ setup(
     name="qwfilter",
     version="0.1.dev2",
     packages=find_packages(),
-    install_requires=["numpy", "scipy"],
+    install_requires=["numpy", "scipy", "sym2num"],
     test_requires=["pytest"],
     
     # metadata for upload to PyPI
