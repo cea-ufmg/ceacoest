@@ -60,7 +60,7 @@ class SymbolicDuffing(sde.EulerDiscretizedModel):
 GeneratedDuffing = sym2num.class_obj(
     SymbolicDuffing(), sym2num.ScipyPrinter(),
     name='GeneratedDuffing', 
-    meta=sym2num.ParametrizedModel.meta
+    meta=sde.DiscretizedModel.meta
 )
 
 
