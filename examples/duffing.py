@@ -11,7 +11,7 @@ from qwfilter import sde
 class SymbolicDuffing(sde.EulerDiscretizedModel):
     '''Symbolic Duffing oscillator model.'''
 
-    var_names = ['t', 'x', 'y', 'q', 'c', 'td', 'k']
+    var_names = ['t', 'x', 'y', 'q', 'c', 't_next']
     '''Name of model variables.'''
     
     function_names = ['f', 'g', 'h']
@@ -53,14 +53,14 @@ class SymbolicDuffing(sde.EulerDiscretizedModel):
     
     def h(self, t, x, q, c):
         '''Measurement function.'''
-        s = self.symbols(t, x, q, c)
+        s = self.symbols(t=t, x=x, q=q, c=c)
         return [s.x]
 
 
 GeneratedDuffing = sym2num.class_obj(
     SymbolicDuffing(), sym2num.ScipyPrinter(),
     name='GeneratedDuffing', 
-    meta=sde.DiscretizedModel.meta
+    meta=sym2num.ParametrizedModel.meta
 )
 
 
