@@ -8,6 +8,19 @@ import numpy as np
 import sym2num
 
 
+model_append_template = '''\
+    nx = {nx}
+    """Length of the state vector."""
+
+    ny = {ny}
+    """Length of the output vector."""
+
+    nw = {nw}
+    """Length of the process noise vector."""
+
+    nq = {nq}
+    """Length of the unknown parameter vector."""'''
+
 class SymbolicModel(sym2num.SymbolicModel):
 
     @property
@@ -42,6 +55,14 @@ class SymbolicModel(sym2num.SymbolicModel):
             Qexpr = np.dot(g.out, g.out.T)
             self.functions['Q'] = sym2num.SymbolicFunction(Qexpr, g.args, 'Q')
 
+    def print_class(self, printer, name=None, signature=''):
+        base_code = super().print_class(printer, name, signature)
+        nx = self.vars['x'].size
+        ny = self.vars['y'].size
+        nw = self.functions['g'].out.shape[1]
+        nq = self.vars['q'].size if 'q' in self.vars else 0
+        suffix = model_append_template.format(nx=nx, ny=ny, nw=nw, nq=nq)
+        return '\n'.join([base_code, suffix])
 
 class SymbolicDiscretizedModel(SymbolicModel):
     
@@ -67,8 +88,8 @@ class SymbolicDiscretizedModel(SymbolicModel):
     def discretized_args(self, args):
         # Check if first argument is time
         arg_items = list(args.items())
-        if arg_items[0][0] != 't':
-            msg = "First argument in discretized functions must be time."
+        if arg_items[0][0] != 't' or arg_items[1][0] != 'x':
+            msg = "First two arguments in discretized functions must `(t, x)`."
             raise RuntimeError(msg)
         
         # Switch the time argument with the transition times
@@ -86,7 +107,7 @@ class EulerDiscretizedModel(SymbolicDiscretizedModel):
         
         # Discretize the drift
         f = self.functions['f']
-        fd = f.out * dt
+        fd = self.vars['x'] + f.out * dt
         fdargs = self.discretized_args(f.args)
         self.functions['fd'] = sym2num.SymbolicFunction(fd, fdargs, 'fd')
         

@@ -13,6 +13,8 @@ Improvement ideas
    correction. Weights can also be generated in the constructor.
  * Since the transition noise is independent from the states, the unscented
    transform for the prediction can be devided in two simpler ones.
+ * Fuse FilterArrayHistory with DTKalmanFilterBase. For no history simply
+   set `history_size = 0`.
 
 '''
 
@@ -46,8 +48,8 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         self.base_shape = self.mean.shape[:-1]
         '''Shape of scalar element for filter vectorization.'''
                 
-        self.k = 0
-        '''The latest working sample number.'''
+        self.t = 0
+        '''The latest filtered time sample.'''
         
         # Process the keyword options
         self.initialize_options(options)
@@ -69,15 +71,12 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
             Gradient of mean of inital states. Zero by default.
         initial_cov_grad : (np, ..., nx, nx) array_like
             Gradient of covariance of inital states. Zero by default.
+        t0 : float
+            Initial time, zero by default.
         
         '''
-        # Initialize any other inherited options
-        try:
-            super().initialize_options(options)
-        except AttributeError:
-            pass
-
         # Get the base options
+        self.t = options.get('t0', 0)
         self.save_likelihood = options.get('save_likelihood', True)
         self.calculate_gradients = options.get('calculate_gradients', False)
         self.calculate_pred_crosscov = options.get('calculate_pred_crosscov',
@@ -86,7 +85,6 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         # Initialize the variables associtated to the options
         if self.save_likelihood:
             self.loglikelihood = 0
-        
         if self.calculate_gradients:
             default_mean_grad = np.zeros((self.model.nq,) + self.mean.shape)
             default_cov_grad = np.zeros((self.model.nq,) + self.cov.shape)
@@ -94,7 +92,7 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
             self.cov_grad = options.get('initial_cov_grad', default_cov_grad)
     
     def _save_prediction(self, mean, cov):
-        '''Save the prection data and update time index.'''
+        '''Save the prection data.'''
         self.mean = mean
         self.cov = cov
     
@@ -108,29 +106,37 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         pass
     
     @abc.abstractmethod
-    def predict(self, u=[]):
-        '''Predict the state distribution at the next time index.'''
+    def predict(self, t):
+        '''Predict the state distribution at a next time sample.'''
         raise NotImplementedError("Pure abstract method.")
     
     @abc.abstractmethod
-    def correct(self, y, u=[]):
+    def correct(self, y):
         '''Correct the state distribution, given the measurement vector.'''
         raise NotImplementedError("Pure abstract method.")
     
-    def filter(self, y, u=None):
-        if u is None:
-            u = np.empty((len(y), 0))
+    def filter(self, t, y):
+        t = np.asarray(t)
+        y = np.asanyarray(y)
         
-        for k, yk in enumerate(y[:-1]):
-            uk = u[k]
-            self.correct(yk, uk)
-            self.predict(uk)
+        if self.t > t[0]:
+            raise ValueError("Given times start before initial filter time.")
         
-        self.correct(y[-1], u[-1])
+        if self.t == t[0]:
+            self.correct(y[0])
+            y = y[1:]
+            t = t[1:]
+        
+        for tk, yk in zip(t, y):
+            self.predict(tk)
+            self.correct(yk)
 
 
 class FilterArrayHistory(DTKalmanFilterBase):
     '''Class to save filter history in numpy arrays.'''
+    def __init__(self, model, mean, cov, **options):
+        super().__init__(model, mean, cov, **options)
+        self.initalize_options(options)
     
     def initalize_options(self, options):
         '''Initialize and validate options, given as a dictionary.
@@ -141,49 +147,55 @@ class FilterArrayHistory(DTKalmanFilterBase):
             Number of elements to allocate for history, zero by default.
         
         '''
-        # Initialize any other inherited options
-        try:
-            super().initialize_options(options)
-        except AttributeError:
-            pass
-        
-        self.initialize_history(options.get('history_size', 0))
+        # Get the history size parameter and initialize history
+        self.history_size = options.get('history_size', 0)
+        self.initialize_history()
     
-    def initialize_history(self, size):
-        self.history_size = size
-        mean_shape = (size,) + self.mean.shape
-        cov_shape = (size,) + self.cov.shape
+    def initialize_history(self):
+        if not self.history_size:
+            return
         
+        # Compute the relevant shapes
+        mean_shape = (self.history_size,) + self.mean.shape
+        cov_shape = (self.history_size,) + self.cov.shape
+
+        # Allocate the history vectors
         self.pred_mean = np.zeros(mean_shape)
         self.pred_cov = np.zeros(cov_shape)
         self.corr_mean = np.zeros(mean_shape)
         self.corr_cov = np.zeros(cov_shape)
-        
         if self.calculate_pred_crosscov:
             self.pred_crosscov = np.zeros(cov_shape)
+        
+        # Initialize the history variables
+        self.__k = 0
+        self.pred_mean[0] = self.mean
+        self.corr_mean[0] = self.mean
+        self.pred_cov[0] = self.cov
+        self.corr_cov[0] = self.cov
     
     def _save_prediction(self, mean, cov):
+        '''Save the prection data into the filter history.'''
         super()._save_prediction(mean, cov)
-        
-        if self.k < self.history_size:
-            self.pred_mean[self.k] = mean
-            self.pred_cov[self.k] = cov
-            self.corr_mean[self.k] = mean
-            self.corr_cov[self.k] = cov
+        self.__k += 1
+        if self.__k < self.history_size:
+            self.pred_mean[self.__k] = mean
+            self.pred_cov[self.__k] = cov
+            self.corr_mean[self.__k] = mean
+            self.corr_cov[self.__k] = cov
     
     def _save_correction(self, mean, cov):
+        '''Save the correction data into the filter history.'''
         super()._save_correction(mean, cov)
-        
-        if self.k < self.history_size:
-            self.corr_mean[self.k] = mean
-            self.corr_cov[self.k] = cov
+        if self.__k < self.history_size:
+            self.corr_mean[self.__k] = mean
+            self.corr_cov[self.__k] = cov
 
     def _save_prediction_crosscov(self, crosscov):
-        '''Save the prediction cross-covariance.'''
+        '''Save the prediction cross-covariance into the filter history.'''
         super()._save_prediction_crosscov(mean, cov)
-        
-        if self.k < self.history_size:
-            self.pred_crosscov[self.k] = crosscov
+        if self.__k < self.history_size:
+            self.pred_crosscov[self.__k] = crosscov
 
     
 def svd_sqrt(mat):
@@ -406,30 +418,26 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
         
         self.__ut = UnscentedTransform(model.nx, **ut_options)
     
-    def predict(self, u=[]):
+    def predict(self, t):
         '''Predict the state distribution at the next time index.'''
-        w_mean = np.zeros(self.base_shape + (self.model.nw,))
-        aug_mean = np.concatenate([self.mean, w_mean], -1)
-        aug_cov = scipy.linalg.block_diag(self.cov, self.model.wcov)
-        def faug(xaug):
-            x = xaug[..., :self.model.nx]
-            w = xaug[..., self.model.nx:]
-            return self.model.f(self.k, x, u, w)
+        td = np.array([self.t, t])
+        def trans(x):
+            return self.model.fd(td, x)
         
-        pred_mean, pred_cov = self.__ut.transform(faug, aug_mean, aug_cov)
+        pred_mean, pred_cov = self.__ut.transform(trans, self.mean, self.cov)
+        pred_cov += self.model.Qd(td, self.mean)
         self._save_prediction(pred_mean, pred_cov)
         
         if self.calculate_gradients:
-            self._calculate_prediction_grad(u, aug_mean, aug_cov)
+            self._calculate_prediction_grad(t)
         
         if self.calculate_pred_crosscov:
-            aug_crosscov = self.crosscov()
-            pred_crosscov = aug_crosscov[:self.model.nx]
+            pred_crosscov = self.crosscov()
             self._save_prediction_crosscov(pred_crosscov)
         
-        self.k += 1
+        self.t = t
     
-    def _calculate_prediction_grad(self, u=[]):
+    def _calculate_prediction_grad(self, t):
         nx = self.model.nx
         nw = self.model.nw
         nq = self.model.nq
@@ -471,7 +479,7 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         
         self.__ut = UnscentedTransform(model.nx, **ut_options)
     
-    def correct(self, y, u=[]):
+    def correct(self, y):
         '''Correct the state distribution, given the measurement vector.'''
         assert np.shape(y) == (self.model.ny,), "No vectorization accepted in y"
         
@@ -482,16 +490,16 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         # Remove inactive outputs
         active = ~mask
         y = ma.compressed(y)
-        vcov = self.model.vcov[np.ix_(active, active)]
+        R = self.model.R()[np.ix_(active, active)]
         def meas_fun(x):
-            return self.model.h(self.k, x, u)[..., active]
+            return self.model.h(self.t, x)[..., active]
         
         # Perform unscented transform
         hmean, hcov = self.__ut.transform(meas_fun, self.mean, self.cov)
         hcrosscov = self.__ut.crosscov()
         
         # Factorize covariance
-        ycov = hcov + vcov
+        ycov = hcov + R
         ycov_chol = numpy.linalg.cholesky(ycov)
         ycov_chol_inv = numpy.linalg.inv(ycov_chol)
         ycov_inv = np.einsum('...ki,...kj', ycov_chol_inv, ycov_chol_inv)
