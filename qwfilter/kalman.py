@@ -13,8 +13,6 @@ Improvement ideas
    correction. Weights can also be generated in the constructor.
  * Since the transition noise is independent from the states, the unscented
    transform for the prediction can be devided in two simpler ones.
- * Change the axis of the sigma-points because, as is it can mess up
-   broadcasting.
 
 '''
 
@@ -356,7 +354,7 @@ class UnscentedTransform:
         in_sigma_diff = dev_diff + mean_diff
         return in_sigma_diff
     
-    def transform_diff(self, f_diff, mean_diff, cov_diff):
+    def transform_diff(self, f_diff, mean_diff, cov_diff, crosscov=False):
         weights = self.weights
         try:
             in_dev = self.in_dev
@@ -374,7 +372,14 @@ class UnscentedTransform:
                                  out_dev_diff, out_dev, weights)
         out_cov_diff += np.einsum('k...i,k...j,k->...ij',
                                   out_dev, out_dev_diff, weights)
-        return (out_mean_diff, out_cov_diff)
+        if crosscov:
+            crosscov_diff = np.einsum('k...qi,k...j,k->...qij',
+                                      in_dev_diff, out_dev, weights)
+            crosscov_diff += np.einsum('k...i,k...qj,k->...qij',
+                                       in_dev, out_dev, weights)
+            return (out_mean_diff, out_cov_diff, crosscov_diff)
+        else:
+            return (out_mean_diff, out_cov_diff)
 
 
 class DTUnscentedPredictor(DTKalmanFilterBase):
@@ -416,12 +421,12 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
 
         dQd_dq = self.model.dQd_dq(td, x)
         dQd_dx = self.model.dQd_dx(td, x)
-        DQd_Dq = dQd_dq + np.einsum('ij,jkl', dx_dq, dQd_dx)
+        DQd_Dq = dQd_dq + np.einsum('...ij,...jkl', dx_dq, dQd_dx)
         
         def Dfd_Dq(x, dx_dq):
             dfd_dq = self.model.dfd_dq(td, x)
             dfd_dx = self.model.dfd_dx(td, x)
-            return dfd_dq + np.einsum('s...qx,...sxf->q...sf', dx_dq, dfd_dx)
+            return dfd_dq + np.einsum('...qx,...xf->...qf', dx_dq, dfd_dx)
         ut_grads = self.__ut.transform_diff(Dfd_Dq, dx_dq, self.cov_grad)
         
         self.mean_grad = ut_grads[0]
@@ -483,7 +488,7 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         if self.calculate_gradients:
             self._calculate_correction_grad(t, active)
     
-    def _calculate_correction_grad(self, t, active):
+    def _calculate_correction_grad(self, t, active, Py_inv):
         x = self.mean
         dx_dq = self.mean_grad
         DR_Dq = self.model.dR_dq()[..., np.ix_(active, active)]
@@ -491,8 +496,17 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         def Dh_Dq(x, dx_dq):
             dh_dq = self.model.dh_dq(t, x)[..., active]
             dh_dx = self.model.dh_dx(t, x)[..., active]
-            return dh_dq + np.einsum('...isj,...jsk->...isk', dx_dq, dh_dx)
-        ut_grads = self.__ut.transform_diff(Dh_Dq, dx_dq, self.cov_grad)
+            return dh_dq + np.einsum('...qx,...xh->...qh', dx_dq, dh_dx)
+        
+        ut_grads = self.__ut.transform_diff(Dh_Dq, dx_dq, self.cov_grad, True)
+        dh_dq, dPh_dq, dPxh_dq = ut_grads
+        
+        dPy_dq = dPh_dq + dR_dq
+        dPy_inv_dq = einsum('...ij,...ajk,...kl', Py_inv, dPy_dq, Py_inv)
+        
+        de_dq = -ut_grad[0]
+        dK_dq = np.einsum('...ki,...akj', Pxh, dPy_inv_dq)
+        dK_dq += np.einsum('...aki,...kj', dPxh_dq, Py_inv)
         
         return
         ########## WRONG!!!
