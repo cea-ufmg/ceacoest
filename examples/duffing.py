@@ -19,6 +19,12 @@ class SymbolicDuffing(sde.EulerDiscretizedModel):
     
     function_names = ['f', 'g', 'h', 'R']
     '''Name of the model functions.'''
+
+    derivatives = [('dfd_dx', 'fd', 'x'), ('dfd_dq', 'fd', 'q'),
+                   ('dQd_dx', 'Qd', 'x'), ('dQd_dq', 'Qd', 'q'),
+                   ('dh_dx', 'h', 'x'), ('dh_dq', 'h', 'q'),
+                   ('dR_dq', 'R', 'q'),]
+    '''List of the model function derivatives to calculate / generate.'''
     
     t = 't'
     '''Time variable.'''
@@ -100,8 +106,7 @@ def sim():
 
 
 def filter(model, t, x, y):
-    filtopts = dict(save_history='filter')
-    
+    filtopts = dict(save_history='filter', calculate_gradients=True)
     x0_mean = [1.2, 0.2]
     x0_cov = np.diag([0.1, 0.1])
     filt = kalman.DTUnscentedKalmanFilter(model, x0_mean, x0_cov, **filtopts)

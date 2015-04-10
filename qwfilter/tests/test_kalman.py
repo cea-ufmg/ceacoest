@@ -105,17 +105,17 @@ class NonlinearFunction:
         return f
     
     def d_dq(self, x, q):
-        df_dq = np.zeros((self.nq,) + np.shape(x))
+        df_dq = np.zeros(np.shape(x)[:-1] + (self.nq, self.nx))
         for i, j, k in np.ndindex(self.nx, self.nx, self.nq):
             if i <= j:
-                df_dq[k, ..., j] +=  x[..., i] ** (k + j)
+                df_dq[..., k, j] +=  x[..., i] ** (k + j)
         return df_dq
     
     def d_dx(self, x, q):
-        df_dx = np.zeros((self.nx,) + np.shape(x))
+        df_dx = np.zeros(np.shape(x) + (self.nx,))
         for i, j, k in np.ndindex(self.nx, self.nx, self.nq):
             if i <= j and k + j != 0:
-                df_dx[i, ..., j] += q[..., k] * (k + j) * x[..., i]**(k + j - 1)
+                df_dx[..., i, j] += q[..., k] * (k + j) * x[..., i]**(k + j - 1)
         return df_dx
 
 
@@ -206,6 +206,7 @@ def test_sigma_points_diff_wrt_mean(ut, ut_sqrt, x, cov, nx):
     sigma(x, cov)
     ds_dmean = ut.sigma_points_diff(np.identity(nx), np.zeros((nx, nx, nx)))
     ds_dmean_num = utils.central_diff(lambda x: sigma(x, cov), x)
+    ds_dmean_num = np.rollaxis(ds_dmean_num, 1)
     
     assert ArrayCmp(ds_dmean_num) == ds_dmean
 
@@ -233,7 +234,7 @@ def test_sigma_points_diff_wrt_cov(ut, ut_sqrt, x, cov, nx):
     for k in range(ntril):
         dsigma_dcij_num = utils.central_diff(lambda cij: sigma(cij), 
                                              cov[i[k], j[k]])
-        assert ArrayCmp(dsigma_dcov[k]) == dsigma_dcij_num
+        assert ArrayCmp(dsigma_dcov[:, k]) == dsigma_dcij_num
 
 
 def test_transform_diff_wrt_q(ut, ut_sqrt, nlfunction, x, q, cov, nx, nq):
@@ -274,7 +275,7 @@ def test_transform_diff_wrt_mean(ut, ut_sqrt, nlfunction, x, q, cov, nx):
         return ut.transform(lambda x: nlfunction(x, q), x, cov)[1]
     
     def f_diff(x, dx):
-        return np.einsum('i...k,k...j->i...j', dx, nlfunction.d_dx(x, q))
+        return np.einsum('sqx,sxf->sqf', dx, nlfunction.d_dx(x, q))
     
     num_mean_diff = utils.central_diff(ut_mean, x)
     num_cov_diff = utils.central_diff(ut_cov, x)

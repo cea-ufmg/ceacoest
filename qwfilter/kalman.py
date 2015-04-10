@@ -13,6 +13,8 @@ Improvement ideas
    correction. Weights can also be generated in the constructor.
  * Since the transition noise is independent from the states, the unscented
    transform for the prediction can be devided in two simpler ones.
+ * Change the axis of the sigma-points because, as is it can mess up
+   broadcasting.
 
 '''
 
@@ -305,10 +307,10 @@ class UnscentedTransform:
         nin = self.nin
         
         cov_sqrt = self.sqrt((nin + kappa) * cov)
-        self.in_dev = np.zeros(mean.shape[:-1] + (self.nsigma, nin))
-        self.in_dev[..., :nin, :] = cov_sqrt
-        self.in_dev[..., nin:(2 * nin), :] = -cov_sqrt
-        self.in_sigma = self.in_dev + mean[..., None, :]
+        self.in_dev = np.zeros((self.nsigma,) + mean.shape)
+        self.in_dev[:nin] = cov_sqrt
+        self.in_dev[nin:(2 * nin)] = -cov_sqrt
+        self.in_sigma = self.in_dev + mean
         return self.in_sigma
     
     def transform(self, f, mean, cov):
@@ -316,9 +318,9 @@ class UnscentedTransform:
         weights = self.weights
         
         out_sigma = f(in_sigma)
-        out_mean = np.dot(weights, out_sigma)
+        out_mean = np.einsum('k,k...', weights, out_sigma)
         out_dev = out_sigma - out_mean
-        out_cov = np.einsum('...ki,...kj,k->...ij', out_dev, out_dev, weights)
+        out_cov = np.einsum('k...i,k...j,k->...ij', out_dev, out_dev, weights)
         
         self.out_dev = out_dev
         return (out_mean, out_cov)
@@ -332,7 +334,7 @@ class UnscentedTransform:
             msg = "Transform must be done before requesting crosscov."
             raise RuntimeError(msg)
         
-        return np.einsum('...ki,...kj,k->...ij', in_dev, out_dev, weights)
+        return np.einsum('k...i,k...j,k->...ij', in_dev, out_dev, weights)
     
     def sigma_points_diff(self, mean_diff, cov_diff):
         '''Derivative of sigma-points.'''
@@ -346,13 +348,12 @@ class UnscentedTransform:
         nq = len(mean_diff)
         kappa = self.kappa
         
-        cov_sqrt = in_dev[..., :nin, :]
+        cov_sqrt = in_dev[:nin]
         cov_sqrt_diff = self.sqrt.diff(cov_sqrt, (nin + kappa) * cov_diff)
-        dev_diff = np.zeros(mean_diff.shape[:-1] + (self.nsigma, nin))
-        dev_diff[..., :nin, :] = cov_sqrt_diff
-        dev_diff[..., nin:(2 * nin), :] = -cov_sqrt_diff
-        
-        in_sigma_diff = dev_diff + mean_diff[..., None, :]
+        dev_diff = np.zeros((self.nsigma,) + mean_diff.shape)
+        dev_diff[:nin] = np.rollaxis(cov_sqrt_diff, -2)
+        dev_diff[nin:(2 * nin)] = -dev_diff[:nin]
+        in_sigma_diff = dev_diff + mean_diff
         return in_sigma_diff
     
     def transform_diff(self, f_diff, mean_diff, cov_diff):
@@ -367,17 +368,17 @@ class UnscentedTransform:
         
         in_sigma_diff = self.sigma_points_diff(mean_diff, cov_diff)
         out_sigma_diff = f_diff(in_sigma, in_sigma_diff)
-        out_mean_diff = np.dot(weights, out_sigma_diff)
-        out_dev_diff = out_sigma_diff - out_mean_diff[..., None, :]
-        out_cov_diff = np.einsum('...ki,...kj,k->...ij',
+        out_mean_diff = np.einsum('k,k...', weights, out_sigma_diff)
+        out_dev_diff = out_sigma_diff - out_mean_diff
+        out_cov_diff = np.einsum('k...i,k...j,k->...ij',
                                  out_dev_diff, out_dev, weights)
-        out_cov_diff += np.einsum('...ki,...kj,k->...ij',
+        out_cov_diff += np.einsum('k...i,k...j,k->...ij',
                                   out_dev, out_dev_diff, weights)
         return (out_mean_diff, out_cov_diff)
 
 
 class DTUnscentedPredictor(DTKalmanFilterBase):
-    
+
     def __init__(self, model, mean, cov, **options):
         super().__init__(model, mean, cov, **options)
 
@@ -399,42 +400,32 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
         pred_cov += self.model.Qd(td, self.mean)
         self._save_prediction(pred_mean, pred_cov)
         
-        if self.calculate_gradients:
-            self._calculate_prediction_grad(t)
-        
         if self.calculate_pred_crosscov:
             pred_crosscov = self.crosscov()
             self._save_prediction_crosscov(pred_crosscov)
         
+        if self.calculate_gradients:
+            self._calculate_prediction_grad(t)
+                
         self.t = t
     
     def _calculate_prediction_grad(self, t):
-        nx = self.model.nx
-        nw = self.model.nw
-        nq = self.model.nq
-        naug = nx + nw
-        base_shape = self.base_shape
+        td = np.array((self.t, t))
+        x = self.mean
+        dx_dq = self.mean_grad
+
+        dQd_dq = self.model.dQd_dq(td, x)
+        dQd_dx = self.model.dQd_dx(td, x)
+        DQd_Dq = dQd_dq + np.einsum('ij,jkl', dx_dq, dQd_dx)
         
-        w_mean_grad = np.zeros((nq,) + base_shape + (nw,))
-        aug_mean_grad = np.concatenate([self.mean_grad, w_mean_grad], axis=-1)
-        aug_cov_grad = np.zeros((nq,) + base_shape + (naug, naug))
-        aug_cov_grad[..., :nx, :nx] = self.cov_grad
+        def Dfd_Dq(x, dx_dq):
+            dfd_dq = self.model.dfd_dq(td, x)
+            dfd_dx = self.model.dfd_dx(td, x)
+            return dfd_dq + np.einsum('s...qx,...sxf->q...sf', dx_dq, dfd_dx)
+        ut_grads = self.__ut.transform_diff(Dfd_Dq, dx_dq, self.cov_grad)
         
-        def faug_grad(xaug, dxaug_dq):
-            x = xaug[..., :nx]
-            w = xaug[..., nx:]
-            dx_dq = dxaug_dq[..., :nx]
-            dw_dq = dxaug_dq[..., nx:]
-            
-            df_dq = self.model.df_dq(self.k, x, u, w)
-            df_dx = self.model.df_dx(self.k, x, u, w)
-            df_dw = self.model.df_dw(self.k, x, u, w)
-            return (df_dq + np.einsum('i...k,k...j->i...j', dx_dq, df_dx) +
-                    np.einsum('i...k,k...j->i...j', dw_dq, df_dw))
-        
-        grads = self.transform_diff(faug_grad, aug_mean_grad, aug_cov_grad)
-        self.mean_grad = grads[0]
-        self.cov_grad = grads[1]
+        self.mean_grad = ut_grads[0]
+        self.cov_grad = ut_grads[1] + DQd_Dq
 
 
 class DTUnscentedCorrector(DTKalmanFilterBase):
@@ -488,6 +479,25 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
                 -0.5 * np.einsum('...i,...ij,...j', err, ycov_inv, err) -
                 np.log(ycov_chol_diag).sum(-1)
             )
+
+        if self.calculate_gradients:
+            self._calculate_correction_grad(t, active)
+    
+    def _calculate_correction_grad(self, t, active):
+        x = self.mean
+        dx_dq = self.mean_grad
+        DR_Dq = self.model.dR_dq()[..., np.ix_(active, active)]
+        
+        def Dh_Dq(x, dx_dq):
+            dh_dq = self.model.dh_dq(t, x)[..., active]
+            dh_dx = self.model.dh_dx(t, x)[..., active]
+            return dh_dq + np.einsum('...isj,...jsk->...isk', dx_dq, dh_dx)
+        ut_grads = self.__ut.transform_diff(Dh_Dq, dx_dq, self.cov_grad)
+        
+        return
+        ########## WRONG!!!
+        self.mean_grad = ut_grads[0]
+        self.cov_grad = ut_grads[1] + DR_Dq
 
 
 class DTUnscentedKalmanFilter(DTUnscentedPredictor, DTUnscentedCorrector):
