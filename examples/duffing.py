@@ -100,8 +100,10 @@ def sim():
 
 
 def filter(model, t, x, y):
+    filtopts = dict(save_history='filter')
+    
     x0_mean = [1.2, 0.2]
     x0_cov = np.diag([0.1, 0.1])
-    filt = kalman.DTUnscentedKalmanFilter(model, x0_mean, x0_cov)
+    filt = kalman.DTUnscentedKalmanFilter(model, x0_mean, x0_cov, **filtopts)
     filt.filter(t, y)
     

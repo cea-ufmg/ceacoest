@@ -13,8 +13,6 @@ Improvement ideas
    correction. Weights can also be generated in the constructor.
  * Since the transition noise is independent from the states, the unscented
    transform for the prediction can be devided in two simpler ones.
- * Fuse FilterArrayHistory with DTKalmanFilterBase. For no history simply
-   set `history_size = 0`.
 
 '''
 
@@ -71,17 +69,21 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
             Gradient of mean of inital states. Zero by default.
         initial_cov_grad : (np, ..., nx, nx) array_like
             Gradient of covariance of inital states. Zero by default.
+        save_history : int or 'filter'
+            Wether to save the filter history or not. If it is an int then
+            it specifies the history size. Otherwise the size is defined by
+            the filter function. Zero by default.
         t0 : float
             Initial time, zero by default.
         
         '''
         # Get the base options
         self.t = options.get('t0', 0)
+        self.save_history = options.get('save_history', 0)
         self.save_likelihood = options.get('save_likelihood', True)
         self.calculate_gradients = options.get('calculate_gradients', False)
         self.calculate_pred_crosscov = options.get('calculate_pred_crosscov',
                                                    False)
-        
         # Initialize the variables associtated to the options
         if self.save_likelihood:
             self.loglikelihood = 0
@@ -90,20 +92,52 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
             default_cov_grad = np.zeros((self.model.nq,) + self.cov.shape)
             self.mean_grad = options.get('initial_mean_grad', default_mean_grad)
             self.cov_grad = options.get('initial_cov_grad', default_cov_grad)
+        if self.save_history == 'filter':
+            self.initialize_history(0)
+        else:
+            self.initialize_history(self.save_history)
+    
+    def initialize_history(self, size):
+        self.history_size = size
+        self.history_ind = 0
+        if self.history_size:
+            # Allocate the history vectors
+            self.pred_mean = np.zeros((self.history_size,) + self.mean.shape)
+            self.pred_cov = np.zeros((self.history_size,) + self.cov.shape)
+            self.corr_mean = np.zeros((self.history_size,) + self.mean.shape)
+            self.corr_cov = np.zeros((self.history_size,) + self.cov.shape)
+            if self.calculate_pred_crosscov:
+                self.pred_crosscov = np.zeros_like(self.corr_cov)
+            # Initialize the history variables
+            self.pred_mean[0] = self.mean
+            self.corr_mean[0] = self.mean
+            self.pred_cov[0] = self.cov
+            self.corr_cov[0] = self.cov
     
     def _save_prediction(self, mean, cov):
         '''Save the prection data.'''
         self.mean = mean
         self.cov = cov
+        if self.save_history and self.history_ind + 1 < self.history_size:
+            k = self.history_ind = self.history_ind + 1
+            self.pred_mean[k] = mean
+            self.pred_cov[k] = cov
+            self.corr_mean[k] = mean
+            self.corr_cov[k] = cov
     
     def _save_correction(self, mean, cov):
         '''Save the correction data.'''
         self.mean = mean
         self.cov = cov
+        if self.save_history and self.history_ind < self.history_size:
+            k = self.history_ind
+            self.corr_mean[k] = mean
+            self.corr_cov[k] = cov
     
     def _save_prediction_crosscov(self, crosscov):
         '''Save the prediction cross-covariance.'''
-        pass
+        if self.save_history and self.history_ind < self.history_size:
+            self.pred_crosscov[self.history_ind] = crosscov
     
     @abc.abstractmethod
     def predict(self, t):
@@ -122,6 +156,9 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         if self.t > t[0]:
             raise ValueError("Given times start before initial filter time.")
         
+        if self.save_history == 'filter':
+            self.initialize_history(len(t))
+        
         if self.t == t[0]:
             self.correct(y[0])
             y = y[1:]
@@ -130,72 +167,6 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         for tk, yk in zip(t, y):
             self.predict(tk)
             self.correct(yk)
-
-
-class FilterArrayHistory(DTKalmanFilterBase):
-    '''Class to save filter history in numpy arrays.'''
-    def __init__(self, model, mean, cov, **options):
-        super().__init__(model, mean, cov, **options)
-        self.initalize_options(options)
-    
-    def initalize_options(self, options):
-        '''Initialize and validate options, given as a dictionary.
-        
-        Options
-        -------
-        history_size :
-            Number of elements to allocate for history, zero by default.
-        
-        '''
-        # Get the history size parameter and initialize history
-        self.history_size = options.get('history_size', 0)
-        self.initialize_history()
-    
-    def initialize_history(self):
-        if not self.history_size:
-            return
-        
-        # Compute the relevant shapes
-        mean_shape = (self.history_size,) + self.mean.shape
-        cov_shape = (self.history_size,) + self.cov.shape
-
-        # Allocate the history vectors
-        self.pred_mean = np.zeros(mean_shape)
-        self.pred_cov = np.zeros(cov_shape)
-        self.corr_mean = np.zeros(mean_shape)
-        self.corr_cov = np.zeros(cov_shape)
-        if self.calculate_pred_crosscov:
-            self.pred_crosscov = np.zeros(cov_shape)
-        
-        # Initialize the history variables
-        self.__k = 0
-        self.pred_mean[0] = self.mean
-        self.corr_mean[0] = self.mean
-        self.pred_cov[0] = self.cov
-        self.corr_cov[0] = self.cov
-    
-    def _save_prediction(self, mean, cov):
-        '''Save the prection data into the filter history.'''
-        super()._save_prediction(mean, cov)
-        self.__k += 1
-        if self.__k < self.history_size:
-            self.pred_mean[self.__k] = mean
-            self.pred_cov[self.__k] = cov
-            self.corr_mean[self.__k] = mean
-            self.corr_cov[self.__k] = cov
-    
-    def _save_correction(self, mean, cov):
-        '''Save the correction data into the filter history.'''
-        super()._save_correction(mean, cov)
-        if self.__k < self.history_size:
-            self.corr_mean[self.__k] = mean
-            self.corr_cov[self.__k] = cov
-
-    def _save_prediction_crosscov(self, crosscov):
-        '''Save the prediction cross-covariance into the filter history.'''
-        super()._save_prediction_crosscov(mean, cov)
-        if self.__k < self.history_size:
-            self.pred_crosscov[self.__k] = crosscov
 
     
 def svd_sqrt(mat):

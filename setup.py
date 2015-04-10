@@ -2,9 +2,7 @@
 
 from setuptools import setup, find_packages
 
-DESCRIPTION = '''\
-Generates python code from sympy functions and models.
-'''
+DESCRIPTION = open("README.rst", encoding="utf-8").read()
 
 CLASSIFIERS = '''\
 Intended Audience :: Developers
