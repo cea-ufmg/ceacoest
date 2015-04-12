@@ -1,23 +1,23 @@
 '''Test various modules using a Duffing oscillator SDE model.'''
 
 
+import ipopt
 import numpy as np
 import sympy
 import sym2num
 from numpy import ma
 from scipy import stats
 
-
-from qwfilter import kalman, sde
+from qwfilter import kalman, sde, utils
 
 
 class SymbolicDuffing(sde.EulerDiscretizedModel):
     '''Symbolic Duffing oscillator model.'''
 
-    var_names = ['t', 'x', 'y', 'q', 'c', 't_next']
+    var_names = {'t', 'x', 'y', 'q', 'c'}
     '''Name of model variables.'''
     
-    function_names = ['f', 'g', 'h', 'R']
+    function_names = {'f', 'g', 'h', 'R'}
     '''Name of the model functions.'''
 
     derivatives = [('dfd_dx', 'fd', 'x'), ('dfd_dq', 'fd', 'q'),
@@ -81,18 +81,18 @@ GeneratedDuffing = sym2num.class_obj(
 def sim():
     given = dict(
         alpha=1, beta=-1, delta=0.2, gamma=0.3, omega=1,
-        g1=0.1, g2=0.1, x_meas_std=0.1
+        g1=0, g2=0.1, x_meas_std=0.1
     )
     q = GeneratedDuffing.pack('q', given)
     c = GeneratedDuffing.pack('c', given)
     model = GeneratedDuffing(dict(q=q, c=c))
     
-    t = np.arange(0, 20, 0.1)
+    t = np.arange(0, 20, 0.05)
     N = t.size
     x = np.zeros((N, model.nx))
     x[0] = [1, 0]
     for k, tk in enumerate(t[:-1]):
-        td = (tk, t[k + 1])
+        td = (tk, t[k + 1] - tk)
         wk = np.random.randn(model.nw)
         x[k + 1] = model.fd(td, x[k])
         x[k + 1] += model.gd(td, x[k]).dot(wk)
@@ -105,9 +105,29 @@ def sim():
     return model, t, x, y, q
 
 
-def filter(model, t, x, y):
-    filtopts = dict(save_history='filter', calculate_gradients=True)
-    x0_mean = [1.2, 0.2]
-    x0_cov = np.diag([0.1, 0.1])
-    filt = kalman.DTUnscentedKalmanFilter(model, x0_mean, x0_cov, **filtopts)
-    filt.filter(t, y)
+def pem(model, t, x, y, q):
+    x0 = [1.2, 0.2]
+    Px0 = np.diag([0.1, 0.1])
+    
+    def merit(q, new=None):
+        mq = model.parametrize(q=q)
+        filter = kalman.DTUnscentedKalmanFilter(mq, x0, Px0, pem=True)
+        filter.filter(t, y)
+        return filter.L
+    
+    def grad(q, new=None):
+        mq = model.parametrize(q=q)
+        filter = kalman.DTUnscentedKalmanFilter(mq, x0, Px0, pem='grad')
+        filter.filter(t, y)
+        return filter.dL_dq
+    
+    def hess(q, new_q, obj_factor, lmult, new_lmult):
+        return obj_factor * utils.central_diff(grad, q)[hess_inds]
+    
+    q_bounds = np.tile([[-np.inf], [np.inf]], model.nq)
+    hess_inds = np.tril_indices(model.nq)
+    problem = ipopt.Problem(q_bounds, merit, grad, 
+                            hess=hess, hess_inds=hess_inds)
+    problem.num_option(b'obj_scaling_factor', -1)
+    problem.str_option(b'linear_solver', b'ma57')
+    (qopt, solinfo) = problem.solve(q)

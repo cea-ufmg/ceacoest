@@ -44,9 +44,15 @@ class SymbolicModel(sym2num.SymbolicModel):
     def g(self, t, x, *args):
         '''SDE diffusion.'''
         raise NotImplementedError("Pure abstract method.")
+
+    def _init_variables(self):
+        '''Initialize model variables.'''
+        self.var_names = set.union(self.var_names, {'x', 't'})
+        super()._init_variables()
     
     def _init_functions(self):
         '''Initialize model functions.'''
+        self.function_names = set.union(self.function_names, {'f', 'g'})
         super()._init_functions()
         
         # Add default implementation for Q = g * g.T
@@ -54,7 +60,7 @@ class SymbolicModel(sym2num.SymbolicModel):
             g = self.functions['g']
             Qexpr = np.dot(g.out, g.out.T)
             self.functions['Q'] = sym2num.SymbolicFunction(Qexpr, g.args, 'Q')
-
+    
     def print_class(self, printer, name=None, signature=''):
         base_code = super().print_class(printer, name, signature)
         nx = self.vars['x'].size
@@ -66,9 +72,14 @@ class SymbolicModel(sym2num.SymbolicModel):
 
 class SymbolicDiscretizedModel(SymbolicModel):
     
-    t_next = 't_next'
-    '''Next time value in a discrete-time transition.'''
-        
+    dt = 'dt'
+    '''The time step in a discrete-time transition.'''
+    
+    def _init_variables(self):
+        '''Initialize model variables.'''
+        self.var_names = set.union(self.var_names, {'dt'})
+        super()._init_variables()
+    
     def _init_functions(self):
         '''Initialize the model functions.'''
         super()._init_functions() # Initialize base class functions
@@ -88,12 +99,12 @@ class SymbolicDiscretizedModel(SymbolicModel):
     def discretized_args(self, args):
         # Check if first argument is time
         arg_items = list(args.items())
-        if arg_items[0][0] != 't' or arg_items[1][0] != 'x':
-            msg = "First two arguments in discretized functions must `(t, x)`."
+        if arg_items[0][0] != 't':
+            msg = "First argument in discretized functions must be `t`."
             raise RuntimeError(msg)
         
         # Switch the time argument with the transition times
-        td = np.hstack([self.vars['t'], self.vars['t_next']])
+        td = np.hstack([self.vars['t'], self.vars['dt']])
         return [('td', td)] + arg_items[1:]
 
 
@@ -102,8 +113,7 @@ class EulerDiscretizedModel(SymbolicDiscretizedModel):
         '''Discretize the drift and diffusion functions.'''
         # Get the discretization variables
         t = self.vars['t']
-        t_next = self.vars['t_next']
-        dt = t_next - t
+        dt = self.vars['dt']
         
         # Discretize the drift
         f = self.functions['f']
@@ -116,4 +126,3 @@ class EulerDiscretizedModel(SymbolicDiscretizedModel):
         gd = g.out * dt ** 0.5
         gdargs = self.discretized_args(g.args)
         self.functions['gd'] = sym2num.SymbolicFunction(gd, gdargs, 'gd')
-
