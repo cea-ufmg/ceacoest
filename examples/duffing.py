@@ -41,7 +41,7 @@ class SymbolicDuffing(sde.EulerDiscretizedModel):
     y = ['x_meas']
     '''Measurement vector.'''
     
-    q = ['alpha', 'beta', 'delta', 'g1', 'x_meas_std']
+    q = ['alpha', 'beta', 'delta', 'g1', 'g2', 'x_meas_std']
     '''Unknown parameter vector.'''
     
     c = ['gamma', 'omega']
@@ -58,7 +58,7 @@ class SymbolicDuffing(sde.EulerDiscretizedModel):
     def g(self, t, x, q, c):
         '''Diffusion matrix.'''
         s = self.symbols(t=t, x=x, q=q, c=c)
-        return [[0], [s.g1]]
+        return [[s.g1, 0], [0, s.g2]]
     
     def h(self, t, x, q, c):
         '''Measurement function.'''
@@ -70,9 +70,9 @@ class SymbolicDuffing(sde.EulerDiscretizedModel):
         s = self.symbols(q=q, c=c)
         return [[s.x_meas_std ** 2]]
 
-
+sym_model = SymbolicDuffing()
 GeneratedDuffing = sym2num.class_obj(
-    SymbolicDuffing(), sym2num.ScipyPrinter(),
+    sym_model, sym2num.ScipyPrinter(),
     name='GeneratedDuffing', 
     meta=sym2num.ParametrizedModel.meta
 )
@@ -81,7 +81,7 @@ GeneratedDuffing = sym2num.class_obj(
 def sim():
     given = dict(
         alpha=1, beta=-1, delta=0.2, gamma=0.3, omega=1,
-        g1=0.1, x_meas_std=0.1
+        g1=0.1, g2=0.1, x_meas_std=0.1
     )
     q = GeneratedDuffing.pack('q', given)
     c = GeneratedDuffing.pack('c', given)
@@ -100,9 +100,9 @@ def sim():
     R = model.R()
     v = np.random.multivariate_normal(np.zeros(model.ny), R, N)
     y = ma.asarray(model.h(t, x) + v)
-    y[::2] = ma.masked
+    y[1::2] = ma.masked
     
-    return model, t, x, y
+    return model, t, x, y, q
 
 
 def filter(model, t, x, y):
@@ -111,4 +111,3 @@ def filter(model, t, x, y):
     x0_cov = np.diag([0.1, 0.1])
     filt = kalman.DTUnscentedKalmanFilter(model, x0_mean, x0_cov, **filtopts)
     filt.filter(t, y)
-    

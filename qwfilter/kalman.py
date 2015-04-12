@@ -88,10 +88,12 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         if self.save_likelihood:
             self.loglikelihood = 0
         if self.calculate_gradients:
-            default_mean_grad = np.zeros((self.model.nq,) + self.mean.shape)
-            default_cov_grad = np.zeros((self.model.nq,) + self.cov.shape)
+            nq = self.model.nq
+            default_mean_grad = np.zeros((nq,) + self.mean.shape)
+            default_cov_grad = np.zeros((nq,) + self.cov.shape)
             self.mean_grad = options.get('initial_mean_grad', default_mean_grad)
             self.cov_grad = options.get('initial_cov_grad', default_cov_grad)
+            self.loglikelihood_grad = np.zeros((nq,) + self.mean.shape[:-1])
         if self.save_history == 'filter':
             self.initialize_history(0)
         else:
@@ -373,10 +375,11 @@ class UnscentedTransform:
         out_cov_diff += np.einsum('k...i,k...j,k->...ij',
                                   out_dev, out_dev_diff, weights)
         if crosscov:
+            in_dev_diff = in_sigma_diff - mean_diff ##### Inefficient
             crosscov_diff = np.einsum('k...qi,k...j,k->...qij',
                                       in_dev_diff, out_dev, weights)
             crosscov_diff += np.einsum('k...i,k...qj,k->...qij',
-                                       in_dev, out_dev, weights)
+                                       in_dev, out_dev_diff, weights)
             return (out_mean_diff, out_cov_diff, crosscov_diff)
         else:
             return (out_mean_diff, out_cov_diff)
@@ -474,9 +477,9 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         # Perform correction
         err = y - hmean
         gain = np.einsum('...ik,...kj', hcrosscov, ycov_inv)
-        pred_mean = self.mean + np.einsum('...ij,...j', gain, err)
-        pred_cov = self.cov - np.einsum('...ik,...jl,...lk', gain, gain, ycov)
-        self._save_correction(pred_mean, pred_cov)
+        corr_mean = self.mean + np.einsum('...ij,...j', gain, err)
+        corr_cov = self.cov - np.einsum('...ik,...jl,...lk', gain, gain, ycov)
+        self._save_correction(corr_mean, corr_cov)
         
         if self.save_likelihood:
             ycov_chol_diag = np.einsum('...kk->...k', ycov_chol)
@@ -486,32 +489,46 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
             )
 
         if self.calculate_gradients:
-            self._calculate_correction_grad(t, active)
+            self._calculate_correction_grad(
+                active, err, gain, hcrosscov, ycov, ycov_inv, ycov_chol
+            )
     
-    def _calculate_correction_grad(self, t, active, Py_inv):
+    def _calculate_correction_grad(self, active, e, K, Pxh, Py, PyI, PyC):
+        t = self.t
         x = self.mean
         dx_dq = self.mean_grad
-        DR_Dq = self.model.dR_dq()[..., np.ix_(active, active)]
+        dPx_dq = self.cov_grad
+        dR_dq = self.model.dR_dq()[(...,) + np.ix_(active, active)]
         
-        def Dh_Dq(x, dx_dq):
+        def Dh_Dq_fun(x, dx_dq):
             dh_dq = self.model.dh_dq(t, x)[..., active]
             dh_dx = self.model.dh_dx(t, x)[..., active]
             return dh_dq + np.einsum('...qx,...xh->...qh', dx_dq, dh_dx)
+        ut_grads = self.__ut.transform_diff(Dh_Dq_fun, dx_dq, dPx_dq, True)
+        Dh_Dq, dPh_dq, dPxh_dq = ut_grads
         
-        ut_grads = self.__ut.transform_diff(Dh_Dq, dx_dq, self.cov_grad, True)
-        dh_dq, dPh_dq, dPxh_dq = ut_grads
-        
+        de_dq = -Dh_Dq
         dPy_dq = dPh_dq + dR_dq
-        dPy_inv_dq = einsum('...ij,...ajk,...kl', Py_inv, dPy_dq, Py_inv)
+        dPyI_dq = -np.einsum('...ij,...ajk,...kl', PyI, dPy_dq, PyI)
+        dK_dq = np.einsum('...ik,...akj', Pxh, dPyI_dq)
+        dK_dq += np.einsum('...aik,...kj', dPxh_dq, PyI)
         
-        de_dq = -ut_grad[0]
-        dK_dq = np.einsum('...ki,...akj', Pxh, dPy_inv_dq)
-        dK_dq += np.einsum('...aki,...kj', dPxh_dq, Py_inv)
-        
-        return
-        ########## WRONG!!!
-        self.mean_grad = ut_grads[0]
-        self.cov_grad = ut_grads[1] + DR_Dq
+        self.mean_grad += np.einsum('...aij,...j', dK_dq, e)
+        self.mean_grad += np.einsum('...ij,...aj', K, de_dq)
+        self.cov_grad -= np.einsum('...aik,...jl,...lk', dK_dq, K, Py)
+        self.cov_grad -= np.einsum('...ik,...ajl,...lk', K, dK_dq, Py)
+        self.cov_grad -= np.einsum('...ik,...jl,...alk', K, K, dPy_dq)
+
+        if self.save_likelihood:
+            dPyC_dq = cholesky_sqrt_diff(PyC, dPy_dq)
+            diag_PyC = np.einsum('...kk->...k', PyC)
+            diag_dPyC_dq = np.einsum('...kk->...k', dPyC_dq)
+            self.loglikelihood_grad -= np.sum(diag_dPyC_dq / diag_PyC, axis=-1)
+            self.loglikelihood_grad -= 0.5 * (
+                np.einsum('...ai,...ij,...j', de_dq, PyI, e) +
+                np.einsum('...i,...aij,...j', e, dPyI_dq, e) +
+                np.einsum('...i,...ij,...aj', e, PyI, de_dq)
+            )
 
 
 class DTUnscentedKalmanFilter(DTUnscentedPredictor, DTUnscentedCorrector):
