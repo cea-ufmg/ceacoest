@@ -11,7 +11,7 @@ from scipy import stats
 from qwfilter import kalman, sde, utils
 
 
-class SymbolicDuffing(sde.EulerDiscretizedModel):
+class SymbolicDuffing(sde.ItoTaylorAW3DiscretizedModel):
     '''Symbolic Duffing oscillator model.'''
 
     var_names = {'t', 'x', 'y', 'q', 'c'}
@@ -29,10 +29,7 @@ class SymbolicDuffing(sde.EulerDiscretizedModel):
     t = 't'
     '''Time variable.'''
 
-    k = 'k'
-    '''Discretized time index.'''
-    
-    td = 'Td'
+    dt = 'dt'
     '''Discretization period.'''
     
     x = ['x', 'v']
@@ -70,6 +67,7 @@ class SymbolicDuffing(sde.EulerDiscretizedModel):
         s = self.symbols(q=q, c=c)
         return [[s.x_meas_std ** 2]]
 
+
 sym_model = SymbolicDuffing()
 GeneratedDuffing = sym2num.class_obj(
     sym_model, sym2num.ScipyPrinter(),
@@ -93,7 +91,7 @@ def sim():
     x[0] = [1, 0]
     for k, tk in enumerate(t[:-1]):
         td = (tk, t[k + 1] - tk)
-        wk = np.random.randn(model.nw)
+        wk = np.random.randn(model.nwd)
         x[k + 1] = model.fd(td, x[k])
         x[k + 1] += model.gd(td, x[k]).dot(wk)
 
@@ -121,7 +119,7 @@ def pem(model, t, x, y, q):
         filter.filter(t, y)
         return filter.dL_dq
     
-    def hess(q, new_q, obj_factor, lmult, new_lmult):
+    def hess(q, new_q=1, obj_factor=1, lmult=1, new_lmult=1):
         return obj_factor * utils.central_diff(grad, q)[hess_inds]
     
     q_bounds = np.tile([[-np.inf], [np.inf]], model.nq)

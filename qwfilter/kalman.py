@@ -5,11 +5,12 @@ TODO
  * Add derivative of SVD square root.
  * Vectorize cholesky_sqrt_diff, sigma_points_diff and transform_diff.
  * Make docstrings for all constructors.
+ * Implement filter Hessian.
 
 Improvement ideas
 -----------------
- * Allow gradients and Hessian to be calculated online, saving memory in very
-   large problems at the cost of more processing.
+ * Allow gradients and Hessian to be calculated offline, saving processing time
+   at the cost of memory.
 
 '''
 
@@ -24,6 +25,7 @@ import numpy.linalg
 import scipy.linalg
 
 from . import utils
+
 
 class DTKalmanFilterBase(metaclass=abc.ABCMeta):
     '''Discrete-time Kalman filter/smoother abstract base class.'''
@@ -180,17 +182,18 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
     def filter(self, t, y):
         t = np.asarray(t)
         y = np.asanyarray(y)
+        N = len(t)
         
         if self.save_history == 'filter':
-            self.initialize_history(len(t))
+            self.initialize_history(N)
         
         self.tk = t[0]
         self.correct(y[0])
         
-        for tk, yk in zip(t[1:], y[1:]):
-            self.predict(tk)
-            self.correct(yk)
-
+        for k in range(1, N):
+            self.predict(t[k])
+            self.correct(y[k])
+        
     
 def svd_sqrt(mat):
     '''SVD-based square root of a symmetric positive-semidefinite matrix.
