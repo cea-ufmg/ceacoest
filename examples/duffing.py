@@ -11,7 +11,7 @@ from scipy import stats
 from qwfilter import kalman, sde, utils
 
 
-class SymbolicDuffing(sde.ItoTaylorAW3DiscretizedModel):
+class SymbolicDuffing(sde.ItoTaylorAS15DiscretizedModel):
     '''Symbolic Duffing oscillator model.'''
 
     var_names = {'t', 'x', 'y', 'q', 'c'}

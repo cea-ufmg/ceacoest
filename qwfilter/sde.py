@@ -153,8 +153,8 @@ class EulerDiscretizedModel(SymbolicDiscretizedModel):
         self.functions['gd'] = sym2num.SymbolicFunction(gd, gdargs, 'gd')
 
 
-class ItoTaylorAW3DiscretizedModel(SymbolicDiscretizedModel):
-    '''Weak order 3 Ito--Taylor discretization for additive noise models.'''
+class ItoTaylorAS15DiscretizedModel(SymbolicDiscretizedModel):
+    '''Strong order 1.5 Ito--Taylor discretization for additive noise models.'''
     
     def _discretize(self):
         '''Discretize the drift and diffusion functions.'''
