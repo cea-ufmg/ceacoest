@@ -56,8 +56,8 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         save_pred_crosscov :
             Whether to save the prediction cross-covariance matrices.
             False by default.
-        t0 : float
-            Initial time, zero by default.
+        k0 : float
+            Initial sample index time, zero by default.
         
         '''
         # Save and initialize basic filter data
@@ -86,11 +86,8 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         self.save_pred_crosscov = options.get('save_pred_crosscov', False)
         '''Whether to save the prediction cross-covariance.'''
 
-        self.tk = options.get('t0', 0)
-        '''The filter work time.'''
-        
-        self.k = 0
-        '''The filter history index.'''
+        self.k = options.get('k0', 0)
+        '''The working filter sample index.'''
         
         self.history_size = 0
         '''The filter history size.'''
@@ -140,13 +137,11 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         self.Px_pred[0] = self.Px
         self.Px_corr[0] = self.Px
         self.history_size = size
-        self.k = 0
     
-    def _save_prediction(self, t, x, Px):
+    def _save_prediction(self, x, Px):
         '''Save the prection data and increment the time and history index.'''
         self.x = x
         self.Px = Px
-        self.tk = t
         self.k += 1
         k = self.k
         if k < self.history_size:
@@ -170,7 +165,7 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
             self.Pxf[self.k] = Pxf
     
     @abc.abstractmethod
-    def predict(self, t):
+    def predict(self):
         '''Predict the state distribution at a next time sample.'''
         raise NotImplementedError("Pure abstract method.")
     
@@ -179,19 +174,16 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         '''Correct the state distribution, given the measurement vector.'''
         raise NotImplementedError("Pure abstract method.")
     
-    def filter(self, t, y):
-        t = np.asarray(t)
+    def filter(self, y):
         y = np.asanyarray(y)
-        N = len(t)
+        N = len(y)
         
         if self.save_history == 'filter':
             self.initialize_history(N)
         
-        self.tk = t[0]
         self.correct(y[0])
-        
         for k in range(1, N):
-            self.predict(t[k])
+            self.predict()
             self.correct(y[k])
         
     
@@ -417,14 +409,14 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
         ut_options.update(utils.extract_subkeys(options, 'pred_ut_'))
         self.__ut = UnscentedTransform(model.nx, **ut_options)
     
-    def predict(self, t):
+    def predict(self):
         '''Predict the state distribution at the next time index.'''
-        td = np.array([self.tk, t - self.tk])
-        def fd_fun(x):
-            return self.model.fd(td, x)
-        fd, Pfd = self.__ut.transform(fd_fun, self.x, self.Px)
-        Qd = self.model.Qd(td, self.x)
-        Px = Pfd + Qd
+        k = self.k
+        def f_fun(x):
+            return self.model.f(k, x)
+        f, Pf = self.__ut.transform(f_fun, self.x, self.Px)
+        Q = self.model.Q(k, self.x)
+        Px = Pf + Q
         
         # Save the prediction cross-covariance for smoothing
         if self.save_pred_crosscov:
@@ -433,29 +425,29 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
         
         # Calculate the precition gradient for the PEM
         if self.pem == 'grad' or self.pem == 'hess':
-            self._calculate_prediction_grad(t)
+            self._calculate_prediction_grad()
         
         # Save and update the time and indices
-        self._save_prediction(t, fd, Px)
+        self._save_prediction(f, Px)
     
-    def _calculate_prediction_grad(self, t):
-        td = np.array([self.tk, t - self.tk])
+    def _calculate_prediction_grad(self):
+        k = self.k
         x = self.x
         dx_dq = self.dx_dq
         dPx_dq = self.dPx_dq
         
-        dQd_dq = self.model.dQd_dq(td, x)
-        dQd_dx = self.model.dQd_dx(td, x)
-        DQd_Dq = dQd_dq + np.einsum('...ij,...jkl', dx_dq, dQd_dx)
+        dQ_dq = self.model.dQ_dq(k, x)
+        dQ_dx = self.model.dQ_dx(k, x)
+        DQ_Dq = dQ_dq + np.einsum('...ij,...jkl', dx_dq, dQ_dx)
         
-        def Dfd_Dq_fun(x, dx_dq):
-            dfd_dq = self.model.dfd_dq(td, x)
-            dfd_dx = self.model.dfd_dx(td, x)
-            return dfd_dq + np.einsum('...qx,...xf->...qf', dx_dq, dfd_dx)
-        Dfd_Dq, DPfd_Dq = self.__ut.transform_diff(Dfd_Dq_fun, dx_dq, dPx_dq)
+        def Df_Dq_fun(x, dx_dq):
+            df_dq = self.model.df_dq(k, x)
+            df_dx = self.model.df_dx(k, x)
+            return df_dq + np.einsum('...qx,...xf->...qf', dx_dq, df_dx)
+        Df_Dq, DPf_Dq = self.__ut.transform_diff(Df_Dq_fun, dx_dq, dPx_dq)
         
-        self.dx_dq = Dfd_Dq
-        self.dPx_dq = DPfd_Dq + DQd_Dq
+        self.dx_dq = Df_Dq
+        self.dPx_dq = DPf_Dq + DQ_Dq
 
 
 class DTUnscentedCorrector(DTKalmanFilterBase):
@@ -512,7 +504,7 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         y = ma.compressed(y)
         R = self.model.R()[np.ix_(active, active)]
         def h_fun(x):
-            return self.model.h(self.tk, x)[..., active]
+            return self.model.h(self.k, x)[..., active]
         
         # Perform unscented transform
         h, Ph = self.__ut.transform(h_fun, self.x, self.Px)
@@ -544,15 +536,15 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         self._save_correction(x_corr, Px_corr)
     
     def _calculate_correction_grad(self, active, e, K, Pxh, Py, PyI, PyC):
-        t = self.tk
+        k = self.k
         x = self.x
         dx_dq = self.dx_dq
         dPx_dq = self.dPx_dq
         dR_dq = self.model.dR_dq()[(...,) + np.ix_(active, active)]
         
         def Dh_Dq_fun(x, dx_dq):
-            dh_dq = self.model.dh_dq(t, x)[..., active]
-            dh_dx = self.model.dh_dx(t, x)[..., active]
+            dh_dq = self.model.dh_dq(k, x)[..., active]
+            dh_dx = self.model.dh_dx(k, x)[..., active]
             return dh_dq + np.einsum('...qx,...xh->...qh', dx_dq, dh_dx)
         ut_grads = self.__ut.transform_diff(Dh_Dq_fun, dx_dq, dPx_dq, True)
         Dh_Dq, dPh_dq, dPxh_dq = ut_grads

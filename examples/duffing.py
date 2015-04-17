@@ -60,14 +60,14 @@ class SymbolicDuffing(sde.SymbolicModel):
 
 
 class SymbolicDTDuffing(SymbolicDuffing, sde.ItoTaylorAS15DiscretizedModel):
-    derivatives = [('dfd_dx', 'fd', 'x'), ('dfd_dq', 'fd', 'q'),
-                   ('dQd_dx', 'Qd', 'x'), ('dQd_dq', 'Qd', 'q'),
+    derivatives = [('df_dx', 'f', 'x'), ('df_dq', 'f', 'q'),
+                   ('dQ_dx', 'Q', 'x'), ('dQ_dq', 'Q', 'q'),
                    ('dh_dx', 'h', 'x'), ('dh_dq', 'h', 'q'),
                    ('dR_dq', 'R', 'q'),]
     '''List of the model function derivatives to calculate / generate.'''
     
     dt = 'dt'
-    '''Discretization period.'''
+    '''Discretization time step.'''
 
     k = 'k'
     '''Discretized sample index.'''
@@ -83,40 +83,38 @@ GeneratedDTDuffing = sym2num.class_obj(
 )
 
 
-
-#sym_model = SymbolicDuffing()
-#GeneratedDuffing = sym2num.class_obj(
-#    sym_model, sym2num.ScipyPrinter(),
-#    name='GeneratedDuffing', 
-#    meta=sym2num.ParametrizedModel.meta
-#)
-
-
 def sim():
     np.random.seed(0)
+
+    # Generate the time vector
+    dt = 0.05
+    N = int(30 // dt)
+    k = np.arange(N)
+    t = k * dt
+
+    # Instantiate the model
     given = dict(
         alpha=1, beta=-1, delta=0.2, gamma=0.3, omega=1,
         g1=0, g2=0.1, x_meas_std=0.1
     )
     q = GeneratedDTDuffing.pack('q', given)
     c = GeneratedDTDuffing.pack('c', given)
-    model = GeneratedDuffing(dict(q=q, c=c))
-    
-    t = np.arange(0, 30, 0.05)
-    N = t.size
+    params = dict(q=q, c=c, dt=dt)
+    sampled = dict(t=t)
+    model = GeneratedDTDuffing(params, sampled)
+
+    # Simulate the system
+    w = np.random.randn(N - 1, model.nw)
     x = np.zeros((N, model.nx))
     x[0] = [1, 0]
-    for k, tk in enumerate(t[:-1]):
-        td = (tk, t[k + 1] - tk)
-        wk = np.random.randn(model.nwd)
-        x[k + 1] = model.fd(td, x[k])
-        x[k + 1] += model.gd(td, x[k]).dot(wk)
+    for k in range(N - 1):
+        x[k + 1] = model.f(k, x[k])  + model.g(k, x[k]).dot(w[k])
 
+    # Sample the outputs
     R = model.R()
     v = np.random.multivariate_normal(np.zeros(model.ny), R, N)
-    y = ma.asarray(model.h(t, x) + v)
+    y = ma.asarray(model.h(k, x) + v)
     y[1::2] = ma.masked
-    
     return model, t, x, y, q
 
 
@@ -127,13 +125,13 @@ def pem(model, t, x, y, q):
     def merit(q, new=None):
         mq = model.parametrize(q=q)
         filter = kalman.DTUnscentedKalmanFilter(mq, x0, Px0, pem=True)
-        filter.filter(t, y)
+        filter.filter(y)
         return filter.L
     
     def grad(q, new=None):
         mq = model.parametrize(q=q)
         filter = kalman.DTUnscentedKalmanFilter(mq, x0, Px0, pem='grad')
-        filter.filter(t, y)
+        filter.filter(y)
         return filter.dL_dq
     
     def hess(q, new_q=1, obj_factor=1, lmult=1, new_lmult=1):
@@ -144,5 +142,7 @@ def pem(model, t, x, y, q):
     problem = ipopt.Problem(q_bounds, merit, grad, 
                             hess=hess, hess_inds=hess_inds)
     problem.num_option(b'obj_scaling_factor', -1)
-    problem.str_option(b'linear_solver', b'ma57')
     (qopt, solinfo) = problem.solve(q)
+
+    return problem, qopt, solinfo, x0, Px0
+

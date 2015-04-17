@@ -25,11 +25,6 @@ sde_model_append_template = '''\
     """Length of the unknown parameter vector."""'''
 
 
-discretized_model_append_template = '''\
-    nwd = {nwd}
-    """Length of the state vector."""'''
-
-
 class SymbolicModel(sym2num.SymbolicModel):
 
     var_names = {'t', 'x'}
@@ -72,9 +67,13 @@ class SymbolicModel(sym2num.SymbolicModel):
         
         # Add default implementation for Q = g * g.T
         if 'Q' not in self.functions:
-            g = self.functions['g']
-            Qexpr = np.dot(g.out, g.out.T)
-            self.functions['Q'] = sym2num.SymbolicFunction(Qexpr, g.args, 'Q')
+            self._add_default_Q()
+
+    def _add_default_Q(self):
+        '''Add default implementation for `Q = g * g.T`.'''
+        g = self.functions['g']
+        Qexpr = np.dot(g.out, g.out.T)
+        self.functions['Q'] = sym2num.SymbolicFunction(Qexpr, g.args, 'Q')
     
     def print_class(self, printer, name=None, signature=''):
         base_code = super().print_class(printer, name, signature)
@@ -110,12 +109,6 @@ class SymbolicDiscretizedModel(SymbolicModel):
         super()._init_functions() # Initialize base class functions
         self._discretize_sde() # Generate the discretized drift and diffusion
         self._discretize_extra() # Discretize any remaining model functions
-        
-        # Add default implementation for Qd = gd * gd.T
-        if 'Qd' not in self.functions:
-            gd = self.functions['gd']
-            Qd = np.dot(gd.out, gd.out.T)
-            self.functions['Qd'] = sym2num.SymbolicFunction(Qd, gd.args, 'Qd')
     
     @abc.abstractmethod
     def _discretize_sde(self):
@@ -144,12 +137,6 @@ class SymbolicDiscretizedModel(SymbolicModel):
         arg_items[t_index] = ('k', k)
         arg_items.extend([t_item, ('dt', dt)])
         return collections.OrderedDict(arg_items)
-    
-    def print_class(self, printer, name=None, signature=''):
-        base_code = super().print_class(printer, name, signature)
-        nwd = self.functions['gd'].out.shape[1]
-        suffix = discretized_model_append_template.format(nwd=nwd)
-        return '\n'.join([base_code, suffix])
 
 
 class EulerDiscretizedModel(SymbolicDiscretizedModel):
@@ -163,13 +150,16 @@ class EulerDiscretizedModel(SymbolicDiscretizedModel):
         f = self.functions['f']
         fd = self.vars['x'] + f.out * dt
         fdargs = self._discretized_args(f.args)
-        self.functions['fd'] = sym2num.SymbolicFunction(fd, fdargs, 'fd')
+        self.functions['f'] = sym2num.SymbolicFunction(fd, fdargs, 'f')
         
         # Discretize the diffusion
         g = self.functions['g']
         gd = g.out * dt ** 0.5
         gdargs = self._discretized_args(g.args)
-        self.functions['gd'] = sym2num.SymbolicFunction(gd, gdargs, 'gd')
+        self.functions['g'] = sym2num.SymbolicFunction(gd, gdargs, 'g')
+        
+        # Add default implementation for transition covariance
+        self._add_default_Q()
 
 
 class ItoTaylorAS15DiscretizedModel(SymbolicDiscretizedModel):
@@ -202,13 +192,17 @@ class ItoTaylorAS15DiscretizedModel(SymbolicDiscretizedModel):
         # Discretize the drift
         fd = x + f * dt + 0.5 * L0f * dt ** 2
         fdargs = self._discretized_args(self.functions['f'].args)
-        self.functions['fd'] = sym2num.SymbolicFunction(fd, fdargs, 'fd')
+        self.functions['f'] = sym2num.SymbolicFunction(fd, fdargs, 'f')
         
         # Discretize the diffusion
         gd = np.hstack((g * dt ** 0.5 + 0.5 * Lf * dt ** 1.5,
                         0.5 * Lf * dt ** 1.5 / sympy.sqrt(3)))
         gdargs = self._discretized_args(self.functions['g'].args)
-        self.functions['gd'] = sym2num.SymbolicFunction(gd, gdargs, 'gd')
+        self.functions['g'] = sym2num.SymbolicFunction(gd, gdargs, 'g')
+        
+        # Add default implementation for transition covariance
+        self._add_default_Q()
+
 
 
 class DiscretizedModel(sym2num.ParametrizedModel):
@@ -228,3 +222,9 @@ class DiscretizedModel(sym2num.ParametrizedModel):
             for arg_name in sampled_fargs.difference(call_args):
                 call_args[arg_name] = self._sampled[arg_name][k]
         return call_args
+
+    def parametrize(self, params={}, **kwparams):
+        model = super().parametrize(params, **kwparams)
+        model._sampled = self._sampled.copy()
+        return model
+
