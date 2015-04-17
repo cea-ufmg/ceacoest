@@ -188,7 +188,7 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         
     
 def svd_sqrt(mat):
-    '''SVD-based square root of a symmetric positive-semidefinite matrix.
+    '''SVD-based "square root" of a symmetric positive-semidefinite matrix.
     
     Used for unscented transform.
     
@@ -213,6 +213,29 @@ def cholesky_sqrt(mat):
     '''Upper triangular Cholesky decomposition for unscented transform.'''
     lower_chol = numpy.linalg.cholesky(mat)
     return np.swapaxes(lower_chol, -1, -2)
+
+
+def ldl_sqrt(mat):
+    '''LDL-based "square root" of a symmetric positive-semidefinite matrix.
+    
+    Used for unscented transform.
+    
+    Example
+    -------
+    Generate a random positive-semidefinite symmetric matrix.
+    >>> np.random.seed(0)
+    >>> A = np.random.randn(4, 10)
+    >>> Q = np.dot(A, A.T)
+    
+    The square root should satisfy S'S = Q
+    >>> S = ldl_sqrt(Q)
+    >>> STS = np.dot(S.T, S)
+    >>> np.testing.assert_allclose(Q, STS)
+    
+    '''
+    L, D = numpy.linalg.ldl(mat)
+    sqrt_D = np.sqrt(np.einsum('...ii->...i', D))    
+    return np.einsum('...ij,...j->...ji', L, sqrt_D)
 
 
 def cholesky_sqrt_diff(S, dQ=None):
@@ -248,7 +271,7 @@ def cholesky_sqrt_diff(S, dQ=None):
     A[ix, jx, ix, kx] = S[kx, jx]
     A[ix, jx, jx, kx] += S[kx, ix]
     A_tril = A[i, j][..., i, j]
-    A_tril_inv = scipy.linalg.inv(A_tril)
+    A_tril_inv = scipy.linalg.pinv(A_tril)
     
     if dQ is None:
         nnz = len(i)
@@ -263,6 +286,8 @@ def cholesky_sqrt_diff(S, dQ=None):
     D[..., j, i] = D_tril
     return D
 
+
+ldl_sqrt.diff = cholesky_sqrt_diff
 
 cholesky_sqrt.diff = cholesky_sqrt_diff
 
@@ -283,9 +308,9 @@ class UnscentedTransform:
             Weight of the center sigma point. Zero by default.
         sqrt : str or callable
             Matrix "square root" used to generate sigma points. If equal to
-            'svd' or 'cholesky' then svd_sqrt or cholesky_sqrt are used,
-            respectively. Otherwise, if it is a callable the object is used.
-            Equal to 'cholesky' by default.
+            'svd', 'ldl' or 'cholesky' then `svd_sqrt`, `ldl_sqrt` or 
+            `cholesky_sqrt` are used, respectively. Otherwise, if it is a
+            callable, the object is used. Equal to 'cholesky' by default.
         
         '''
         self.nin = nin
@@ -298,6 +323,8 @@ class UnscentedTransform:
         sqrt_opt = options.get('sqrt', 'cholesky')
         if sqrt_opt == 'cholesky':
             sqrt = cholesky_sqrt
+        elif sqrt_opt == 'ldl':
+            sqrt = ldl_sqrt
         elif sqrt_opt == 'svd':
             sqrt = svd_sqrt
         elif isinstance(sqrt_opt, collections.Callable):

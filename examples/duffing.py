@@ -121,16 +121,17 @@ def sim():
 def pem(model, t, x, y, q):
     x0 = [1.2, 0.2]
     Px0 = np.diag([0.1, 0.1])
+    opts = dict(sqrt='ldl')
     
     def merit(q, new=None):
         mq = model.parametrize(q=q)
-        filter = kalman.DTUnscentedKalmanFilter(mq, x0, Px0, pem=True)
+        filter = kalman.DTUnscentedKalmanFilter(mq, x0, Px0, pem=True, **opts)
         filter.filter(y)
         return filter.L
     
     def grad(q, new=None):
         mq = model.parametrize(q=q)
-        filter = kalman.DTUnscentedKalmanFilter(mq, x0, Px0, pem='grad')
+        filter = kalman.DTUnscentedKalmanFilter(mq, x0, Px0, pem='grad', **opts)
         filter.filter(y)
         return filter.dL_dq
     

@@ -19,7 +19,7 @@ pytest_plugins = "qwfilter.testsupport.array_cmp"
 from qwfilter.testsupport.array_cmp import ArrayCmp
 
 
-@pytest.fixture(params=range(3))
+@pytest.fixture(params=range(1, 4))
 def seed(request):
     '''Random number generator seed.'''
     np.random.seed(request.param)
@@ -64,7 +64,7 @@ def A(seed, nx):
     return A
 
 
-@pytest.fixture(params=['cholesky', 'svd'])
+@pytest.fixture(params=['cholesky', 'ldl', 'svd'])
 def ut_sqrt(request):
     '''Unscented transform square root option.'''
     return request.param
@@ -75,6 +75,8 @@ def ut_sqrt_func(ut_sqrt):
     '''Function corresponding to the square root option.'''
     if ut_sqrt == 'svd':
         return kalman.svd_sqrt
+    elif ut_sqrt == 'ldl':
+        return kalman.ldl_sqrt
     elif ut_sqrt == 'cholesky':
         return kalman.cholesky_sqrt
 
@@ -225,7 +227,7 @@ def test_sigma_points_diff_wrt_cov(ut, ut_sqrt, x, cov, nx):
     ut.gen_sigma_points(x, cov)
     i, j = np.tril_indices(nx)
     ntril = len(i)
-        
+    
     cov_diff = np.zeros((ntril, nx, nx))
     cov_diff[np.arange(ntril), i, j] = 1
     cov_diff[np.arange(ntril), j, i] = 1
