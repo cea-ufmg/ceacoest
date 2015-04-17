@@ -11,7 +11,7 @@ from scipy import stats
 from qwfilter import kalman, sde, utils
 
 
-class SymbolicDuffing(sde.ItoTaylorAS15DiscretizedModel):
+class SymbolicDuffing(sde.SymbolicModel):
     '''Symbolic Duffing oscillator model.'''
 
     var_names = {'t', 'x', 'y', 'q', 'c'}
@@ -20,17 +20,8 @@ class SymbolicDuffing(sde.ItoTaylorAS15DiscretizedModel):
     function_names = {'f', 'g', 'h', 'R'}
     '''Name of the model functions.'''
 
-    derivatives = [('dfd_dx', 'fd', 'x'), ('dfd_dq', 'fd', 'q'),
-                   ('dQd_dx', 'Qd', 'x'), ('dQd_dq', 'Qd', 'q'),
-                   ('dh_dx', 'h', 'x'), ('dh_dq', 'h', 'q'),
-                   ('dR_dq', 'R', 'q'),]
-    '''List of the model function derivatives to calculate / generate.'''
-    
     t = 't'
     '''Time variable.'''
-
-    dt = 'dt'
-    '''Discretization period.'''
     
     x = ['x', 'v']
     '''State vector.'''
@@ -38,7 +29,7 @@ class SymbolicDuffing(sde.ItoTaylorAS15DiscretizedModel):
     y = ['x_meas']
     '''Measurement vector.'''
     
-    q = ['alpha', 'beta', 'delta', 'g1', 'g2', 'x_meas_std']
+    q = ['alpha', 'beta', 'delta', 'g2', 'x_meas_std']
     '''Unknown parameter vector.'''
     
     c = ['gamma', 'omega']
@@ -55,7 +46,7 @@ class SymbolicDuffing(sde.ItoTaylorAS15DiscretizedModel):
     def g(self, t, x, q, c):
         '''Diffusion matrix.'''
         s = self.symbols(t=t, x=x, q=q, c=c)
-        return [[s.g1, 0], [0, s.g2]]
+        return [[0, 0], [0, s.g2]]
     
     def h(self, t, x, q, c):
         '''Measurement function.'''
@@ -68,24 +59,50 @@ class SymbolicDuffing(sde.ItoTaylorAS15DiscretizedModel):
         return [[s.x_meas_std ** 2]]
 
 
-sym_model = SymbolicDuffing()
-GeneratedDuffing = sym2num.class_obj(
-    sym_model, sym2num.ScipyPrinter(),
-    name='GeneratedDuffing', 
-    meta=sym2num.ParametrizedModel.meta
+class SymbolicDTDuffing(SymbolicDuffing, sde.ItoTaylorAS15DiscretizedModel):
+    derivatives = [('dfd_dx', 'fd', 'x'), ('dfd_dq', 'fd', 'q'),
+                   ('dQd_dx', 'Qd', 'x'), ('dQd_dq', 'Qd', 'q'),
+                   ('dh_dx', 'h', 'x'), ('dh_dq', 'h', 'q'),
+                   ('dR_dq', 'R', 'q'),]
+    '''List of the model function derivatives to calculate / generate.'''
+    
+    dt = 'dt'
+    '''Discretization period.'''
+
+    k = 'k'
+    '''Discretized sample index.'''
+
+
+sym_duffing = SymbolicDuffing()
+sym_dt_duffing = SymbolicDTDuffing()
+printer = sym2num.ScipyPrinter()
+GeneratedDTDuffing = sym2num.class_obj(
+    sym_dt_duffing, printer,
+    name='GeneratedDTDuffing', 
+    meta=sde.DiscretizedModel.meta
 )
 
 
+
+#sym_model = SymbolicDuffing()
+#GeneratedDuffing = sym2num.class_obj(
+#    sym_model, sym2num.ScipyPrinter(),
+#    name='GeneratedDuffing', 
+#    meta=sym2num.ParametrizedModel.meta
+#)
+
+
 def sim():
+    np.random.seed(0)
     given = dict(
         alpha=1, beta=-1, delta=0.2, gamma=0.3, omega=1,
         g1=0, g2=0.1, x_meas_std=0.1
     )
-    q = GeneratedDuffing.pack('q', given)
-    c = GeneratedDuffing.pack('c', given)
+    q = GeneratedDTDuffing.pack('q', given)
+    c = GeneratedDTDuffing.pack('c', given)
     model = GeneratedDuffing(dict(q=q, c=c))
     
-    t = np.arange(0, 20, 0.05)
+    t = np.arange(0, 30, 0.05)
     N = t.size
     x = np.zeros((N, model.nx))
     x[0] = [1, 0]

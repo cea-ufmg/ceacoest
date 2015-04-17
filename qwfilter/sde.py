@@ -2,6 +2,7 @@
 
 
 import abc
+import collections
 import inspect
 
 import numpy as np
@@ -41,23 +42,23 @@ class SymbolicModel(sym2num.SymbolicModel):
     @abc.abstractmethod
     def t(self):
         '''The time variable.'''
-        raise NotImplementedError("Pure abstract method.")
+        raise NotImplementedError("Pure abstract property, must be overloaded.")
 
     @property
     @abc.abstractmethod
     def x(self):
         '''The state vector.'''
-        raise NotImplementedError("Pure abstract method.")
+        raise NotImplementedError("Pure abstract property, must be overloaded.")
     
     @abc.abstractmethod
     def f(self, t, x, *args):
         '''SDE drift function.'''
-        raise NotImplementedError("Pure abstract method.")
+        raise NotImplementedError("Pure abstract method, must be overloaded.")
 
     @abc.abstractmethod
     def g(self, t, x, *args):
         '''SDE diffusion.'''
-        raise NotImplementedError("Pure abstract method.")
+        raise NotImplementedError("Pure abstract method, must be overloaded.")
 
     def _init_variables(self):
         '''Initialize model variables.'''
@@ -89,20 +90,26 @@ class SymbolicDiscretizedModel(SymbolicModel):
     
     @property
     @abc.abstractmethod
+    def k(self):
+        '''The discrete-time sample index.'''
+        raise NotImplementedError("Pure abstract property, must be overloaded.")
+    
+    @property
+    @abc.abstractmethod
     def dt(self):
         '''The time step in a discrete-time transition.'''
-        raise NotImplementedError("Pure abstract method.")
-
+        raise NotImplementedError("Pure abstract property, must be overloaded.")
     
     def _init_variables(self):
         '''Initialize model variables.'''
-        self.var_names = set.union(self.var_names, {'dt'})
+        self.var_names = set.union(self.var_names, {'dt', 'k'})
         super()._init_variables()
     
     def _init_functions(self):
         '''Initialize the model functions.'''
         super()._init_functions() # Initialize base class functions
-        self._discretize() # Generate the discretized drift and diffusion
+        self._discretize_sde() # Generate the discretized drift and diffusion
+        self._discretize_extra() # Discretize any remaining model functions
         
         # Add default implementation for Qd = gd * gd.T
         if 'Qd' not in self.functions:
@@ -111,21 +118,33 @@ class SymbolicDiscretizedModel(SymbolicModel):
             self.functions['Qd'] = sym2num.SymbolicFunction(Qd, gd.args, 'Qd')
     
     @abc.abstractmethod
-    def _discretize(self):
+    def _discretize_sde(self):
         '''Discretize the drift and diffusion functions.'''
-        raise NotImplementedError("Pure abstract method.")
+        raise NotImplementedError("Pure abstract method, must be overloaded.")
 
-    def discretized_args(self, args):
-        # Check if first argument is time
-        arg_items = list(args.items())
-        if arg_items[0][0] != 't':
-            msg = "First argument in discretized functions must be `t`."
-            raise RuntimeError(msg)
+    def _discretize_extra(self):
+        '''Discretize other model functions.'''
+        for f in self.functions.values():
+            fargs = f.args
+            f.args = self._discretized_args(fargs)
+    
+    def _discretized_args(self, args):
+        # If the function is not time-dependant the arguments are unchanged
+        if 't' not in args:
+            return args
+
+        # Get the discretization variables
+        dt = self.vars['dt']
+        k = self.vars['k']
         
-        # Switch the time argument with the transition times
-        td = np.hstack([self.vars['t'], self.vars['dt']])
-        return [('td', td)] + arg_items[1:]
-
+        # Switch the time argument with the sample index
+        arg_items = list(args.items())
+        t_index = list(args).index('t')
+        t_item = arg_items[t_index]
+        arg_items[t_index] = ('k', k)
+        arg_items.extend([t_item, ('dt', dt)])
+        return collections.OrderedDict(arg_items)
+    
     def print_class(self, printer, name=None, signature=''):
         base_code = super().print_class(printer, name, signature)
         nwd = self.functions['gd'].out.shape[1]
@@ -134,7 +153,7 @@ class SymbolicDiscretizedModel(SymbolicModel):
 
 
 class EulerDiscretizedModel(SymbolicDiscretizedModel):
-    def _discretize(self):
+    def _discretize_sde(self):
         '''Discretize the drift and diffusion functions.'''
         # Get the discretization variables
         t = self.vars['t']
@@ -143,20 +162,20 @@ class EulerDiscretizedModel(SymbolicDiscretizedModel):
         # Discretize the drift
         f = self.functions['f']
         fd = self.vars['x'] + f.out * dt
-        fdargs = self.discretized_args(f.args)
+        fdargs = self._discretized_args(f.args)
         self.functions['fd'] = sym2num.SymbolicFunction(fd, fdargs, 'fd')
         
         # Discretize the diffusion
         g = self.functions['g']
         gd = g.out * dt ** 0.5
-        gdargs = self.discretized_args(g.args)
+        gdargs = self._discretized_args(g.args)
         self.functions['gd'] = sym2num.SymbolicFunction(gd, gdargs, 'gd')
 
 
 class ItoTaylorAS15DiscretizedModel(SymbolicDiscretizedModel):
     '''Strong order 1.5 Ito--Taylor discretization for additive noise models.'''
     
-    def _discretize(self):
+    def _discretize_sde(self):
         '''Discretize the drift and diffusion functions.'''
         # Compute the derivatives
         self.add_derivative('df_dt', 'f', 't')
@@ -182,12 +201,30 @@ class ItoTaylorAS15DiscretizedModel(SymbolicDiscretizedModel):
         
         # Discretize the drift
         fd = x + f * dt + 0.5 * L0f * dt ** 2
-        fdargs = self.discretized_args(self.functions['f'].args)
+        fdargs = self._discretized_args(self.functions['f'].args)
         self.functions['fd'] = sym2num.SymbolicFunction(fd, fdargs, 'fd')
         
         # Discretize the diffusion
         gd = np.hstack((g * dt ** 0.5 + 0.5 * Lf * dt ** 1.5,
                         0.5 * Lf * dt ** 1.5 / sympy.sqrt(3)))
-        gdargs = self.discretized_args(self.functions['g'].args)
+        gdargs = self._discretized_args(self.functions['g'].args)
         self.functions['gd'] = sym2num.SymbolicFunction(gd, gdargs, 'gd')
 
+
+class DiscretizedModel(sym2num.ParametrizedModel):
+    def __init__(self, params={}, sampled={}):
+        super().__init__(params)
+        self._sampled = {k: np.asarray(v) for k, v in sampled.items()}
+    
+    def call_args(self, f, *args, **kwargs):
+        # Get the base call arguments
+        call_args = super().call_args(f, *args, **kwargs)
+    
+        # Include the samples of the discretized variables
+        if 'k' in call_args:
+            k = np.asarray(call_args['k'], dtype=int)
+            fargs = inspect.getfullargspec(f).args
+            sampled_fargs = set(fargs).intersection(self._sampled)
+            for arg_name in sampled_fargs.difference(call_args):
+                call_args[arg_name] = self._sampled[arg_name][k]
+        return call_args
