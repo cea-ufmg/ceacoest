@@ -117,8 +117,9 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
                 raise TypeError("save_history must be 'filter' or int-like.")
     
     def initialize_history(self, size):
-        # Allocate the history arrays, if needed
+        # Allocate the history arrays, if changed
         if size != self.history_size:
+            self.history_size = size
             nx = self.model.nx
             nq = self.model.nq
             base_shape = self.base_shape
@@ -130,13 +131,13 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
             self.Px_corr = np.zeros(cov_shape)
             if self.save_pred_crosscov:
                 self.Pxf = np.zeros((size - 1,) + base_shape + (nx, nx))
-        
+
         # Initialize the history variables
-        self.x_pred[0] = self.x
-        self.x_corr[0] = self.x
-        self.Px_pred[0] = self.Px
-        self.Px_corr[0] = self.Px
-        self.history_size = size
+        if size:
+            self.x_pred[0] = self.x
+            self.x_corr[0] = self.x
+            self.Px_pred[0] = self.Px
+            self.Px_corr[0] = self.Px
     
     def _save_prediction(self, x, Px):
         '''Save the prection data and increment the time and history index.'''
@@ -271,7 +272,7 @@ def cholesky_sqrt_diff(S, dQ=None):
     A[ix, jx, ix, kx] = S[kx, jx]
     A[ix, jx, jx, kx] += S[kx, ix]
     A_tril = A[i, j][..., i, j]
-    A_tril_inv = scipy.linalg.pinv(A_tril)
+    A_tril_inv = scipy.linalg.inv(A_tril)
     
     if dQ is None:
         nnz = len(i)

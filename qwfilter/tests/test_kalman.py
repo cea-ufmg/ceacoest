@@ -67,6 +67,8 @@ def A(seed, nx):
 @pytest.fixture(params=['cholesky', 'ldl', 'svd'])
 def ut_sqrt(request):
     '''Unscented transform square root option.'''
+    if request.param == 'ldl' and not hasattr(np.linalg, 'ldl'):
+        pytest.skip('ldl decomposition not available in numpy.')
     return request.param
 
 

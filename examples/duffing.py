@@ -81,7 +81,7 @@ GeneratedDTDuffing = sym2num.class_obj(
     name='GeneratedDTDuffing', 
     meta=sde.DiscretizedModel.meta
 )
-
+\
 
 def sim():
     np.random.seed(0)
@@ -121,7 +121,7 @@ def sim():
 def pem(model, t, x, y, q):
     x0 = [1.2, 0.2]
     Px0 = np.diag([0.1, 0.1])
-    opts = dict(sqrt='ldl')
+    opts = dict(sqrt='cholesky')
     
     def merit(q, new=None):
         mq = model.parametrize(q=q)

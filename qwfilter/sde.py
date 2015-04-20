@@ -1,4 +1,10 @@
-'''Stochastic differential equation module.'''
+'''Stochastic differential equation module.
+
+TODO
+----
+ * Merge signatures of f and g for the Ito-Taylor order 1.5 discretization.
+
+'''
 
 
 import abc
