@@ -172,6 +172,36 @@ def test_cholesky_sqrt_diff(cov, nx):
         assert ArrayCmp(jac[i, j]) == jac_ij
 
 
+def test_cholesky_sqrt_diff2(cov, nx):
+    '''Check the second derivatives of the Cholesky decomposition.'''
+    i, j = np.tril_indices(nx)    
+    ntril = i.size
+    k = np.arange(ntril)
+    dQ = np.zeros((ntril, nx, nx))
+    d2Q = np.zeros((ntril, ntril, nx, nx))
+    dQ[k, i, j] = 1
+    dQ[k, j, i] = 1
+    d2Q[k, k, i, j] += 1
+    d2Q[k, k, j, i] += 1
+        
+    work = {}
+    S = kalman.cholesky_sqrt(cov)
+    dS = kalman.cholesky_sqrt_diff(S, dQ, work)
+    d2S = kalman.cholesky_sqrt_diff2(S, d2Q, work)
+    
+    def grad(x):
+        Q = cov.copy()
+        Q[i, j] += x
+        Q[j, i] += x * (i != j)
+        dQ_ = dQ.copy()
+        dQ_[k, i, j] += x
+        dQ_[k, j, i] += x
+        S = kalman.cholesky_sqrt(Q)
+        return kalman.cholesky_sqrt_diff(S, dQ_)    
+    numerical = utils.central_diff(grad, np.zeros(ntril))
+    assert ArrayCmp(d2S, tol=1e-6) == numerical
+
+
 def test_sigma_points(ut, x, cov):
     '''Test if the mean and covariance of the sigma-points is sane.'''
     sigma = ut.gen_sigma_points(x, cov)

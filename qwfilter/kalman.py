@@ -239,7 +239,7 @@ def ldl_sqrt(mat):
     return np.einsum('...ij,...j->...ji', L, sqrt_D)
 
 
-def cholesky_sqrt_diff(S, dQ=None):
+def cholesky_sqrt_diff(S, dQ=None, work=None):
     '''Derivatives of lower triangular Cholesky decomposition.
     
     Parameters
@@ -253,6 +253,9 @@ def cholesky_sqrt_diff(S, dQ=None):
         `dQ[...,i,j] == dQ[...,j,i]`. If `dQ` is `None` then the derivatives
         are taken with respect to `Q`, i.e., `dQ[i,j,i,j] = 1` and
         `dQ[i,j,j,i] = 1`.
+    work : None or dict
+        If not None, dictionary where the internal variables are saved for
+        Hessian calculation.
     
     Returns
     -------
@@ -282,10 +285,48 @@ def cholesky_sqrt_diff(S, dQ=None):
     else:
         dQ_tril = dQ[..., i, j]
     
-    D_tril = np.einsum('ab,...b->...a', A_tril_inv, dQ_tril)
-    D = np.zeros(dQ_tril.shape[:-1] + (n, n))
-    D[..., j, i] = D_tril
-    return D
+    dS_tril = np.einsum('ab,...b->...a', A_tril_inv, dQ_tril)
+    dS = np.zeros(dQ_tril.shape[:-1] + (n, n))
+    dS[..., j, i] = dS_tril
+
+    if work is not None:
+        work['i j k'] = (i, j, k)
+        work['ix jx kx'] = (ix, jx, kx)
+        work['A_tril'] = A_tril
+        work['A_tril_inv'] = A_tril_inv
+        work['dQ_tril'] = dQ_tril
+        work['dS'] = dS
+        work['dQ'] = dQ
+    
+    return dS
+
+
+def cholesky_sqrt_diff2(S, d2Q, work):
+    '''Second derivatives of lower triangular Cholesky decomposition.'''
+    S = np.asarray(S)
+    dQ = work['dQ']
+    dS = work['dS']
+        
+    n = S.shape[-1]
+    m = dQ.shape[0]
+    (i, j, k) = work['i j k']
+    (ix, jx, kx) = work['ix jx kx']
+    dQ_tril = work['dQ_tril']
+    A_tril = work['A_tril']
+    A_tril_inv = work['A_tril_inv']
+    
+    dA = np.zeros((m, n, n, n, n))
+    dA[:, ix, jx, ix, kx] = dS[:, kx, jx]
+    dA[:, ix, jx, jx, kx] += dS[:, kx, ix]
+    dA_tril = dA[:, i, j][..., i, j]
+    dA_tril_inv = -np.einsum('ij,ajk,kl', A_tril_inv, dA_tril, A_tril_inv)
+
+    d2Q_tril = d2Q[..., i, j]
+    d2S_tril = np.einsum('aij,...j->a...i', dA_tril_inv, dQ_tril)
+    d2S_tril += np.einsum('ij,...j->...i', A_tril_inv, d2Q_tril)
+    d2S = np.zeros(d2Q_tril.shape[:-1] + (n, n))
+    d2S[..., j, i] = d2S_tril
+    return d2S
 
 
 ldl_sqrt.diff = cholesky_sqrt_diff
