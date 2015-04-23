@@ -91,18 +91,33 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         
         self.history_size = 0
         '''The filter history size.'''
+        
+        # Initialize Prediction Error Method data
+        if self.pem:
+            self.L = 0
+            '''The log-likelihood of the measurements.'''
 
-        self.L = 0
-        '''The log-likelihood of the measurements.'''
+        # Initialize Prediction Error Method gradient data
+        if self.pem == 'grad' or self.pem == 'hess':
+            self.dL_dq = np.zeros(base_shape + (nq,))
+            '''The log-likelihood gradient.'''
         
-        self.dL_dq = np.zeros(base_shape + (nq,)) if self.pem else None
-        '''The log-likelihood gradient.'''
+            self.dx_dq = np.zeros(base_shape + (nq, nx))
+            '''The working mean gradient.'''
         
-        self.dx_dq = np.zeros(base_shape + (nq, nx)) if self.pem else None
-        '''The working mean gradient.'''
+            self.dPx_dq = np.zeros(base_shape + (nq, nx, nx))
+            '''The working covariance gradient.'''
+
+        # Initialize Prediction Error Method Hessian data
+        if self.pem == 'hess':
+            self.d2L_dq2 = np.zeros(base_shape + (nq, nq))
+            '''The log-likelihood Hessian.'''
+            
+            self.d2x_dq2 = np.zeros(base_shape + (nq, nq, nx))
+            '''The working mean Hessian.'''
         
-        self.dPx_dq = np.zeros(base_shape + (nq, nx, nx)) if self.pem else None
-        '''The working covariance gradient.'''
+            self.d2Px_dq2 = np.zeros(base_shape + (nq, nq, nx, nx))
+            '''The working covariance gradient.'''
         
         # Check argument shapes
         assert self.x.shape[-1:] == (model.nx,)
@@ -513,10 +528,43 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
             df_dq = self.model.df_dq(k, x)
             df_dx = self.model.df_dx(k, x)
             return df_dq + np.einsum('...qx,...xf->...qf', dx_dq, df_dx)
-        Df_Dq, DPf_Dq = self.__ut.transform_diff(Df_Dq_fun, dx_dq, dPx_dq)
+        work = {}
+        Df_Dq, DPf_Dq = self.__ut.transform_diff(Df_Dq_fun, dx_dq, dPx_dq, work)
         
         self.dx_dq = Df_Dq
         self.dPx_dq = DPf_Dq + DQ_Dq
+        
+        # Calculate the precition hessian for the PEM
+        if self.pem == 'hess':
+            self._calculate_prediction_hess()
+    
+    def _calculate_prediction_hess(self, dQ_dq, dQ_dx, ut_work):
+        k = self.k
+        x = self.x
+        dx_dq = self.dx_dq
+        dPx_dq = self.dPx_dq
+        d2x_dq2 = self.d2x_dq2
+        d2Px_dq2 = self.d2Px_dq2
+        
+        d2Q_dq2 = self.model.d2Q_dq2(k, x)
+        d2Q_dq_dx = self.model.d2Q_dq_dx(k, x)
+        D2Q_Dq2 = d2Q_dq2 + np.einsum('...aijk,...bi', dQ_dq_dx, dx_dq)
+        D2Q_Dq2 += np.einsum('...aij,...jkl', d2x_dq2, dQ_dx)
+        D2Q_Dq2 += np.einsum('...ij,...bjkl,...ab', dx_dq, d2Q_dx2, dx_dq)
+        D2Q_Dq2 += np.einsum('...ij,...ajkl', dx_dq, d2Q_dq_dx)
+
+        def Df_Dq_fun(x, dx_dq):
+            df_dq = self.model.df_dq(k, x)
+            df_dx = self.model.df_dx(k, x)
+            d2f_dq2 = self.model.d2f_dq2(k, x)
+            d2f_dq_dx = self.model.d2f_dq_dx(k, x)
+            d2f_dq2  = self.model.d2f_dq2(k, x)
+            Df_Dq = d2f_dq2 + np.einsum('...akc,...bk', d2f_dq_dx, dx_dq)
+            Df_Dq += np.einsum('...abi,...ij', d2x_dq2, df_dx)
+            Df_Dq += np.einsum('...ai,...bij', dx_dq, d2f_dq_dx)
+            Df_Dq += np.einsum('...ai,...ijk,...bj', dx_dq, d2f_dx2, dx_dq)
+            return Df_Dq
+        Df_Dq, DPf_Dq = self.__ut.transform_diff(Df_Dq_fun, dx_dq, dPx_dq, work)
 
 
 class DTUnscentedCorrector(DTKalmanFilterBase):
