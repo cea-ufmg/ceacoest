@@ -9,7 +9,6 @@ TODO
 
 import abc
 import collections
-import inspect
 
 import numpy as np
 import scipy.linalg
@@ -223,7 +222,7 @@ class DiscretizedModel(sym2num.ParametrizedModel):
         # Include the samples of the discretized variables
         if 'k' in call_args:
             k = np.asarray(call_args['k'], dtype=int)
-            fargs = inspect.getfullargspec(f).args
+            fargs = self.signatures[f.__name__]
             sampled_fargs = set(fargs).intersection(self._sampled)
             for arg_name in sampled_fargs.difference(call_args):
                 call_args[arg_name] = self._sampled[arg_name][k]
