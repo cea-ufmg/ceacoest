@@ -30,167 +30,30 @@ from . import utils
 class DTKalmanFilterBase(metaclass=abc.ABCMeta):
     '''Discrete-time Kalman filter/smoother abstract base class.'''
     
-    def __init__(self, model, x, Px, **options):
+    def __init__(self, model):
         '''Create a discrete-time Kalman filter.
         
-        Required parameters
-        -------------------
+        Parameters
+        ----------
         model :
             The underlying system model.
-        x : (..., nx) array_like
-            The initial state mean
-        Px : (..., nx, nx) array_like
-            The initial state covariance.
-        
-        Options
-        -------
-        pem : logical or 'save' or 'grad' or 'hess'
-            Whether and how the prediction error method is being used.
-            If 'save' the internal filter variables are saved for gradient
-            and Hessian calculation. If 'grad' or 'hess' then the filter
-            gradients or Hessian are calculated online. False by default.
-        save_history : int or 'filter'
-            Wether to save the filter history or not. If it is an int then
-            it specifies the history size. Otherwise the size is defined by
-            the filter function. Equal to 'filter' by default.
-        save_pred_crosscov :
-            Whether to save the prediction cross-covariance matrices.
-            False by default.
-        k0 : float
-            Initial sample index time, zero by default.
         
         '''
-        # Save and initialize basic filter data
         self.model = model
         '''The underlying system model.'''
-        
-        self.x = np.asarray(x, dtype=float)
-        '''The working filtered state mean.'''
-        
-        self.Px = np.asarray(Px, float)
-        '''The working filtered state covariance.'''
-
-        nx = model.nx
-        nq = getattr(model, 'nq', 0)
-        base_shape = self.x.shape[:-1]
-        
-        self.base_shape = base_shape
-        '''Shape of scalar element for filter vectorization.'''
-                
-        self.pem = options.get('pem', False)
-        '''Whether and how the prediction error method is being used.'''
-        
-        self.save_history = options.get('save_history', 'filter')
-        '''Whether to save the filter history.'''
-        
-        self.save_pred_crosscov = options.get('save_pred_crosscov', False)
-        '''Whether to save the prediction cross-covariance.'''
-
-        self.k = options.get('k0', 0)
-        '''The working filter sample index.'''
-        
-        self.history_size = 0
-        '''The filter history size.'''
-        
-        # Initialize Prediction Error Method data
-        if self.pem:
-            self.L = 0
-            '''The log-likelihood of the measurements.'''
-
-        # Initialize Prediction Error Method gradient data
-        if self.pem == 'grad' or self.pem == 'hess':
-            self.dL_dq = np.zeros(base_shape + (nq,))
-            '''The log-likelihood gradient.'''
-        
-            self.dx_dq = np.zeros(base_shape + (nq, nx))
-            '''The working mean gradient.'''
-        
-            self.dPx_dq = np.zeros(base_shape + (nq, nx, nx))
-            '''The working covariance gradient.'''
-
-        # Initialize Prediction Error Method Hessian data
-        if self.pem == 'hess':
-            self.d2L_dq2 = np.zeros(base_shape + (nq, nq))
-            '''The log-likelihood Hessian.'''
-            
-            self.d2x_dq2 = np.zeros(base_shape + (nq, nq, nx))
-            '''The working mean Hessian.'''
-        
-            self.d2Px_dq2 = np.zeros(base_shape + (nq, nq, nx, nx))
-            '''The working covariance gradient.'''
-        
-        # Check argument shapes
-        assert self.x.shape[-1:] == (model.nx,)
-        assert self.Px.shape == self.base_shape + (model.nx, model.nx)
-        
-        # Initialize the filter history
-        if self.save_history != 'filter':
-            try:
-                size = int(self.save_history)
-                self.initialize_history(size)
-            except (ValueError, TypeError):
-                raise TypeError("save_history must be 'filter' or int-like.")
-    
-    def initialize_history(self, size):
-        # Allocate the history arrays, if changed
-        if size != self.history_size:
-            self.history_size = size
-            nx = self.model.nx
-            nq = self.model.nq
-            base_shape = self.base_shape
-            mean_shape = (size,) + base_shape + (nx,)
-            cov_shape = (size,) + base_shape + (nx, nx)
-            self.x_pred = np.zeros(mean_shape)
-            self.x_corr = np.zeros(mean_shape)
-            self.Px_pred = np.zeros(cov_shape)
-            self.Px_corr = np.zeros(cov_shape)
-            if self.save_pred_crosscov:
-                self.Pxf = np.zeros((size - 1,) + base_shape + (nx, nx))
-
-        # Initialize the history variables
-        if size:
-            self.x_pred[0] = self.x
-            self.x_corr[0] = self.x
-            self.Px_pred[0] = self.Px
-            self.Px_corr[0] = self.Px
-    
-    def _save_prediction(self, x, Px):
-        '''Save the prection data and increment the time and history index.'''
-        self.x = x
-        self.Px = Px
-        self.k += 1
-        k = self.k
-        if k < self.history_size:
-            self.x_pred[k] = x
-            self.x_corr[k] = x
-            self.Px_pred[k] = Px
-            self.Px_corr[k] = Px
-    
-    def _save_correction(self, x, Px):
-        '''Save the correction data.'''
-        self.x = x
-        self.Px = Px
-        k = self.k
-        if k < self.history_size:
-            self.x_corr[k] = x
-            self.Px_corr[k] = Px
-    
-    def _save_prediction_crosscov(self, Pxf):
-        '''Save the prediction cross-covariance.'''
-        if self.k < self.history_size:
-            self.Pxf[self.k] = Pxf
     
     @abc.abstractmethod
-    def predict(self):
+    def predict(self, work):
         '''Predict the state distribution at a next time sample.'''
         raise NotImplementedError("Pure abstract method.")
     
     @abc.abstractmethod
-    def correct(self, y):
+    def correct(self, work, y):
         '''Correct the state distribution, given the measurement vector.'''
         raise NotImplementedError("Pure abstract method.")
     
     def filter(self, y):
+        raise NotImplementedError("Does not yet represent API changes.")
         y = np.asanyarray(y)
         N = len(y)
         
@@ -201,7 +64,7 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         for k in range(1, N):
             self.predict()
             self.correct(y[k])
-        
+
     
 def svd_sqrt(mat):
     '''SVD-based "square root" of a symmetric positive-semidefinite matrix.
@@ -349,7 +212,7 @@ ldl_sqrt.diff = cholesky_sqrt_diff
 cholesky_sqrt.diff = cholesky_sqrt_diff
 
 
-class UnscentedTransform:
+class UnscentedTransformBase:
     
     def __init__(self, nin, **options):
         '''Unscented transform object constructor.
@@ -363,11 +226,6 @@ class UnscentedTransform:
         -------
         kappa :
             Weight of the center sigma point. Zero by default.
-        sqrt : str or callable
-            Matrix "square root" used to generate sigma points. If equal to
-            'svd', 'ldl' or 'cholesky' then `svd_sqrt`, `ldl_sqrt` or 
-            `cholesky_sqrt` are used, respectively. Otherwise, if it is a
-            callable, the object is used. Equal to 'cholesky' by default.
         
         '''
         self.nin = nin
@@ -377,64 +235,58 @@ class UnscentedTransform:
         '''Weight of the center sigma point.'''
         assert self.nin + self.kappa != 0
         
-        sqrt_opt = options.get('sqrt', 'cholesky')
-        if sqrt_opt == 'cholesky':
-            sqrt = cholesky_sqrt
-        elif sqrt_opt == 'ldl':
-            sqrt = ldl_sqrt
-        elif sqrt_opt == 'svd':
-            sqrt = svd_sqrt
-        elif isinstance(sqrt_opt, collections.Callable):
-            sqrt = sqrt_opt
-        else:
-            raise ValueError("Invalid value for `sqrt` option.")
-        self.sqrt = sqrt
-        '''Unscented transform square root method.'''
-        
         self.nsigma = 2 * nin + (self.kappa != 0)
         '''Number of sigma points.'''
         
-        self.weights = np.repeat(0.5 / (nin + self.kappa), self.nsigma)
-        '''Transform weights.'''
+        weights = np.repeat(0.5 / (nin + self.kappa), self.nsigma)
         if self.kappa != 0:
-            self.weights[-1] = self.kappa / (nin + self.kappa)
+            weights[-1] = self.kappa / (nin + self.kappa)
+        self.weights = weights
+        '''Transform weights.'''
     
-    def gen_sigma_points(self, mean, cov):
+    class Work:
+        '''Unscented transform work data.'''
+        def __init__(self, xin, Pin):
+            self.xin = xin
+            self.Pin = Pin
+    
+    def gen_sigma_points(self, work):
         '''Generate sigma-points and their deviations.'''
-        mean = np.asarray(mean)
-        cov = np.asarray(cov)
+        xin = work.xin
+        Pin = work.Pin
         kappa = self.kappa
         nin = self.nin
         
-        cov_sqrt = self.sqrt((nin + kappa) * cov)
-        self.in_dev = np.zeros((self.nsigma,) + mean.shape)
-        self.in_dev[:nin] = cov_sqrt
-        self.in_dev[nin:(2 * nin)] = -cov_sqrt
-        self.in_sigma = self.in_dev + mean
-        return self.in_sigma
+        Pin_sqrt = self.sqrt(work, (nin + kappa) * Pin)
+        xin_dev = np.zeros((self.nsigma,) + xin.shape)
+        xin_dev[:nin] = Pin_sqrt
+        xin_dev[nin:(2 * nin)] = -Pin_sqrt
+        xin_sigma = xin_dev + xin
+        
+        work.xin_sigma = xin_sigma
+        work.xin_dev = xin_dev
     
-    def transform(self, f, mean, cov):
-        in_sigma = self.gen_sigma_points(mean, cov)
+    def transform(self, work, f):
+        self.gen_sigma_points(work)
+        xin_sigma = work.xin_sigma
         weights = self.weights
         
-        out_sigma = f(in_sigma)
-        out_mean = np.einsum('k,k...', weights, out_sigma)
-        out_dev = out_sigma - out_mean
-        out_cov = np.einsum('k...i,k...j,k->...ij', out_dev, out_dev, weights)
+        xout_sigma = f(in_sigma)
+        xout = np.einsum('k,k...', weights, xout_sigma)
+        xout_dev = xout_sigma - xout
+        Pout = np.einsum('k...i,k...j,k->...ij', xout_dev, xout_dev, weights)
         
-        self.out_dev = out_dev
-        return (out_mean, out_cov)
+        work.xout_sigma = xout_sigma
+        work.xout_dev = xout_dev
+        work.xout = xout
+        work.Pout = Pout
+        return (xout, Pout)
     
-    def crosscov(self):
+    def crosscov(self, work):
         weights = self.weights
-        try:
-            in_dev = self.in_dev
-            out_dev = self.out_dev
-        except AttributeError:
-            msg = "Transform must be done before requesting crosscov."
-            raise RuntimeError(msg)
-        
-        return np.einsum('k...i,k...j,k->...ij', in_dev, out_dev, weights)
+        xin_dev = work.xin_dev
+        xout_dev = work.xout_dev
+        return np.einsum('k...i,k...j,k->...ij', xin_dev, xout_dev, weights)
     
     def sigma_points_diff(self, mean_diff, cov_diff):
         '''Derivative of sigma-points.'''
