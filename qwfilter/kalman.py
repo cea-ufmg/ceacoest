@@ -3,7 +3,7 @@
 TODO
 ----
  * Add derivative of SVD square root.
- * Vectorize cholesky_sqrt_diff, sigma_points_diff and transform_diff.
+ * Vectorize the UT functions.
  * Make docstrings for all constructors.
  * Implement filter Hessian.
 
@@ -30,7 +30,7 @@ from . import utils
 class DTKalmanFilterBase(metaclass=abc.ABCMeta):
     '''Discrete-time Kalman filter/smoother abstract base class.'''
     
-    def __init__(self, model):
+    def __init__(self, model, **options):
         '''Create a discrete-time Kalman filter.
         
         Parameters
@@ -84,14 +84,9 @@ def svd_sqrt(mat):
     >>> np.testing.assert_allclose(Q, STS)
     
     '''
-    [U, s, Vh] = numpy.linalg.svd(mat)
+    [U, s, VT] = numpy.linalg.svd(mat)
     return np.swapaxes(U * np.sqrt(s), -1, -2)
 
-
-def cholesky_sqrt(mat):
-    '''Upper triangular Cholesky decomposition for unscented transform.'''
-    lower_chol = numpy.linalg.cholesky(mat)
-    return np.swapaxes(lower_chol, -1, -2)
 
 
 def ldl_sqrt(mat):
@@ -207,12 +202,7 @@ def cholesky_sqrt_diff2(S, d2Q, work):
     return d2S
 
 
-ldl_sqrt.diff = cholesky_sqrt_diff
-
-cholesky_sqrt.diff = cholesky_sqrt_diff
-
-
-class UnscentedTransformBase:
+class UnscentedTransformBase(metaclass=abc.ABCMeta):
     
     def __init__(self, nin, **options):
         '''Unscented transform object constructor.
@@ -232,7 +222,7 @@ class UnscentedTransformBase:
         '''Number of inputs.'''
         
         self.kappa = options.get('kappa', 0.0)
-        '''Weight of the center sigma point.'''
+        '''Relative weight of the center sigma point.'''
         assert self.nin + self.kappa != 0
         
         self.nsigma = 2 * nin + (self.kappa != 0)
@@ -249,32 +239,40 @@ class UnscentedTransformBase:
         def __init__(self, xin, Pin):
             self.xin = xin
             self.Pin = Pin
+
+    @abc.abstractmethod
+    def sqrt(self, work, Q):
+        '''Unscented transform square root method.'''
+        raise NotImplementedError("Pure abstract method.")
     
     def gen_sigma_points(self, work):
-        '''Generate sigma-points and their deviations.'''
+        '''Generate sigma-points and their deviations.
+        
+        The sigma points are the lines of the returned matrix.
+        '''
         xin = work.xin
         Pin = work.Pin
         kappa = self.kappa
         nin = self.nin
         
         Pin_sqrt = self.sqrt(work, (nin + kappa) * Pin)
-        xin_dev = np.zeros((self.nsigma,) + xin.shape)
+        xin_dev = np.zeros((self.nsigma, nin))
         xin_dev[:nin] = Pin_sqrt
         xin_dev[nin:(2 * nin)] = -Pin_sqrt
         xin_sigma = xin_dev + xin
         
         work.xin_sigma = xin_sigma
         work.xin_dev = xin_dev
+        return xin_sigma
     
     def transform(self, work, f):
-        self.gen_sigma_points(work)
-        xin_sigma = work.xin_sigma
+        xin_sigma = self.gen_sigma_points(work)
         weights = self.weights
         
-        xout_sigma = f(in_sigma)
-        xout = np.einsum('k,k...', weights, xout_sigma)
+        xout_sigma = f(xin_sigma)
+        xout = np.einsum('k,ki', weights, xout_sigma)
         xout_dev = xout_sigma - xout
-        Pout = np.einsum('k...i,k...j,k->...ij', xout_dev, xout_dev, weights)
+        Pout = np.einsum('ki,kj,k', xout_dev, xout_dev, weights)
         
         work.xout_sigma = xout_sigma
         work.xout_dev = xout_dev
@@ -286,7 +284,7 @@ class UnscentedTransformBase:
         weights = self.weights
         xin_dev = work.xin_dev
         xout_dev = work.xout_dev
-        return np.einsum('k...i,k...j,k->...ij', xin_dev, xout_dev, weights)
+        return np.einsum('ki,kj,k', xin_dev, xout_dev, weights)
     
     def sigma_points_diff(self, mean_diff, cov_diff):
         '''Derivative of sigma-points.'''
@@ -337,34 +335,59 @@ class UnscentedTransformBase:
             return (out_mean_diff, out_cov_diff)
 
 
+class CholeskyUnscentedTransform(UnscentedTransformBase):
+    '''Unscented transform using Cholesky decomposition.'''
+
+    def sqrt(self, work, Q):
+        '''Unscented transform square root method.'''
+        return scipy.linalg.cholesky(Q, lower=False)
+
+
+class SVDUnscentedTransform(UnscentedTransformBase):
+    '''Unscented transform using singular value decomposition.'''
+    
+    def sqrt(self, work, Q):
+        '''Unscented transform square root method.'''
+        [U, s, VT] = scipy.linalg.svd(Q)
+        return np.transpose(U * np.sqrt(s))
+
+
 class DTUnscentedPredictor(DTKalmanFilterBase):
     
-    def __init__(self, model, mean, cov, **options):
-        super().__init__(model, mean, cov, **options)
+    def __init__(self, model, **options):
+        # Initialize base
+        super().__init__(model, **options)
+        
+        # Get transform options
         ut_options = options.copy()
         ut_options.update(utils.extract_subkeys(options, 'pred_ut_'))
-        self.__ut = UnscentedTransform(model.nx, **ut_options)
+        
+        # Select transform class
+        sqrt = ut_options.get('sqrt', 'cholesky')
+        if sqrt == 'cholesky':
+            UTClass = CholeskyUnscentedTransform
+        elif sqrt == 'svd':
+            UTClass = SVDUnscentedTransform
+        else:
+            raise ValueError("Invalid value for `sqrt` option.")
+        
+        # Create the transform object
+        self.__ut = UTClass(model.nx, **ut_options)
     
-    def predict(self):
+    def predict(self, work):
         '''Predict the state distribution at the next time index.'''
-        k = self.k
         def f_fun(x):
-            return self.model.f(k, x)
-        f, Pf = self.__ut.transform(f_fun, self.x, self.Px)
-        Q = self.model.Q(k, self.x)
-        Px = Pf + Q
+            return self.model.f(work.k, x)
         
-        # Save the prediction cross-covariance for smoothing
-        if self.save_pred_crosscov:
-            Pxf = self.__ut.crosscov()
-            self._save_prediction_crosscov(Pxf)
-        
-        # Calculate the precition gradient for the PEM
-        if self.pem == 'grad' or self.pem == 'hess':
-            self._calculate_prediction_grad()
-        
-        # Save and update the time and indices
-        self._save_prediction(f, Px)
+        work.pred_ut = self.__ut.Work(work.x, work.Px)
+        f, Pf = self.__ut.transform(work.pred_ut, f_fun)
+        Q = self.model.Q(k, work.x)
+    
+        work.prev_x = work.x
+        work.prev_Px = work.Px
+        work.k += 1
+        work.x = f
+        work.Px = Pf + Q
     
     def _calculate_prediction_grad(self):
         k = self.k
@@ -420,12 +443,26 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
 
 
 class DTUnscentedCorrector(DTKalmanFilterBase):
-
-    def __init__(self, model, mean, cov, **options):
-        super().__init__(model, mean, cov, **options)
+    
+    def __init__(self, model, **options):
+        # Initialize base
+        super().__init__(model, **options)
+        
+        # Get transform options
         ut_options = options.copy()
-        ut_options.update(utils.extract_subkeys(options, 'pred_ut_'))
-        self.__ut = UnscentedTransform(model.nx, **ut_options)
+        ut_options.update(utils.extract_subkeys(options, 'corr_ut_'))
+        
+        # Select transform class
+        sqrt = ut_options.get('sqrt', 'cholesky')
+        if sqrt == 'cholesky':
+            UTClass = CholeskyUnscentedTransform
+        elif sqrt == 'svd':
+            UTClass = SVDUnscentedTransform
+        else:
+            raise ValueError("Invalid value for `sqrt` option.")
+        
+        # Create the transform object
+        self.__ut = UTClass(model.nx, **ut_options)
     
     def initialize_history(self, size):
         size_changed = size != self.history_size
