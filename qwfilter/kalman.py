@@ -1,4 +1,4 @@
-'''Kalman filtering / smoothing module.
+"""Kalman filtering / smoothing module.
 
 TODO
 ----
@@ -12,7 +12,7 @@ Improvement ideas
  * Allow gradients and Hessian to be calculated offline, saving processing time
    at the cost of memory.
 
-'''
+"""
 
 
 import abc
@@ -27,29 +27,53 @@ import scipy.linalg
 from . import utils
 
 
+class DTKalmanFilterWork:
+    """Kalman filter work data."""
+    
+     def __init__(self, x=None, Px=None, k=0):
+         self.x = x
+         """Current state vector mean."""
+         
+         self.Px = Px
+         """Current state vector covariance."""
+         
+         self.k = k
+         """Current time step."""
+
+
 class DTKalmanFilterBase(metaclass=abc.ABCMeta):
-    '''Discrete-time Kalman filter/smoother abstract base class.'''
+    """Discrete-time Kalman filter/smoother abstract base class.
+
+    Due to the various use cases of Kalman filters (e.g. online filtering,
+    offline filtering, smoothing, prediction error method parameter estimation,
+    importance sampling for particle filters, etc) this class and subclasses
+    retains only information on the procedures. The data should be managed by
+    other classes such as those holding the filter state and filter history.
+    """
+    
+    Work = DTKalmanFilterWork
+    """Work data class."""
     
     def __init__(self, model, **options):
-        '''Create a discrete-time Kalman filter.
+        """Create a discrete-time Kalman filter.
         
         Parameters
         ----------
         model :
             The underlying system model.
         
-        '''
+        """
         self.model = model
-        '''The underlying system model.'''
+        """The underlying system model."""
     
     @abc.abstractmethod
     def predict(self, work):
-        '''Predict the state distribution at a next time sample.'''
+        """Predict the state distribution at a next time sample."""
         raise NotImplementedError("Pure abstract method.")
     
     @abc.abstractmethod
     def correct(self, work, y):
-        '''Correct the state distribution, given the measurement vector.'''
+        """Correct the state distribution, given the measurement vector."""
         raise NotImplementedError("Pure abstract method.")
     
     def filter(self, y):
@@ -65,55 +89,9 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
             self.predict()
             self.correct(y[k])
 
-    
-def svd_sqrt(mat):
-    '''SVD-based "square root" of a symmetric positive-semidefinite matrix.
-    
-    Used for unscented transform.
-    
-    Example
-    -------
-    Generate a random positive-semidefinite symmetric matrix.
-    >>> np.random.seed(0)
-    >>> A = np.random.randn(4, 10)
-    >>> Q = np.dot(A, A.T)
-    
-    The square root should satisfy S'S = Q
-    >>> S = svd_sqrt(Q)
-    >>> STS = np.dot(S.T, S)
-    >>> np.testing.assert_allclose(Q, STS)
-    
-    '''
-    [U, s, VT] = numpy.linalg.svd(mat)
-    return np.swapaxes(U * np.sqrt(s), -1, -2)
-
-
-
-def ldl_sqrt(mat):
-    '''LDL-based "square root" of a symmetric positive-semidefinite matrix.
-    
-    Used for unscented transform.
-    
-    Example
-    -------
-    Generate a random positive-semidefinite symmetric matrix.
-    >>> np.random.seed(0)
-    >>> A = np.random.randn(4, 10)
-    >>> Q = np.dot(A, A.T)
-    
-    The square root should satisfy S'S = Q
-    >>> S = ldl_sqrt(Q)
-    >>> STS = np.dot(S.T, S)
-    >>> np.testing.assert_allclose(Q, STS)
-    
-    '''
-    L, D = numpy.linalg.ldl(mat)
-    sqrt_D = np.sqrt(np.einsum('...ii->...i', D))    
-    return np.einsum('...ij,...j->...ji', L, sqrt_D)
-
 
 def cholesky_sqrt_diff(S, dQ=None, work=None):
-    '''Derivatives of lower triangular Cholesky decomposition.
+    """Derivatives of lower triangular Cholesky decomposition.
     
     Parameters
     ----------
@@ -136,7 +114,7 @@ def cholesky_sqrt_diff(S, dQ=None, work=None):
         The derivative of `S` with respect to some parameters or with respect
         to `Q` if `dQ` is `None`.
     
-    '''
+    """
     S = np.asarray(S)
     
     n = S.shape[-1]
@@ -175,7 +153,7 @@ def cholesky_sqrt_diff(S, dQ=None, work=None):
 
 
 def cholesky_sqrt_diff2(S, d2Q, work):
-    '''Second derivatives of lower triangular Cholesky decomposition.'''
+    """Second derivatives of lower triangular Cholesky decomposition."""
     S = np.asarray(S)
     dQ = work['dQ']
     dS = work['dS']
@@ -202,10 +180,21 @@ def cholesky_sqrt_diff2(S, d2Q, work):
     return d2S
 
 
+class UnscentedTransformWork:
+    """Unscented transform work data."""
+    def __init__(self, xin, Pin):
+        self.xin = xin
+        self.Pin = Pin
+
+
 class UnscentedTransformBase(metaclass=abc.ABCMeta):
+    """Unscented transform base class."""
+    
+    Work = UnscentedTransformWork
+    """Work data class."""
     
     def __init__(self, nin, **options):
-        '''Unscented transform object constructor.
+        """Unscented transform object constructor.
         
         Parameters
         ----------
@@ -217,49 +206,39 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
         kappa :
             Weight of the center sigma point. Zero by default.
         
-        '''
+        """
         self.nin = nin
-        '''Number of inputs.'''
+        """Number of inputs."""
         
         self.kappa = options.get('kappa', 0.0)
-        '''Relative weight of the center sigma point.'''
+        """Weight parameter of the center sigma point."""
         assert self.nin + self.kappa != 0
         
         self.nsigma = 2 * nin + (self.kappa != 0)
-        '''Number of sigma points.'''
+        """Number of sigma points."""
         
         weights = np.repeat(0.5 / (nin + self.kappa), self.nsigma)
         if self.kappa != 0:
             weights[-1] = self.kappa / (nin + self.kappa)
         self.weights = weights
-        '''Transform weights.'''
+        """Transform weights."""
     
-    class Work:
-        '''Unscented transform work data.'''
-        def __init__(self, xin, Pin):
-            self.xin = xin
-            self.Pin = Pin
-
     @abc.abstractmethod
     def sqrt(self, work, Q):
-        '''Unscented transform square root method.'''
+        """Unscented transform square root method."""
         raise NotImplementedError("Pure abstract method.")
     
     def gen_sigma_points(self, work):
-        '''Generate sigma-points and their deviations.
+        """Generate sigma-points and their deviations.
         
         The sigma points are the lines of the returned matrix.
-        '''
-        xin = work.xin
-        Pin = work.Pin
-        kappa = self.kappa
-        nin = self.nin
-        
-        Pin_sqrt = self.sqrt(work, (nin + kappa) * Pin)
-        xin_dev = np.zeros((self.nsigma, nin))
+        """
+        # Get parameters
+        Pin_sqrt = self.sqrt(work, (self.nin + self.kappa) * work.Pin)
+        xin_dev = np.zeros((self.nsigma, self.nin))
         xin_dev[:nin] = Pin_sqrt
         xin_dev[nin:(2 * nin)] = -Pin_sqrt
-        xin_sigma = xin_dev + xin
+        xin_sigma = xin_dev + work.xin
         
         work.xin_sigma = xin_sigma
         work.xin_dev = xin_dev
@@ -287,7 +266,7 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
         return np.einsum('ki,kj,k', xin_dev, xout_dev, weights)
     
     def sigma_points_diff(self, mean_diff, cov_diff):
-        '''Derivative of sigma-points.'''
+        """Derivative of sigma-points."""
         try:
             in_dev = self.in_dev
         except AttributeError:
@@ -336,20 +315,31 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
 
 
 class CholeskyUnscentedTransform(UnscentedTransformBase):
-    '''Unscented transform using Cholesky decomposition.'''
-
+    """Unscented transform using Cholesky decomposition."""
+    
     def sqrt(self, work, Q):
-        '''Unscented transform square root method.'''
+        """Unscented transform square root method."""
         return scipy.linalg.cholesky(Q, lower=False)
 
 
 class SVDUnscentedTransform(UnscentedTransformBase):
-    '''Unscented transform using singular value decomposition.'''
+    """Unscented transform using singular value decomposition."""
     
     def sqrt(self, work, Q):
-        '''Unscented transform square root method.'''
+        """Unscented transform square root method."""
         [U, s, VT] = scipy.linalg.svd(Q)
         return np.transpose(U * np.sqrt(s))
+
+
+def choose_ut_transform_class(options):
+    """Choose an unscented transform class from an options dict."""
+    sqrt = ut_options.get('sqrt', 'cholesky')
+    if sqrt == 'cholesky':
+        return CholeskyUnscentedTransform
+    elif sqrt == 'svd':
+        return SVDUnscentedTransform
+    else:
+        raise ValueError("Invalid value for `sqrt` option.")
 
 
 class DTUnscentedPredictor(DTKalmanFilterBase):
@@ -362,27 +352,19 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
         ut_options = options.copy()
         ut_options.update(utils.extract_subkeys(options, 'pred_ut_'))
         
-        # Select transform class
-        sqrt = ut_options.get('sqrt', 'cholesky')
-        if sqrt == 'cholesky':
-            UTClass = CholeskyUnscentedTransform
-        elif sqrt == 'svd':
-            UTClass = SVDUnscentedTransform
-        else:
-            raise ValueError("Invalid value for `sqrt` option.")
-        
         # Create the transform object
+        UTClass = choose_ut_transform_class(ut_options)
         self.__ut = UTClass(model.nx, **ut_options)
     
     def predict(self, work):
-        '''Predict the state distribution at the next time index.'''
+        """Predict the state distribution at the next time index."""
         def f_fun(x):
             return self.model.f(work.k, x)
         
         work.pred_ut = self.__ut.Work(work.x, work.Px)
         f, Pf = self.__ut.transform(work.pred_ut, f_fun)
         Q = self.model.Q(k, work.x)
-    
+        
         work.prev_x = work.x
         work.prev_Px = work.Px
         work.k += 1
@@ -452,94 +434,46 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         ut_options = options.copy()
         ut_options.update(utils.extract_subkeys(options, 'corr_ut_'))
         
-        # Select transform class
-        sqrt = ut_options.get('sqrt', 'cholesky')
-        if sqrt == 'cholesky':
-            UTClass = CholeskyUnscentedTransform
-        elif sqrt == 'svd':
-            UTClass = SVDUnscentedTransform
-        else:
-            raise ValueError("Invalid value for `sqrt` option.")
-        
         # Create the transform object
+        UTClass = choose_ut_transform_class(ut_options)
         self.__ut = UTClass(model.nx, **ut_options)
     
-    def initialize_history(self, size):
-        size_changed = size != self.history_size
-        super().initialize_history(size)
-
-        # The extra variables are only needed for the PEM.
-        if self.pem != 'save':
-            return
-        
-        # Allocate the history arrays, if needed        
-        if size_changed:
-            nx = self.model.nx
-            ny = self.model.ny
-            nq = self.model.nq
-            base_shape = self.base_shape
-            self.y_active = np.zeros((size, ny), dtype=bool)
-            self.e = np.zeros((size,) + base_shape + (ny,))
-            self.K = np.zeros((size,) + base_shape + (nx, ny))
-            self.Pxh = np.zeros((size,) + base_shape + (nx, ny))
-            self.Py = np.zeros((size,) + base_shape + (ny, ny))
-            self.PyI = np.zeros((size,) + base_shape + (ny, ny))
-            self.PyC = np.zeros((size,) + base_shape + (ny, ny))
-
-    def _save_correction_pem(self, active, e, K, Pxh, Py, PyI, PyC):
-        k = self.k
-        cov_ind = (k, ...) + np.ix_(active, active)
-        self.y_active[k] = active
-        self.e[k, ..., active] = e
-        self.K[k, ..., active] = K
-        self.Pxh[k, ..., active] = Pxh
-        self.Py[cov_ind] = Py
-        self.PyI[cov_ind] = PyI
-        self.PyC[cov_ind] = PyC
-    
-    def correct(self, y):
-        '''Correct the state distribution, given the measurement vector.'''
-        assert np.shape(y) == (self.model.ny,), "No vectorization accepted in y"
-
+    def correct(self, work, y):
+        """Correct the state distribution, given the measurement vector."""
+        # Get the y-mask
         mask = ma.getmaskarray(y)
+        work.active = active = ~mask
         if np.all(mask):
             return
         
         # Remove inactive outputs
-        active = ~mask
         y = ma.compressed(y)
         R = self.model.R()[np.ix_(active, active)]
         def h_fun(x):
-            return self.model.h(self.k, x)[..., active]
+            return self.model.h(work.k, x)[active]
         
         # Perform unscented transform
-        h, Ph = self.__ut.transform(h_fun, self.x, self.Px)
-        Pxh = self.__ut.crosscov()
+        work.corr_ut = self.__ut.Work(work.x, work.Px)
+        h, Ph = self.__ut.transform(work.corr_ut, h_fun)
+        Pxh = self.__ut.crosscov(work.corr_ut)
         
         # Factorize covariance
         Py = Ph + R
         PyC = numpy.linalg.cholesky(Py)
         PyCI = numpy.linalg.inv(PyC)
-        PyI = np.einsum('...ki,...kj', PyCI, PyCI)
+        PyI = np.einsum('ki,kj', PyCI, PyCI)
         
         # Perform correction
         e = y - h
         K = np.einsum('...ik,...kj', Pxh, PyI)
-        x_corr = self.x + np.einsum('...ij,...j', K, e)
-        Px_corr = self.Px - np.einsum('...ik,...jl,...lk', K, K, Py)
-    
-        # Update log-likelihood and save PEM data
-        if self.pem:
-            PyCD = np.einsum('...kk->...k', PyC)
-            self.L -= 0.5 * np.einsum('...i,...ij,...j', e, PyI, e) 
-            self.L -= np.log(PyCD).sum(-1)
-        if self.pem == 'save':
-            self._save_correction_pem(active, e, K, Pxh, Py, PyI, PyC)
-        elif self.pem == 'grad' or self.pem == 'hess':
-            self._calculate_correction_grad(active, e, K, Pxh, Py, PyI, PyC)
-
+        x_corr = work.x + np.einsum('...ij,...j', K, e)
+        Px_corr = work.Px - np.einsum('...ik,...jl,...lk', K, K, Py)
+        
         # Save the correction data
-        self._save_correction(x_corr, Px_corr)
+        work.prev_x = work.x
+        work.prev_Px = work.Px
+        work.x = x_corr
+        work.Px = Px_corr
     
     def _calculate_correction_grad(self, active, e, K, Pxh, Py, PyI, PyC):
         k = self.k
