@@ -182,9 +182,9 @@ def cholesky_sqrt_diff2(S, d2Q, work):
 
 class UnscentedTransformWork:
     """Unscented transform work data."""
-    def __init__(self, xin, Pin):
-        self.xin = np.asarray(xin)
-        self.Pin = np.asarray(Pin)
+    def __init__(self, i, Pi):
+        self.i = np.asarray(i)
+        self.Pi = np.asarray(Pi)
 
 
 class UnscentedTransformBase(metaclass=abc.ABCMeta):
@@ -193,12 +193,12 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
     Work = UnscentedTransformWork
     """Work data class."""
     
-    def __init__(self, nin, **options):
+    def __init__(self, ni, **options):
         """Unscented transform object constructor.
         
         Parameters
         ----------
-        nin : int
+        ni : int
             Number of inputs
         
         Options
@@ -207,19 +207,19 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
             Weight of the center sigma point. Zero by default.
         
         """
-        self.nin = nin
+        self.ni = ni
         """Number of inputs."""
         
         self.kappa = options.get('kappa', 0.0)
         """Weight parameter of the center sigma point."""
-        assert self.nin + self.kappa != 0
+        assert self.ni + self.kappa != 0
         
-        self.nsigma = 2 * nin + (self.kappa != 0)
+        self.nsigma = 2 * ni + (self.kappa != 0)
         """Number of sigma points."""
         
-        weights = np.repeat(0.5 / (nin + self.kappa), self.nsigma)
+        weights = np.repeat(0.5 / (ni + self.kappa), self.nsigma)
         if self.kappa != 0:
-            weights[-1] = self.kappa / (nin + self.kappa)
+            weights[-1] = self.kappa / (ni + self.kappa)
         self.weights = weights
         """Transform weights."""
     
@@ -228,90 +228,76 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
         """Unscented transform square root method."""
         raise NotImplementedError("Pure abstract method.")
     
-    def gen_sigma_points(self, work):
+    def sigma_points(self, work):
         """Generate sigma-points and their deviations.
         
         The sigma points are the lines of the returned matrix.
         """
-        nin = self.nin
-        Pin_sqrt = self.sqrt(work, (nin + self.kappa) * work.Pin)
-        xin_dev = np.zeros((self.nsigma, nin))
-        xin_dev[:nin] = Pin_sqrt
-        xin_dev[nin:(2 * nin)] = -Pin_sqrt
-        xin_sigma = xin_dev + work.xin
+        ni = self.ni
+        S = self.sqrt(work, (ni + self.kappa) * work.Pi)
+        i_dev = np.zeros((self.nsigma, ni))
+        i_dev[:ni] = S
+        i_dev[ni:(2 * ni)] = -S
+        i_sigma = i_dev + work.i
         
-        work.xin_sigma = xin_sigma
-        work.xin_dev = xin_dev
-        return xin_sigma
+        work.i_sigma = i_sigma
+        work.i_dev = i_dev
+        return i_sigma
+    
+    def sigma_points_diff(self, work, di_dq, dPi_dq):
+        """Derivative of sigma-points."""
+        ni = self.ni
+        
+        dS_dq = self.sqrt_diff(work, (ni + self.kappa) * dPi_dq)
+        di_dev_dq = np.zeros((self.nsigma,) + di_dq.shape)
+        di_dev_dq[:ni] = np.rollaxis(dS_dq, -2)
+        di_dev_dq[ni:(2 * ni)] = -di_dev_dq[:ni]
+        di_sigma_dq = di_dev_dq + di_dq
+        
+        work.di_dev_dq = di_dev_dq
+        work.di_sigma_dq = di_sigma_dq
+        return di_sigma_dq
     
     def transform(self, work, f):
-        xin_sigma = self.gen_sigma_points(work)
+        i_sigma = self.sigma_points(work)
         weights = self.weights
         
-        xout_sigma = f(xin_sigma)
-        xout = np.einsum('k,ki', weights, xout_sigma)
-        xout_dev = xout_sigma - xout
-        Pout = np.einsum('ki,kj,k', xout_dev, xout_dev, weights)
+        o_sigma = f(i_sigma)
+        o = np.einsum('k,ki', weights, o_sigma)
+        o_dev = o_sigma - o
+        Po = np.einsum('ki,kj,k', o_dev, o_dev, weights)
         
-        work.xout_sigma = xout_sigma
-        work.xout_dev = xout_dev
-        work.xout = xout
-        work.Pout = Pout
-        return (xout, Pout)
+        work.o_sigma = o_sigma
+        work.o_dev = o_dev
+        work.o = o
+        work.Po = Po
+        return (o, Po)
+    
+    def transform_diff(self, work, df_dq, df_dx, di_dq, dPi_dq):
+        weights = self.weights
+        i_sigma = work.i_sigma
+        
+        di_sigma_dq = self.sigma_points_diff(work, di_dq, dPi_dq)
+        Do_sigma_Dq = df_dq(i_sigma)
+        Do_sigma_Dq += np.einsum('ijk,ilj->ilk', df_dx(i_sigma), di_sigma_dq)
+        
+        do_dq = np.einsum('k,k...', weights, Do_sigma_Dq)
+        do_dev_dq = Do_sigma_Dq - do_dq
+        dPo_dq = np.einsum('klj,ki,k->lij', do_dev_dq, work.o_dev, weights)
+        dPo_dq += np.swapaxes(dPo_dq, -1, -2)
+        
+        work.do_dev_dq = do_dev_dq
+        return (do_dq, dPo_dq)
     
     def crosscov(self, work):
-        weights = self.weights
-        xin_dev = work.xin_dev
-        xout_dev = work.xout_dev
-        return np.einsum('ki,kj,k', xin_dev, xout_dev, weights)
+        return np.einsum('ki,kj,k', work.i_dev, work.o_dev, self.weights)
     
-    def sigma_points_diff(self, mean_diff, cov_diff):
-        """Derivative of sigma-points."""
-        try:
-            in_dev = self.in_dev
-        except AttributeError:
-            msg = "Transform must be done before requesting derivatives."
-            raise RuntimeError(msg)
-        
-        nin = self.nin
-        nq = len(mean_diff)
-        kappa = self.kappa
-        
-        cov_sqrt = in_dev[:nin]
-        cov_sqrt_diff = self.sqrt.diff(cov_sqrt, (nin + kappa) * cov_diff)
-        in_dev_diff = np.zeros((self.nsigma,) + mean_diff.shape)
-        in_dev_diff[:nin] = np.rollaxis(cov_sqrt_diff, -2)
-        in_dev_diff[nin:(2 * nin)] = -in_dev_diff[:nin]
-        in_sigma_diff = in_dev_diff + mean_diff
-        self.in_dev_diff = in_dev_diff
-        return in_sigma_diff
-    
-    def transform_diff(self, f_diff, mean_diff, cov_diff, crosscov=False):
-        weights = self.weights
-        try:
-            in_dev = self.in_dev
-            out_dev = self.out_dev
-            in_sigma = self.in_sigma
-        except AttributeError:
-            msg = "Transform must be done before requesting derivatives."
-            raise RuntimeError(msg)
-        
-        in_sigma_diff = self.sigma_points_diff(mean_diff, cov_diff)
-        out_sigma_diff = f_diff(in_sigma, in_sigma_diff)
-        out_mean_diff = np.einsum('k,k...', weights, out_sigma_diff)
-        out_dev_diff = out_sigma_diff - out_mean_diff
-        out_cov_diff = np.einsum('k...i,k...j,k->...ij',
-                                 out_dev_diff, out_dev, weights)
-        out_cov_diff += np.einsum('k...i,k...j,k->...ij',
-                                  out_dev, out_dev_diff, weights)
-        if crosscov:
-            crosscov_diff = np.einsum('k...qi,k...j,k->...qij',
-                                      self.in_dev_diff, out_dev, weights)
-            crosscov_diff += np.einsum('k...i,k...qj,k->...qij',
-                                       in_dev, out_dev_diff, weights)
-            return (out_mean_diff, out_cov_diff, crosscov_diff)
-        else:
-            return (out_mean_diff, out_cov_diff)
+    def crosscov_diff(self, work):
+        dPio_dq = np.einsum('kli,kj,k->lij', 
+                            work.di_dev_dq, work.o_dev, self.weights)
+        dPio_dq += np.einsum('ki,klj,k->lij', 
+                             work.i_dev, work.do_dev_dq, self.weights)
+        return dPio_dq
 
 
 class CholeskyUnscentedTransform(UnscentedTransformBase):
@@ -321,8 +307,8 @@ class CholeskyUnscentedTransform(UnscentedTransformBase):
         if getattr(self, 'gradient_data_initialized', False):
             return
         
-        self.nin_range = np.arange(self.nin)
-        self.nin_tril_indices = np.tril_indices(self.nin)
+        self.ni_range = np.arange(self.ni)
+        self.ni_tril_indices = np.tril_indices(self.ni)
         self.gradient_data_initialized = True
     
     def sqrt(self, work, Q):
@@ -330,33 +316,33 @@ class CholeskyUnscentedTransform(UnscentedTransformBase):
         work.S = scipy.linalg.cholesky(Q, lower=False)
         return work.S
     
-    def dsqrt_dq(self, work, dQ_dq):
+    def sqrt_diff(self, work, dQ_dq):
         """Derivatives of Unscented transform Cholesky decomposition.
         
         Parameters
         ----------
         work :
             Unscented transform work data.
-        dQ_dq : (nq, nin, nin) array_like
-            The derivatives of `Pin` with respect to some parameter vector.
+        dQ_dq : (nq, ni, ni) array_like
+            The derivatives of `Pxi` with respect to some parameter vector.
              Must be symmetric with respect to the last two axes, i.e., 
             `dQ_dq[..., i, j] == dQ_dq[..., j, i]` for all `i, j` pairs.
         
         Returns
         -------
-        dS_dq : (nq, nin, nin) array_like
+        dS_dq : (nq, ni, ni) array_like
             The derivative of the Cholesky decomposition of `Q` with respect
             to the parameter vector.
         
         """
         self.initialize_gradient_data()
         nq = len(dQ_dq)
-        nin = self.nin
-        k = self.nin_range
-        i, j = self.nin_tril_indices
+        ni = self.ni
+        k = self.ni_range
+        i, j = self.ni_tril_indices
         ix, jx, kx = np.ix_(i, j, k)
         
-        A = np.zeros((nin, nin, nin, nin))
+        A = np.zeros((ni, ni, ni, ni))
         A[ix, jx, ix, kx] = work.S[kx, jx]
         A[ix, jx, jx, kx] += work.S[kx, ix]
         A_tril = A[i, j][..., i, j]
@@ -364,7 +350,7 @@ class CholeskyUnscentedTransform(UnscentedTransformBase):
         
         dQ_dq_tril = dQ_dq[..., i, j]        
         dS_dq_tril = np.einsum('ab,...b->...a', A_tril_inv, dQ_dq_tril)
-        dS_dq = np.zeros((nq, nin, nin))
+        dS_dq = np.zeros((nq, ni, ni))
         dS_dq[..., j, i] = dS_dq_tril
         return dS_dq
 
