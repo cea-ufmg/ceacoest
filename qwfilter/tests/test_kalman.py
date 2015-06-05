@@ -1,10 +1,10 @@
-'''Kalman filtering / smoothing test module.
+"""Kalman filtering / smoothing test module.
 
 TODO
 ----
  * Test filter vectorization.
 
-'''
+"""
 
 
 import numpy as np
@@ -21,58 +21,58 @@ from qwfilter.testsupport.array_cmp import ArrayCmp, ArrayDiff
 
 @pytest.fixture(params=range(1, 4))
 def seed(request):
-    '''Random number generator seed.'''
+    """Random number generator seed."""
     np.random.seed(request.param)
     return request.param
 
 
 @pytest.fixture(params=range(1, 5))
 def nx(request):
-    '''Number of states to test with.'''
+    """Number of states to test with."""
     return request.param
 
 
 @pytest.fixture(params=range(1, 3))
 def nq(request):
-    '''Number of parameters to test with.'''
+    """Number of parameters to test with."""
     return request.param
 
 
 @pytest.fixture
 def x(seed, nx):
-    '''Random state vector.'''
+    """Random state vector."""
     return np.random.randn(nx)
 
 
 @pytest.fixture
 def q(seed, nq):
-    '''Random parameter vector.'''
+    """Random parameter vector."""
     return np.random.randn(nq)
 
 
 @pytest.fixture
 def cov(seed, nx):
-    '''Random x covariance matrix.'''
+    """Random x covariance matrix."""
     M = np.random.randn(nx, nx + 1) / nx
     return M.dot(M.T)
 
 
 @pytest.fixture
 def A(seed, nx):
-    '''Random state transition matrix.'''
+    """Random state transition matrix."""
     A = np.random.randn(nx, nx)
     return A
 
 
 @pytest.fixture(params=[0, 0.5, 1])
 def ut_kappa(request):
-    '''Unscented transform kappa parameter.'''
+    """Unscented transform kappa parameter."""
     return request.param
 
 
 @pytest.fixture(params=['cholesky', 'svd'])
 def ut_sqrt(request):
-    '''Unscented transform square root option.'''
+    """Unscented transform square root option."""
     if request.param == 'ldl' and not hasattr(np.linalg, 'ldl'):
         pytest.skip('ldl decomposition not available in numpy.')
     return request.param
@@ -80,7 +80,7 @@ def ut_sqrt(request):
 
 @pytest.fixture
 def ut(ut_sqrt, ut_kappa, nx):
-    '''Standalone UnscentedTransform object.'''
+    """Standalone UnscentedTransform object."""
     options = {'sqrt': ut_sqrt, 'kappa': ut_kappa}
     UTClass = kalman.choose_ut_transform_class(options)
     return UTClass(nx, **options)
@@ -88,12 +88,12 @@ def ut(ut_sqrt, ut_kappa, nx):
 
 @pytest.fixture
 def ut_work(x, cov, ut):
-    '''Unscented transform work data.'''
+    """Unscented transform work data."""
     return ut.Work(x, cov)
 
 
 class NonlinearFunction:
-    '''Parametrized nonlinear function.'''
+    """Parametrized nonlinear function."""
     def __init__(self, nx, nq):
         self.nx = nx
         self.nq = nq
@@ -122,36 +122,36 @@ class NonlinearFunction:
 
 @pytest.fixture
 def nlfunction(nx, nq):
-    '''Parametrized nonlinear function.'''
+    """Parametrized nonlinear function."""
     return NonlinearFunction(nx, nq)
 
 
 def test_nlfunction_dx(nlfunction, x, q):
-    '''Assert that nlfunction's derivative with respect to x is correct.'''
+    """Assert that nlfunction's derivative with respect to x is correct."""
     numerical = utils.central_diff(lambda x: nlfunction(x, q), x)
     analytical = nlfunction.d_dx(x, q)
     assert ArrayDiff(analytical, numerical) < 1e-8
 
 
 def test_nlfunction_dq(nlfunction, x, q):
-    '''Assert that nlfunction's derivative with respect to p is correct.'''
+    """Assert that nlfunction's derivative with respect to p is correct."""
     numerical = utils.central_diff(lambda q: nlfunction(x, q), q)
     analytical = nlfunction.d_dq(x, q)
     assert ArrayCmp(analytical) == numerical
 
 
 def test_ut_sqrt(ut, ut_work, cov):
-    '''Test if the ut_sqrt functions satisfy their definition.'''
+    """Test if the ut_sqrt functions satisfy their definition."""
     S = ut.sqrt(ut_work, cov)
     STS = np.dot(S.T, S)
     assert ArrayDiff(STS, cov) < 1e-8
 
 
-def test_ut_sqrt_diff(ut, ut_work, ut_sqrt, cov, nx):
-    '''Check the derivative of the unscented transform square root.'''
-    if ut_sqrt != 'cholesky':
+def test_ut_sqrt_diff(ut, ut_work, cov, nx):
+    """Check the derivative of the unscented transform square root."""
+    if not hasattr(ut, 'sqrt_diff')
         pytest.skip("Function not implemented yet.")
-
+    
     i, j = np.tril_indices(nx)
     nq = len(i)
     def Q_fun(x):
@@ -165,12 +165,12 @@ def test_ut_sqrt_diff(ut, ut_work, ut_sqrt, cov, nx):
     dQ_dq = np.zeros((nq, nx, nx))
     dQ_dq[np.arange(nq), i, j] = 1
     dQ_dq[np.arange(nq), j, i] = 1
-    dS_dq = ut.dsqrt_dq(ut_work, dQ_dq)
+    dS_dq = ut.sqrt_diff(ut_work, dQ_dq)
     assert ArrayDiff(numerical, dS_dq) < 1e-8
 
 
 def test_cholesky_sqrt_diff2(cov, nx):
-    '''Check the second derivatives of the Cholesky decomposition.'''
+    """Check the second derivatives of the Cholesky decomposition."""
     i, j = np.tril_indices(nx)    
     ntril = i.size
     k = np.arange(ntril)
@@ -200,8 +200,8 @@ def test_cholesky_sqrt_diff2(cov, nx):
 
 
 def test_sigma_points(ut, ut_work, x, cov):
-    '''Test if the mean and covariance of the sigma-points is sane.'''
-    sigma = ut.gen_sigma_points(ut_work)
+    """Test if the mean and covariance of the sigma-points is sane."""
+    sigma = ut.sigma_points(ut_work)
     ut_mean = np.dot(ut.weights, sigma)
     assert ArrayCmp(ut_mean, x)
     
@@ -211,7 +211,7 @@ def test_sigma_points(ut, ut_work, x, cov):
 
 
 def test_affine_ut(ut, ut_work, x, cov, A, nx):
-    '''Test the unscented transform of an affine function.'''
+    """Test the unscented transform of an affine function."""
     f = lambda x: np.dot(x, A.T) + np.arange(nx)
     [ut_mean, ut_cov] = ut.transform(ut_work, f)
     
@@ -227,12 +227,12 @@ def test_affine_ut(ut, ut_work, x, cov, A, nx):
 
 
 def test_sigma_points_diff_wrt_mean(ut, ut_sqrt, x, cov, nx):
-    '''Test the derivative of the unscented transform sigma points.'''
+    """Test the derivative of the unscented transform sigma points."""
     if ut_sqrt == 'svd':
         pytest.skip("`svd_sqrt_diff` not implemented yet.")
     
     def sigma(mean, cov):
-        return ut.gen_sigma_points(mean, cov)
+        return ut.sigma_points(mean, cov)
     
     sigma(x, cov)
     ds_dmean = ut.sigma_points_diff(np.identity(nx), np.zeros((nx, nx, nx)))
@@ -243,7 +243,7 @@ def test_sigma_points_diff_wrt_mean(ut, ut_sqrt, x, cov, nx):
 
 
 def test_sigma_points_diff_wrt_cov(ut, ut_sqrt, x, cov, nx):
-    '''Test the derivative of the unscented transform sigma points.'''
+    """Test the derivative of the unscented transform sigma points."""
     if ut_sqrt == 'svd':
         pytest.skip("`svd_sqrt_diff` not implemented yet.")
     
@@ -251,9 +251,9 @@ def test_sigma_points_diff_wrt_cov(ut, ut_sqrt, x, cov, nx):
         Q = cov.copy()
         Q[i[k], j[k]] = cij
         Q[j[k], i[k]] = cij
-        return ut.gen_sigma_points(x, Q)
+        return ut.sigma_points(x, Q)
 
-    ut.gen_sigma_points(x, cov)
+    ut.sigma_points(x, cov)
     i, j = np.tril_indices(nx)
     ntril = len(i)
     
@@ -269,7 +269,7 @@ def test_sigma_points_diff_wrt_cov(ut, ut_sqrt, x, cov, nx):
 
 
 def test_transform_diff_wrt_q(ut, ut_sqrt, nlfunction, x, q, cov, nx, nq):
-    '''Test the derivatives of unscented transform.'''
+    """Test the derivatives of unscented transform."""
     if ut_sqrt == 'svd':
         pytest.skip("`svd_sqrt_diff` not implemented yet.")
     
@@ -295,7 +295,7 @@ def test_transform_diff_wrt_q(ut, ut_sqrt, nlfunction, x, q, cov, nx, nq):
 
 
 def test_transform_diff_wrt_mean(ut, ut_sqrt, nlfunction, x, q, cov, nx):
-    '''Test the derivatives of unscented transform.'''
+    """Test the derivatives of unscented transform."""
     if ut_sqrt == 'svd':
         pytest.skip("`svd_sqrt_diff` not implemented yet.")
     
