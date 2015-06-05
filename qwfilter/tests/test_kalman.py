@@ -16,7 +16,7 @@ from qwfilter import kalman, utils
 
 
 pytest_plugins = "qwfilter.testsupport.array_cmp"
-from qwfilter.testsupport.array_cmp import ArrayCmp
+from qwfilter.testsupport.array_cmp import ArrayCmp, ArrayDiff
 
 
 @pytest.fixture(params=range(1, 4))
@@ -53,7 +53,7 @@ def q(seed, nq):
 @pytest.fixture
 def cov(seed, nx):
     '''Random x covariance matrix.'''
-    M = np.random.randn(nx, nx + 1)
+    M = np.random.randn(nx, nx + 1) / nx
     return M.dot(M.T)
 
 
@@ -64,7 +64,13 @@ def A(seed, nx):
     return A
 
 
-@pytest.fixture(params=['cholesky', 'ldl', 'svd'])
+@pytest.fixture(params=[0, 0.5, 1])
+def ut_kappa(request):
+    '''Unscented transform kappa parameter.'''
+    return request.param
+
+
+@pytest.fixture(params=['cholesky', 'svd'])
 def ut_sqrt(request):
     '''Unscented transform square root option.'''
     if request.param == 'ldl' and not hasattr(np.linalg, 'ldl'):
@@ -73,26 +79,17 @@ def ut_sqrt(request):
 
 
 @pytest.fixture
-def ut_sqrt_func(ut_sqrt):
-    '''Function corresponding to the square root option.'''
-    if ut_sqrt == 'svd':
-        return kalman.svd_sqrt
-    elif ut_sqrt == 'ldl':
-        return kalman.ldl_sqrt
-    elif ut_sqrt == 'cholesky':
-        return kalman.cholesky_sqrt
-
-
-@pytest.fixture(params=[0, 0.5, 1])
-def ut_kappa(request):
-    '''Unscented transform kappa parameter.'''
-    return request.param
+def ut(ut_sqrt, ut_kappa, nx):
+    '''Standalone UnscentedTransform object.'''
+    options = {'sqrt': ut_sqrt, 'kappa': ut_kappa}
+    UTClass = kalman.choose_ut_transform_class(options)
+    return UTClass(nx, **options)
 
 
 @pytest.fixture
-def ut(ut_sqrt, ut_kappa, nx):
-    '''Standalone UnscentedTransform object.'''
-    return kalman.UnscentedTransform(nx, sqrt=ut_sqrt, kappa=ut_kappa)
+def ut_work(x, cov, ut):
+    '''Unscented transform work data.'''
+    return ut.Work(x, cov)
 
 
 class NonlinearFunction:
@@ -100,7 +97,7 @@ class NonlinearFunction:
     def __init__(self, nx, nq):
         self.nx = nx
         self.nq = nq
-
+    
     def __call__(self, x, q):
         f = np.zeros_like(x)
         for i, j, k in np.ndindex(self.nx, self.nx, self.nq):
@@ -133,7 +130,7 @@ def test_nlfunction_dx(nlfunction, x, q):
     '''Assert that nlfunction's derivative with respect to x is correct.'''
     numerical = utils.central_diff(lambda x: nlfunction(x, q), x)
     analytical = nlfunction.d_dx(x, q)
-    assert ArrayCmp(analytical) == numerical
+    assert ArrayDiff(analytical, numerical) < 1e-8
 
 
 def test_nlfunction_dq(nlfunction, x, q):
@@ -143,11 +140,11 @@ def test_nlfunction_dq(nlfunction, x, q):
     assert ArrayCmp(analytical) == numerical
 
 
-def test_ut_sqrt(ut_sqrt_func, cov):
+def test_ut_sqrt(ut, ut_work, cov):
     '''Test if the ut_sqrt functions satisfy their definition.'''
-    S = ut_sqrt_func(cov)
+    S = ut.sqrt(ut_work, cov)
     STS = np.dot(S.T, S)
-    assert ArrayCmp(STS) == cov
+    assert ArrayDiff(STS, cov) < 1e-8
 
 
 def test_cholesky_sqrt_diff(cov, nx):
@@ -202,31 +199,31 @@ def test_cholesky_sqrt_diff2(cov, nx):
     assert ArrayCmp(d2S, tol=1e-6) == numerical
 
 
-def test_sigma_points(ut, x, cov):
+def test_sigma_points(ut, ut_work, x, cov):
     '''Test if the mean and covariance of the sigma-points is sane.'''
-    sigma = ut.gen_sigma_points(x, cov)
+    sigma = ut.gen_sigma_points(ut_work)
     ut_mean = np.dot(ut.weights, sigma)
-    assert ArrayCmp(ut_mean) == x
+    assert ArrayCmp(ut_mean, x)
     
-    dev = sigma - ut_mean
-    ut_cov = np.einsum('ki,kj,k', dev, dev, ut.weights)
-    assert ArrayCmp(ut_cov) == cov
+    xin_dev = ut_work.xin_dev
+    ut_cov = np.einsum('ki,kj,k', xin_dev, xin_dev, ut.weights)
+    assert ArrayDiff(ut_cov, cov) < 1e-8
 
 
-def test_affine_ut(ut, x, cov, A, nx):
+def test_affine_ut(ut, ut_work, x, cov, A, nx):
     '''Test the unscented transform of an affine function.'''
     f = lambda x: np.dot(x, A.T) + np.arange(nx)
-    [ut_mean, ut_cov] = ut.transform(f, x, cov)
+    [ut_mean, ut_cov] = ut.transform(ut_work, f)
     
     desired_mean = f(x)
-    assert ArrayCmp(ut_mean) == desired_mean
+    assert ArrayDiff(ut_mean, desired_mean) < 1e-8
 
     desired_cov = A.dot(cov).dot(A.T)
-    assert ArrayCmp(ut_cov) == desired_cov
+    assert ArrayDiff(ut_cov, desired_cov) < 1e-8
     
-    ut_crosscov = ut.crosscov()
+    ut_crosscov = ut.crosscov(ut_work)
     desired_crosscov = np.dot(cov, A.T)
-    assert ArrayCmp(ut_crosscov) == desired_crosscov
+    assert ArrayDiff(ut_crosscov, desired_crosscov) < 1e-8
 
 
 def test_sigma_points_diff_wrt_mean(ut, ut_sqrt, x, cov, nx):

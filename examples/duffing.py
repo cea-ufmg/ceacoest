@@ -120,7 +120,7 @@ def sim():
     R = model.R()
     v = np.random.multivariate_normal(np.zeros(model.ny), R, N)
     y = ma.asarray(model.h(k, x) + v)
-    y[1::2] = ma.masked
+    y[np.arange(N) % 4 != 0] = ma.masked
     return model, t, x, y, q
 
 

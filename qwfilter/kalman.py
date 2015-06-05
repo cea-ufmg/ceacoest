@@ -30,15 +30,15 @@ from . import utils
 class DTKalmanFilterWork:
     """Kalman filter work data."""
     
-     def __init__(self, x=None, Px=None, k=0):
-         self.x = x
-         """Current state vector mean."""
-         
-         self.Px = Px
-         """Current state vector covariance."""
-         
-         self.k = k
-         """Current time step."""
+    def __init__(self, x, Px, k=0):
+        self.x = np.asarray(x)
+        """Current state vector mean."""
+        
+        self.Px = np.asarray(Px)
+        """Current state vector covariance."""
+        
+        self.k = k
+        """Current time step."""
 
 
 class DTKalmanFilterBase(metaclass=abc.ABCMeta):
@@ -76,18 +76,18 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         """Correct the state distribution, given the measurement vector."""
         raise NotImplementedError("Pure abstract method.")
     
-    def filter(self, y):
-        raise NotImplementedError("Does not yet represent API changes.")
+    def filter(self, work, y):
         y = np.asanyarray(y)
         N = len(y)
+        x = np.zeros((N,) + np.shape(work.x))
+        Px = np.zeros((N,) + np.shape(work.x) + (self.model.nx,))
         
-        if self.save_history == 'filter':
-            self.initialize_history(N)
+        for k in range(N):
+            x[k], Px[k] = self.correct(work, y[k])
+            if k < N - 1:
+                self.predict(work)
         
-        self.correct(y[0])
-        for k in range(1, N):
-            self.predict()
-            self.correct(y[k])
+        return x, Px
 
 
 def cholesky_sqrt_diff(S, dQ=None, work=None):
@@ -233,9 +233,9 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
         
         The sigma points are the lines of the returned matrix.
         """
-        # Get parameters
-        Pin_sqrt = self.sqrt(work, (self.nin + self.kappa) * work.Pin)
-        xin_dev = np.zeros((self.nsigma, self.nin))
+        nin = self.nin
+        Pin_sqrt = self.sqrt(work, (nin + self.kappa) * work.Pin)
+        xin_dev = np.zeros((self.nsigma, nin))
         xin_dev[:nin] = Pin_sqrt
         xin_dev[nin:(2 * nin)] = -Pin_sqrt
         xin_sigma = xin_dev + work.xin
@@ -333,7 +333,7 @@ class SVDUnscentedTransform(UnscentedTransformBase):
 
 def choose_ut_transform_class(options):
     """Choose an unscented transform class from an options dict."""
-    sqrt = ut_options.get('sqrt', 'cholesky')
+    sqrt = options.get('sqrt', 'cholesky')
     if sqrt == 'cholesky':
         return CholeskyUnscentedTransform
     elif sqrt == 'svd':
@@ -363,13 +363,14 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
         
         work.pred_ut = self.__ut.Work(work.x, work.Px)
         f, Pf = self.__ut.transform(work.pred_ut, f_fun)
-        Q = self.model.Q(k, work.x)
+        Q = self.model.Q(work.k, work.x)
         
         work.prev_x = work.x
         work.prev_Px = work.Px
         work.k += 1
         work.x = f
         work.Px = Pf + Q
+        return work.x, work.Px
     
     def _calculate_prediction_grad(self):
         k = self.k
@@ -444,13 +445,13 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         mask = ma.getmaskarray(y)
         work.active = active = ~mask
         if np.all(mask):
-            return
+            return work.x, work.Px
         
         # Remove inactive outputs
         y = ma.compressed(y)
         R = self.model.R()[np.ix_(active, active)]
         def h_fun(x):
-            return self.model.h(work.k, x)[active]
+            return self.model.h(work.k, x)[..., active]
         
         # Perform unscented transform
         work.corr_ut = self.__ut.Work(work.x, work.Px)
@@ -465,15 +466,16 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         
         # Perform correction
         e = y - h
-        K = np.einsum('...ik,...kj', Pxh, PyI)
-        x_corr = work.x + np.einsum('...ij,...j', K, e)
-        Px_corr = work.Px - np.einsum('...ik,...jl,...lk', K, K, Py)
+        K = np.einsum('ik,kj', Pxh, PyI)
+        x_corr = work.x + np.einsum('ij,j', K, e)
+        Px_corr = work.Px - np.einsum('ik,jl,kl', K, K, Py)
         
-        # Save the correction data
+        # Save and return the correction data
         work.prev_x = work.x
         work.prev_Px = work.Px
         work.x = x_corr
         work.Px = Px_corr
+        return x_corr, Px_corr
     
     def _calculate_correction_grad(self, active, e, K, Pxh, Py, PyI, PyC):
         k = self.k
