@@ -183,8 +183,8 @@ def cholesky_sqrt_diff2(S, d2Q, work):
 class UnscentedTransformWork:
     """Unscented transform work data."""
     def __init__(self, xin, Pin):
-        self.xin = xin
-        self.Pin = Pin
+        self.xin = np.asarray(xin)
+        self.Pin = np.asarray(Pin)
 
 
 class UnscentedTransformBase(metaclass=abc.ABCMeta):
@@ -316,10 +316,57 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
 
 class CholeskyUnscentedTransform(UnscentedTransformBase):
     """Unscented transform using Cholesky decomposition."""
+
+    def initialize_gradient_data(self):
+        if getattr(self, 'gradient_data_initialized', False):
+            return
+        
+        self.nin_range = np.arange(self.nin)
+        self.nin_tril_indices = np.tril_indices(self.nin)
+        self.gradient_data_initialized = True
     
     def sqrt(self, work, Q):
         """Unscented transform square root method."""
-        return scipy.linalg.cholesky(Q, lower=False)
+        work.S = scipy.linalg.cholesky(Q, lower=False)
+        return work.S
+    
+    def dsqrt_dq(self, work, dQ_dq):
+        """Derivatives of Unscented transform Cholesky decomposition.
+        
+        Parameters
+        ----------
+        work :
+            Unscented transform work data.
+        dQ_dq : (nq, nin, nin) array_like
+            The derivatives of `Pin` with respect to some parameter vector.
+             Must be symmetric with respect to the last two axes, i.e., 
+            `dQ_dq[..., i, j] == dQ_dq[..., j, i]` for all `i, j` pairs.
+        
+        Returns
+        -------
+        dS_dq : (nq, nin, nin) array_like
+            The derivative of the Cholesky decomposition of `Q` with respect
+            to the parameter vector.
+        
+        """
+        self.initialize_gradient_data()
+        nq = len(dQ_dq)
+        nin = self.nin
+        k = self.nin_range
+        i, j = self.nin_tril_indices
+        ix, jx, kx = np.ix_(i, j, k)
+        
+        A = np.zeros((nin, nin, nin, nin))
+        A[ix, jx, ix, kx] = work.S[kx, jx]
+        A[ix, jx, jx, kx] += work.S[kx, ix]
+        A_tril = A[i, j][..., i, j]
+        A_tril_inv = scipy.linalg.inv(A_tril)
+        
+        dQ_dq_tril = dQ_dq[..., i, j]        
+        dS_dq_tril = np.einsum('ab,...b->...a', A_tril_inv, dQ_dq_tril)
+        dS_dq = np.zeros((nq, nin, nin))
+        dS_dq[..., j, i] = dS_dq_tril
+        return dS_dq
 
 
 class SVDUnscentedTransform(UnscentedTransformBase):
@@ -328,7 +375,8 @@ class SVDUnscentedTransform(UnscentedTransformBase):
     def sqrt(self, work, Q):
         """Unscented transform square root method."""
         [U, s, VT] = scipy.linalg.svd(Q)
-        return np.transpose(U * np.sqrt(s))
+        work.S = np.transpose(U * np.sqrt(s))
+        return work.S
 
 
 def choose_ut_transform_class(options):

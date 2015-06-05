@@ -147,26 +147,26 @@ def test_ut_sqrt(ut, ut_work, cov):
     assert ArrayDiff(STS, cov) < 1e-8
 
 
-def test_cholesky_sqrt_diff(cov, nx):
-    '''Check the derivative of the Cholesky decomposition.'''
-    S = kalman.cholesky_sqrt(cov)
-    def f(x):
+def test_ut_sqrt_diff(ut, ut_work, ut_sqrt, cov, nx):
+    '''Check the derivative of the unscented transform square root.'''
+    if ut_sqrt != 'cholesky':
+        pytest.skip("Function not implemented yet.")
+
+    i, j = np.tril_indices(nx)
+    nq = len(i)
+    def Q_fun(x):
         Q = cov.copy()
         Q[i, j] += x
-        if i != j:
-            Q[j, i] += x
-        return kalman.cholesky_sqrt(Q)
+        Q[j, i] += x * (i != j)
+        return ut.sqrt(ut_work, Q)
+    numerical = utils.central_diff(Q_fun, np.zeros(nq))
     
-    jac = kalman.cholesky_sqrt_diff(S)
-    for i, j in np.ndindex(nx, nx):
-        numerical = utils.central_diff(f, 0)
-        assert ArrayCmp(jac[i, j], tol=1e-7) == numerical
-        
-        dQ = np.zeros((nx, nx))
-        dQ[i, j] = 1
-        dQ[j, i] = 1
-        jac_ij = kalman.cholesky_sqrt_diff(S, dQ)
-        assert ArrayCmp(jac[i, j]) == jac_ij
+    ut.sqrt(ut_work, cov)
+    dQ_dq = np.zeros((nq, nx, nx))
+    dQ_dq[np.arange(nq), i, j] = 1
+    dQ_dq[np.arange(nq), j, i] = 1
+    dS_dq = ut.dsqrt_dq(ut_work, dQ_dq)
+    assert ArrayDiff(numerical, dS_dq) < 1e-8
 
 
 def test_cholesky_sqrt_diff2(cov, nx):
