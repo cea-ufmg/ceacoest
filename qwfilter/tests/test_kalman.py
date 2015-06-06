@@ -149,7 +149,7 @@ def test_ut_sqrt(ut, ut_work, cov):
 
 def test_ut_sqrt_diff(ut, ut_work, cov, nx):
     """Check the derivative of the unscented transform square root."""
-    if not hasattr(ut, 'sqrt_diff')
+    if not hasattr(ut, 'sqrt_diff'):
         pytest.skip("Function not implemented yet.")
     
     i, j = np.tril_indices(nx)

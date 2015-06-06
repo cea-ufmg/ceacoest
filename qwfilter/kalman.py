@@ -2,15 +2,15 @@
 
 TODO
 ----
- * Add derivative of SVD square root.
- * Vectorize the UT functions.
- * Make docstrings for all constructors.
- * Implement filter Hessian.
+* Add derivative of SVD square root.
+* Vectorize the UT functions.
+* Make docstrings for all constructors.
+* Implement filter Hessian.
 
 Improvement ideas
 -----------------
- * Allow gradients and Hessian to be calculated offline, saving processing time
-   at the cost of memory.
+* Allow gradients and Hessian to be calculated offline, saving processing time
+  at the cost of memory.
 
 """
 
@@ -19,6 +19,7 @@ import abc
 import collections
 import re
 
+import attrdict
 import numpy as np
 import numpy.ma as ma
 import numpy.linalg
@@ -248,32 +249,27 @@ class SVDUnscentedTransform(UnscentedTransformBase):
         return work.S
 
 
-class DifferentiableCholeskyWork:
-    def __init__(self, **params):
-        for k, v in params.items():
-            setattr(self, k, v)
-
-
 class DifferentiableCholesky:
-    Work = DifferentiableCholeskyWork
     
-    def __init__(self, ni):
-        self.ni = ni
+    Work = attrdict.AttrDict
     
-    def initialize_gradient_data(self):
-        if getattr(self, 'gradient_data_initialized', False):
+    @staticmethod
+    def initialize_gradient_data(work, ni):
+        if getattr(work, 'gradient_data_initialized', 0) == ni:
             return
         
-        self.ni_range = np.arange(self.ni)
-        self.ni_tril_indices = np.tril_indices(self.ni)
-        self.gradient_data_initialized = True
-    
-    def cholesky(self, work, Q):
-        """Perform the cholesky decomposition."""
+        work.ni_range = np.arange(ni)
+        work.ni_tril_indices = np.tril_indices(ni)
+        work.gradient_data_initialized = ni
+ 
+    @staticmethod
+    def decompose(work, Q):
+        """Perform the Cholesky decomposition."""
         work.S = scipy.linalg.cholesky(Q, lower=False)
         return work.S
     
-    def cholesky_diff(self, work, dQ_dq):
+    @classmethod
+    def diff(cls, work, dQ_dq):
         """Derivatives of Cholesky decomposition.
         
         Parameters
@@ -292,11 +288,12 @@ class DifferentiableCholesky:
             to the parameter vector.
         
         """
-        self.initialize_gradient_data()
         nq = len(dQ_dq)
-        ni = self.ni
-        k = self.ni_range
-        i, j = self.ni_tril_indices
+        ni = len(work.S)
+        cls.initialize_gradient_data(work, ni)
+        
+        k = work.ni_range
+        i, j = work.ni_tril_indices
         ix, jx, kx = np.ix_(i, j, k)
         
         A = np.zeros((ni, ni, ni, ni))
@@ -312,16 +309,16 @@ class DifferentiableCholesky:
         return dS_dq
 
 
-class CholeskyUnscentedTransform(UnscentedTransformBase,DifferentiableCholesky):
+class CholeskyUnscentedTransform(UnscentedTransformBase):
     """Unscented transform using Cholesky decomposition."""
     
     def sqrt(self, work, Q):
         """Unscented transform square root method."""
-        self.cholesky(work, Q)
+        return DifferentiableCholesky.decompose(work, Q)
     
     def sqrt_diff(self, work, dQ_dq):
         """Derivatives of Unscented transform Cholesky decomposition."""
-        self.cholesky_diff(work, dQ_dq)
+        return DifferentiableCholesky.diff(work, dQ_dq)
 
 
 def choose_ut_transform_class(options):
@@ -449,10 +446,11 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         Pxh = self.__ut.crosscov(work.corr_ut)
         
         # Factorize covariance
+        work.py_chol = DifferentiableCholesky.Work()
         Py = Ph + R
-        PyC = numpy.linalg.cholesky(Py)
-        PyCI = numpy.linalg.inv(PyC)
-        PyI = np.einsum('ki,kj', PyCI, PyCI)
+        PyC = DifferentiableCholesky.decompose(work.py_chol, Py)
+        PyCI = scipy.linalg.inv(PyC)
+        PyI = np.einsum('ik,jk', PyCI, PyCI)
         
         # Perform correction
         e = y - h
@@ -524,13 +522,8 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         de_dq = work.de_dq
         dPyI_dq = work.dPyI_dq
         
-        # Create the Cholesky derivative objects
-        Py_chol = DifferentiableCholesky(e.shape[-1])
-        Py_chol_work = Py_chol.Work(S=work.PyC.T)
-        Py_chol_diff = Py_chol.cholesky_diff(Py_chol_work)
-        dPyC_dq = np.swapaxes(Py_chol_diff, -1, -2)
-        
         # Calculate the likelihood derivatives
+        dPyC_dq = DifferentiableCholesky.diff(work.py_chol)
         dPyCD_dq = np.einsum('...kk->...k', dPyC_dq)
         self.dL_dq -= np.sum(dPyCD_dq / work.PyCD, axis=-1)
         self.dL_dq -= 0.5 * np.einsum('...ai,...ij,...j', de_dq, PyI, e)
