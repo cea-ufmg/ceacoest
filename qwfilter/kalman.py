@@ -90,68 +90,6 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         return x, Px
 
 
-def cholesky_sqrt_diff(S, dQ=None, work=None):
-    """Derivatives of lower triangular Cholesky decomposition.
-    
-    Parameters
-    ----------
-    S : (n, n) array_like
-        The upper triangular Cholesky decomposition of a matrix `Q`, i.e.,
-        `S.T * S.T == Q`.
-    dQ : (..., n, n) array_like or None
-        The derivatives of `Q` with respect to some parameters. Must be
-        symmetric with respect to the last two axes, i.e., 
-        `dQ[...,i,j] == dQ[...,j,i]`. If `dQ` is `None` then the derivatives
-        are taken with respect to `Q`, i.e., `dQ[i,j,i,j] = 1` and
-        `dQ[i,j,j,i] = 1`.
-    work : None or dict
-        If not None, dictionary where the internal variables are saved for
-        Hessian calculation.
-    
-    Returns
-    -------
-    dS : (..., n, n) array_like
-        The derivative of `S` with respect to some parameters or with respect
-        to `Q` if `dQ` is `None`.
-    
-    """
-    S = np.asarray(S)
-    
-    n = S.shape[-1]
-    k = np.arange(n)
-    i, j = np.tril_indices(n)
-    ix, jx, kx = np.ix_(i, j, k)
-    
-    A = np.zeros((n, n, n, n))
-    A[ix, jx, ix, kx] = S[kx, jx]
-    A[ix, jx, jx, kx] += S[kx, ix]
-    A_tril = A[i, j][..., i, j]
-    A_tril_inv = scipy.linalg.inv(A_tril)
-    
-    if dQ is None:
-        nnz = len(i)
-        dQ_tril = np.zeros((n, n, nnz))
-        dQ_tril[i, j, np.arange(nnz)] = 1
-        dQ_tril[j, i, np.arange(nnz)] = 1
-    else:
-        dQ_tril = dQ[..., i, j]
-    
-    dS_tril = np.einsum('ab,...b->...a', A_tril_inv, dQ_tril)
-    dS = np.zeros(dQ_tril.shape[:-1] + (n, n))
-    dS[..., j, i] = dS_tril
-
-    if work is not None:
-        work['i j k'] = (i, j, k)
-        work['ix jx kx'] = (ix, jx, kx)
-        work['A_tril'] = A_tril
-        work['A_tril_inv'] = A_tril_inv
-        work['dQ_tril'] = dQ_tril
-        work['dS'] = dS
-        work['dQ'] = dQ
-    
-    return dS
-
-
 def cholesky_sqrt_diff2(S, d2Q, work):
     """Second derivatives of lower triangular Cholesky decomposition."""
     S = np.asarray(S)
@@ -406,29 +344,26 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
         work.Px = Pf + Q
         return work.x, work.Px
     
-    def _calculate_prediction_grad(self):
-        k = self.k
-        x = self.x
-        dx_dq = self.dx_dq
-        dPx_dq = self.dPx_dq
+    def prediction_diff(self, work):
+        """Calculate the derivatives of the prediction."""
+        k = work.k - 1 
+        x = work.prev_x
         
+        def df_dq_fun(x):
+            return self.model.df_dq(k, x)
+        def df_dx_fun(x):
+            return self.model.df_dx(k, x)
+        Df_Dq, DPf_Dq = self.__ut.transform_diff(
+            work.pred_ut, df_dq_fun, df_dx_fun, work.dx_dq, work.dPx_dq
+        )
         dQ_dq = self.model.dQ_dq(k, x)
         dQ_dx = self.model.dQ_dx(k, x)
-        DQ_Dq = dQ_dq + np.einsum('...ij,...jkl', dx_dq, dQ_dx)
+        DQ_Dq = dQ_dq + np.einsum('ij,jkl', work.dx_dq, dQ_dx)
         
-        def Df_Dq_fun(x, dx_dq):
-            df_dq = self.model.df_dq(k, x)
-            df_dx = self.model.df_dx(k, x)
-            return df_dq + np.einsum('...qx,...xf->...qf', dx_dq, df_dx)
-        work = {}
-        Df_Dq, DPf_Dq = self.__ut.transform_diff(Df_Dq_fun, dx_dq, dPx_dq, work)
-        
-        self.dx_dq = Df_Dq
-        self.dPx_dq = DPf_Dq + DQ_Dq
-        
-        # Calculate the precition hessian for the PEM
-        if self.pem == 'hess':
-            self._calculate_prediction_hess()
+        work.prev_dx_dq = work.dx_dq.copy()
+        work.prev_dPx_dq = work.dPx_dq.copy()
+        work.dx_dq += Df_Dq
+        work.dPx_dq += DPf_Dq + DQ_Dq
     
     def _calculate_prediction_hess(self, dQ_dq, dQ_dx, ut_work):
         k = self.k
@@ -507,9 +442,72 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         # Save and return the correction data
         work.prev_x = work.x
         work.prev_Px = work.Px
+        work.e = e
         work.x = x_corr
         work.Px = Px_corr
+        work.Pxh =  Pxh
+        work.PyI = PyI
+        work.PyC = PyC
+        work.PyCI = PyCI
+        work.K = K
         return x_corr, Px_corr
+
+    def correction_diff(self, work):
+        """Calculate the derivatives of the correction."""
+        if not np.any(work.active):
+            return
+        
+        # Get the model and transform derivatives
+        def dh_dq_fun(x):
+            return self.model.dh_dq(work.k, x)[..., work.active]
+        def dh_dx_fun(x):
+            return self.model.dh_dx(work.k, x)[..., work.active]
+        Dh_Dq, DPh_Dq = self.__ut.transform_diff(
+            work.corr_ut, dh_dq_fun, dh_dx_fun, work.dx_dq, work.dPx_dq
+        )
+        dPxh_dq = self.__ut.crosscov_diff(work.corr_ut)
+        dR_dq = self.model.dR_dq()[(...,) + np.ix_(work.active, work.active)]
+
+        # Calculate the correction derivatives
+        de_dq = -Dh_Dq
+        dPy_dq = dPh_dq + dR_dq
+        dPyI_dq = -np.einsum('ij,ajk,kl', work.PyI, dPy_dq, work.PyI)
+        dK_dq = np.einsum('ik,akj', work.Pxh, dPyI_dq)
+        dK_dq += np.einsum('aik,kj', dPxh_dq, work.PyI)
+
+        work.prev_dx_dq = work.dx_dq.copy()
+        work.prev_dPx_dq = work.dPx_dq.copy()
+        work.dx_dq += np.einsum('...aij,...j', dK_dq, work.e)
+        work.dx_dq += np.einsum('...ij,...aj', K, de_dq)
+        work.dPx_dq -= np.einsum('...aik,...jl,...lk', dK_dq, work.K, Py)
+        work.dPx_dq -= np.einsum('...ik,...ajl,...lk', work.K, dK_dq, work.Py)
+        work.dPx_dq -= np.einsum('...ik,...jl,...alk', work.K, work.K, dPy_dq)
+    
+    def update_likelihood(self, work):
+        """Update measurement log-likelihood."""
+        if not np.any(work.active):
+            return
+        
+        work.PyCD = np.einsum('...kk->...k', work.PyC)
+        work.L -= 0.5 * np.einsum('...i,...ij,...j', work.e, work.PyI, work.e) 
+        work.L -= np.log(work.PyCD).sum(-1)
+
+    def likelihood_diff(self, work):
+        """Calculate measurement log-likelihood derivatives."""
+        if not np.any(work.active):
+            return
+
+        e = work.e
+        PyI = work.PyI
+        de_dq = work.de_dq
+        dPyI_dq = work.dPyI_dq
+        
+        dPyC_dq = cholesky_sqrt_diff(PyC, dPy_dq) #### Update #####
+        dPyCD_dq = np.einsum('...kk->...k', dPyC_dq)
+        self.dL_dq -= np.sum(dPyCD_dq / work.PyCD, axis=-1)
+        self.dL_dq -= 0.5 * np.einsum('...ai,...ij,...j', de_dq, PyI, e)
+        self.dL_dq -= 0.5 * np.einsum('...i,...aij,...j', e, dPyI_dq, e)
+        self.dL_dq -= 0.5 * np.einsum('...i,...ij,...aj', e, PyI, de_dq)
     
     def _calculate_correction_grad(self, active, e, K, Pxh, Py, PyI, PyC):
         k = self.k
