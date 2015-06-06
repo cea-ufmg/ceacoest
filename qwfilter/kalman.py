@@ -238,9 +238,28 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
         return dPio_dq
 
 
-class CholeskyUnscentedTransform(UnscentedTransformBase):
-    """Unscented transform using Cholesky decomposition."""
+class SVDUnscentedTransform(UnscentedTransformBase):
+    """Unscented transform using singular value decomposition."""
+    
+    def sqrt(self, work, Q):
+        """Unscented transform square root method."""
+        [U, s, VT] = scipy.linalg.svd(Q)
+        work.S = np.transpose(U * np.sqrt(s))
+        return work.S
 
+
+class DifferentiableCholeskyWork:
+    def __init__(self, **params):
+        for k, v in params.items():
+            setattr(self, k, v)
+
+
+class DifferentiableCholesky:
+    Work = DifferentiableCholeskyWork
+    
+    def __init__(self, ni):
+        self.ni = ni
+    
     def initialize_gradient_data(self):
         if getattr(self, 'gradient_data_initialized', False):
             return
@@ -249,20 +268,20 @@ class CholeskyUnscentedTransform(UnscentedTransformBase):
         self.ni_tril_indices = np.tril_indices(self.ni)
         self.gradient_data_initialized = True
     
-    def sqrt(self, work, Q):
-        """Unscented transform square root method."""
+    def cholesky(self, work, Q):
+        """Perform the cholesky decomposition."""
         work.S = scipy.linalg.cholesky(Q, lower=False)
         return work.S
     
-    def sqrt_diff(self, work, dQ_dq):
-        """Derivatives of Unscented transform Cholesky decomposition.
+    def cholesky_diff(self, work, dQ_dq):
+        """Derivatives of Cholesky decomposition.
         
         Parameters
         ----------
         work :
-            Unscented transform work data.
+            Work data.
         dQ_dq : (nq, ni, ni) array_like
-            The derivatives of `Pxi` with respect to some parameter vector.
+            The derivatives of `Q` with respect to some parameter vector.
              Must be symmetric with respect to the last two axes, i.e., 
             `dQ_dq[..., i, j] == dQ_dq[..., j, i]` for all `i, j` pairs.
         
@@ -293,14 +312,16 @@ class CholeskyUnscentedTransform(UnscentedTransformBase):
         return dS_dq
 
 
-class SVDUnscentedTransform(UnscentedTransformBase):
-    """Unscented transform using singular value decomposition."""
+class CholeskyUnscentedTransform(UnscentedTransformBase,DifferentiableCholesky):
+    """Unscented transform using Cholesky decomposition."""
     
     def sqrt(self, work, Q):
         """Unscented transform square root method."""
-        [U, s, VT] = scipy.linalg.svd(Q)
-        work.S = np.transpose(U * np.sqrt(s))
-        return work.S
+        self.cholesky(work, Q)
+    
+    def sqrt_diff(self, work, dQ_dq):
+        """Derivatives of Unscented transform Cholesky decomposition."""
+        self.cholesky_diff(work, dQ_dq)
 
 
 def choose_ut_transform_class(options):
@@ -487,7 +508,7 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         """Update measurement log-likelihood."""
         if not np.any(work.active):
             return
-        
+    
         work.PyCD = np.einsum('...kk->...k', work.PyC)
         work.L -= 0.5 * np.einsum('...i,...ij,...j', work.e, work.PyI, work.e) 
         work.L -= np.log(work.PyCD).sum(-1)
@@ -497,12 +518,19 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         if not np.any(work.active):
             return
 
+        # Get the work variables
         e = work.e
         PyI = work.PyI
         de_dq = work.de_dq
         dPyI_dq = work.dPyI_dq
         
-        dPyC_dq = cholesky_sqrt_diff(PyC, dPy_dq) #### Update #####
+        # Create the Cholesky derivative objects
+        Py_chol = DifferentiableCholesky(e.shape[-1])
+        Py_chol_work = Py_chol.Work(S=work.PyC.T)
+        Py_chol_diff = Py_chol.cholesky_diff(Py_chol_work)
+        dPyC_dq = np.swapaxes(Py_chol_diff, -1, -2)
+        
+        # Calculate the likelihood derivatives
         dPyCD_dq = np.einsum('...kk->...k', dPyC_dq)
         self.dL_dq -= np.sum(dPyCD_dq / work.PyCD, axis=-1)
         self.dL_dq -= 0.5 * np.einsum('...ai,...ij,...j', de_dq, PyI, e)
