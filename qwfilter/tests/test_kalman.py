@@ -11,6 +11,8 @@ import numpy as np
 import numpy.ma as ma
 import numpy.testing
 import pytest
+import sympy
+import sym2num
 
 from qwfilter import kalman, utils
 
@@ -19,20 +21,20 @@ pytest_plugins = "qwfilter.testsupport.array_cmp"
 from qwfilter.testsupport.array_cmp import ArrayCmp, ArrayDiff
 
 
-@pytest.fixture(params=range(1, 4))
+@pytest.fixture(params=range(4))
 def seed(request):
     """Random number generator seed."""
     np.random.seed(request.param)
     return request.param
 
 
-@pytest.fixture(params=range(1, 5))
+@pytest.fixture(params=range(1, 5), scope='module')
 def nx(request):
     """Number of states to test with."""
     return request.param
 
 
-@pytest.fixture(params=range(1, 3))
+@pytest.fixture(params=range(1, 3), scope='module')
 def nq(request):
     """Number of parameters to test with."""
     return request.param
@@ -73,8 +75,6 @@ def ut_kappa(request):
 @pytest.fixture(params=['cholesky', 'svd'])
 def ut_sqrt(request):
     """Unscented transform square root option."""
-    if request.param == 'ldl' and not hasattr(np.linalg, 'ldl'):
-        pytest.skip('ldl decomposition not available in numpy.')
     return request.param
 
 
@@ -92,52 +92,105 @@ def ut_work(x, cov, ut):
     return ut.Work(x, cov)
 
 
-class NonlinearFunction:
-    """Parametrized nonlinear function."""
-    def __init__(self, nx, nq):
-        self.nx = nx
-        self.nq = nq
+@pytest.fixture(scope='module')
+def parametrized_mean_cov(nx, x, cov):
+    """Parametrized mean-covariance pair."""    
+    i, j = np.tril_indices(nx)
     
-    def __call__(self, x, q):
-        f = np.zeros_like(x)
-        for i, j, k in np.ndindex(self.nx, self.nx, self.nq):
-            if i <= j:
-                f[..., j] += q[..., k] * x[..., i] ** (k + j)
-        return f
+    class ParametrizedMeanCovPair:
+        nq = len(i) + nx
+        q = np.zeros(nq)
+        
+        @staticmethod
+        def x(q):
+            return x + q[:nx]
+        
+        @staticmethod
+        def Px(q):
+            Px = cov.copy()
+            Px[i, j] += q[nx:]
+            Px[j, i] += q[nx:] * (i != j)
+            return Px
+
+        @classmethod
+        def ut_work(cls, q):
+            return kalman.UnscentedTransformWork(cls.x(q), cls.Px(q))
+        
+        dx_dq = np.zeros((nq, nx))
+        dx_dq[np.arange(nx), np.arange(nx)] = 1
+
+        dPx_dq = np.zeros((nq, nx, nx))
+        dPx_dq[np.arange(nx, nq), i, j] = 1
+        dPx_dq[np.arange(nx, nq), j, i] = 1
     
-    def d_dq(self, x, q):
-        df_dq = np.zeros(np.shape(x)[:-1] + (self.nq, self.nx))
-        for i, j, k in np.ndindex(self.nx, self.nx, self.nq):
-            if i <= j:
-                df_dq[..., k, j] +=  x[..., i] ** (k + j)
-        return df_dq
+    return ParametrizedMeanCovPair
+        
+
+@pytest.fixture(scope='module')
+def model(nx, nq):
+    '''Discrete-time test model.'''
     
-    def d_dx(self, x, q):
-        df_dx = np.zeros(np.shape(x) + (self.nx,))
-        for i, j, k in np.ndindex(self.nx, self.nx, self.nq):
-            if i <= j and k + j != 0:
-                df_dx[..., i, j] += q[..., k] * (k + j) * x[..., i]**(k + j - 1)
-        return df_dx
+    class SymbolicModel(sym2num.SymbolicModel):
+        var_names = {'k', 'x', 'q'}
+        '''Name of model variables.'''
+        
+        function_names = {'f', 'h', 'Q', 'R'}
+        '''Name of the model functions.'''
+        
+        derivatives = [('df_dx', 'f', 'x'), ('df_dq', 'f', 'q'),
+                       ('d2f_dx2', 'df_dx',  'x'), 
+                       ('d2f_dq_dx', 'df_dx', 'q'),
+                       ('d2f_dq2', 'df_dq',  'q'),
+                       ('dQ_dx', 'Q', 'x'), ('dQ_dq', 'Q', 'q'),
+                       ('d2Q_dx2', 'dQ_dx',  'x'), 
+                       ('d2Q_dq_dx', 'dQ_dx', 'q'),
+                       ('d2Q_dq2', 'dQ_dq',  'q'),
+                       ('dh_dx', 'h', 'x'), ('dh_dq', 'h', 'q'),
+                       ('dR_dq', 'R', 'q'),]
+        '''List of the model function derivatives to calculate / generate.'''
+        
+        k = 'k'
+        '''Discretized sample index.'''
+        
+        x = ['x%d' % i for i in range(nx)]
+        '''State vector.'''
+    
+        q = ['q%d' % i for i in range(nq)]
+        '''State vector.'''
+        
+        def f(self, k, x, q):
+            '''Drift function.'''
+            ret = np.zeros(nx, dtype=object)
+            for i, j in np.ndindex(nx, nq):
+                if i >= j:
+                    ret[i] = ret[i] + sympy.sin(i + j + x[i] + q[j])
+            return ret
+        
+        def h(self, k, x, q):
+            '''Measurement function.'''
+            return [x[0] * q[0], x[-1] * x[0]]
 
+        def Q(self, k, x, q):
+            '''Measurement function.'''
+            ret = np.eye(nx, dtype=object)
+            ret[0, -1] = x[0]**2  * q[0]**2 * 1e-3
+            ret[-1, 0] = ret[0, -1]
+            ret[0, 0] = 1 + x[-1] ** 2 * q[-1] ** 2
+            return ret
+        
+        def R(self, q):
+            '''Measurement function.'''
+            return [[q[-1]**2 + 0.2, 0.01*q[0]], [0.01*q[0], 1]]
 
-@pytest.fixture
-def nlfunction(nx, nq):
-    """Parametrized nonlinear function."""
-    return NonlinearFunction(nx, nq)
-
-
-def test_nlfunction_dx(nlfunction, x, q):
-    """Assert that nlfunction's derivative with respect to x is correct."""
-    numerical = utils.central_diff(lambda x: nlfunction(x, q), x)
-    analytical = nlfunction.d_dx(x, q)
-    assert ArrayDiff(analytical, numerical) < 1e-8
-
-
-def test_nlfunction_dq(nlfunction, x, q):
-    """Assert that nlfunction's derivative with respect to p is correct."""
-    numerical = utils.central_diff(lambda q: nlfunction(x, q), q)
-    analytical = nlfunction.d_dq(x, q)
-    assert ArrayCmp(analytical) == numerical
+    ModelClass = sym2num.class_obj(
+        SymbolicModel(), sym2num.ScipyPrinter(),
+        name='GeneratedModel', meta=sym2num.ParametrizedModel.meta
+    )
+    ModelClass.nx = nx
+    ModelClass.nq = nq
+    ModelClass.ny = 2
+    defaults = dict(k=0, q=np.zeros(nq))
+    return ModelClass(defaults)
 
 
 def test_ut_sqrt(ut, ut_work, cov):
@@ -147,66 +200,28 @@ def test_ut_sqrt(ut, ut_work, cov):
     assert ArrayDiff(STS, cov) < 1e-8
 
 
-def test_ut_sqrt_diff(ut, ut_work, cov, nx):
+def test_ut_sqrt_diff(ut, ut_work, parametrized_mean_cov, cov):
     """Check the derivative of the unscented transform square root."""
     if not hasattr(ut, 'sqrt_diff'):
-        pytest.skip("Function not implemented yet.")
+        pytest.skip("Square-root derivative not implemented yet.")
     
-    i, j = np.tril_indices(nx)
-    nq = len(i)
-    def Q_fun(x):
-        Q = cov.copy()
-        Q[i, j] += x
-        Q[j, i] += x * (i != j)
-        return ut.sqrt(ut_work, Q)
-    numerical = utils.central_diff(Q_fun, np.zeros(nq))
+    def S(q):
+        return ut.sqrt(ut_work, parametrized_mean_cov.Px(q))
+    numerical = utils.central_diff(S, parametrized_mean_cov.q)
     
     ut.sqrt(ut_work, cov)
-    dQ_dq = np.zeros((nq, nx, nx))
-    dQ_dq[np.arange(nq), i, j] = 1
-    dQ_dq[np.arange(nq), j, i] = 1
-    dS_dq = ut.sqrt_diff(ut_work, dQ_dq)
-    assert ArrayDiff(numerical, dS_dq) < 1e-8
-
-
-def test_cholesky_sqrt_diff2(cov, nx):
-    """Check the second derivatives of the Cholesky decomposition."""
-    i, j = np.tril_indices(nx)    
-    ntril = i.size
-    k = np.arange(ntril)
-    dQ = np.zeros((ntril, nx, nx))
-    d2Q = np.zeros((ntril, ntril, nx, nx))
-    dQ[k, i, j] = 1
-    dQ[k, j, i] = 1
-    d2Q[k, k, i, j] += 1
-    d2Q[k, k, j, i] += 1
-        
-    work = {}
-    S = kalman.cholesky_sqrt(cov)
-    dS = kalman.cholesky_sqrt_diff(S, dQ, work)
-    d2S = kalman.cholesky_sqrt_diff2(S, d2Q, work)
-    
-    def grad(x):
-        Q = cov.copy()
-        Q[i, j] += x
-        Q[j, i] += x * (i != j)
-        dQ_ = dQ.copy()
-        dQ_[k, i, j] += x
-        dQ_[k, j, i] += x
-        S = kalman.cholesky_sqrt(Q)
-        return kalman.cholesky_sqrt_diff(S, dQ_)    
-    numerical = utils.central_diff(grad, np.zeros(ntril))
-    assert ArrayCmp(d2S, tol=1e-6) == numerical
+    analytical = ut.sqrt_diff(ut_work, parametrized_mean_cov.dPx_dq)
+    assert ArrayDiff(numerical, analytical) < 1e-8
 
 
 def test_sigma_points(ut, ut_work, x, cov):
     """Test if the mean and covariance of the sigma-points is sane."""
     sigma = ut.sigma_points(ut_work)
     ut_mean = np.dot(ut.weights, sigma)
-    assert ArrayCmp(ut_mean, x)
+    assert ArrayDiff(ut_mean, x) < 1e-8
     
-    xin_dev = ut_work.xin_dev
-    ut_cov = np.einsum('ki,kj,k', xin_dev, xin_dev, ut.weights)
+    idev = ut_work.idev
+    ut_cov = np.einsum('ki,kj,k', idev, idev, ut.weights)
     assert ArrayDiff(ut_cov, cov) < 1e-8
 
 
@@ -226,180 +241,76 @@ def test_affine_ut(ut, ut_work, x, cov, A, nx):
     assert ArrayDiff(ut_crosscov, desired_crosscov) < 1e-8
 
 
-def test_sigma_points_diff_wrt_mean(ut, ut_sqrt, x, cov, nx):
+def test_sigma_points_diff(ut, ut_work, parametrized_mean_cov):
     """Test the derivative of the unscented transform sigma points."""
-    if ut_sqrt == 'svd':
-        pytest.skip("`svd_sqrt_diff` not implemented yet.")
+    if not hasattr(ut, 'sqrt_diff'):
+        pytest.skip("Square-root derivative not implemented yet.")
     
-    def sigma(mean, cov):
-        return ut.sigma_points(mean, cov)
+    def sigma(q):
+        return ut.sigma_points(parametrized_mean_cov.ut_work(q))
+    numerical = utils.central_diff(sigma, parametrized_mean_cov.q)
+    numerical = np.rollaxis(numerical, -2)
     
-    sigma(x, cov)
-    ds_dmean = ut.sigma_points_diff(np.identity(nx), np.zeros((nx, nx, nx)))
-    ds_dmean_num = utils.central_diff(lambda x: sigma(x, cov), x)
-    ds_dmean_num = np.rollaxis(ds_dmean_num, 1)
-    
-    assert ArrayCmp(ds_dmean_num) == ds_dmean
+    ut.sigma_points(ut_work)
+    dx_dq = parametrized_mean_cov.dx_dq
+    dPx_dq = parametrized_mean_cov.dPx_dq
+    analytical = ut.sigma_points_diff(ut_work, dx_dq, dPx_dq)
+    assert ArrayDiff(numerical, analytical) < 1e-8
 
 
-def test_sigma_points_diff_wrt_cov(ut, ut_sqrt, x, cov, nx):
+def test_ut_diff_x(ut, ut_work, parametrized_mean_cov, model):
     """Test the derivative of the unscented transform sigma points."""
-    if ut_sqrt == 'svd':
-        pytest.skip("`svd_sqrt_diff` not implemented yet.")
+    if not hasattr(ut, 'sqrt_diff'):
+        pytest.skip("Square-root derivative not implemented yet.")
+    if model.nq > 1:
+        pytest.skip("Test does not use depend on model parameters.")
     
-    def sigma(cij):
-        Q = cov.copy()
-        Q[i[k], j[k]] = cij
-        Q[j[k], i[k]] = cij
-        return ut.sigma_points(x, Q)
+    def f(x):
+        return model.f(x=x)
+    def df_dx(x):
+        return model.df_dx(x=x)
+    def df_dq(x):
+        return np.zeros((parametrized_mean_cov.nq, model.nx))
 
-    ut.sigma_points(x, cov)
-    i, j = np.tril_indices(nx)
-    ntril = len(i)
+    def ut_x(q):
+        return ut.transform(parametrized_mean_cov.ut_work(q), f)[0]
+    def ut_Px(q):
+        return ut.transform(parametrized_mean_cov.ut_work(q), f)[1]
+    numerical_x = utils.central_diff(ut_x, parametrized_mean_cov.q)
+    numerical_Px = utils.central_diff(ut_Px, parametrized_mean_cov.q)
     
-    cov_diff = np.zeros((ntril, nx, nx))
-    cov_diff[np.arange(ntril), i, j] = 1
-    cov_diff[np.arange(ntril), j, i] = 1
-    dsigma_dcov = ut.sigma_points_diff(np.zeros((ntril, nx)), cov_diff)
-    
-    for k in range(ntril):
-        dsigma_dcij_num = utils.central_diff(lambda cij: sigma(cij), 
-                                             cov[i[k], j[k]])
-        assert ArrayCmp(dsigma_dcov[:, k]) == dsigma_dcij_num
-
-
-def test_transform_diff_wrt_q(ut, ut_sqrt, nlfunction, x, q, cov, nx, nq):
-    """Test the derivatives of unscented transform."""
-    if ut_sqrt == 'svd':
-        pytest.skip("`svd_sqrt_diff` not implemented yet.")
-    
-    def ut_mean(q):
-        return ut.transform(lambda x: nlfunction(x, q), x, cov)[0]
-    
-    def ut_cov(q):
-        return ut.transform(lambda x: nlfunction(x, q), x, cov)[1]
-    
-    def f_diff(x, dx):
-        return nlfunction.d_dq(x, q)
-    
-    num_mean_diff = utils.central_diff(ut_mean, q)
-    num_cov_diff = utils.central_diff(ut_cov, q)
-
-    ut_mean(q)
-    in_mean_diff = np.zeros((nq, nx))
-    in_cov_diff = np.zeros((nq, nx, nx))
-    mean_diff, cov_diff = ut.transform_diff(f_diff, in_mean_diff, in_cov_diff)
-    
-    assert ArrayCmp(mean_diff, tol=1e-6) == num_mean_diff
-    assert ArrayCmp(cov_diff, tol=2e-6) == num_cov_diff
-
-
-def test_transform_diff_wrt_mean(ut, ut_sqrt, nlfunction, x, q, cov, nx):
-    """Test the derivatives of unscented transform."""
-    if ut_sqrt == 'svd':
-        pytest.skip("`svd_sqrt_diff` not implemented yet.")
-    
-    def ut_mean(x):
-        return ut.transform(lambda x: nlfunction(x, q), x, cov)[0]
-    
-    def ut_cov(x):
-        return ut.transform(lambda x: nlfunction(x, q), x, cov)[1]
-    
-    def f_diff(x, dx):
-        return np.einsum('sqx,sxf->sqf', dx, nlfunction.d_dx(x, q))
-    
-    num_mean_diff = utils.central_diff(ut_mean, x)
-    num_cov_diff = utils.central_diff(ut_cov, x)
-    
-    ut_mean(x)
-    in_mean_diff = np.identity(nx)
-    in_cov_diff = np.zeros((nx, nx, nx))
-    mean_diff, cov_diff = ut.transform_diff(f_diff, in_mean_diff, in_cov_diff)
-    
-    assert ArrayCmp(mean_diff, tol=1e-7) == num_mean_diff
-    assert ArrayCmp(cov_diff, tol=1e-5) == num_cov_diff
-
-
-class EulerDiscretizedAtmosphericReentry:
-    nx = 5
-    nu = 0
-    nw = 2
-    ny = 2
-    
-    wcov = np.diag([2.4064e-5, 2.4064e-5])
-    vcov = np.diag([0.017, 0.001]) ** 2
-    
-    def f(self, k, x, u=None, w=None):
-        [x1, x2, x3, x4, x5] = x
-        [w1, w2] = w if w is not None else [0.0, 0.0]
-        
-        beta0 = -0.59783
-        H0 = 13.406
-        Gm0 = 3.9860e5
-        R0 = 6374
-        
-        R = np.hypot(x1, x2)
-        V = np.hypot(x3, x4)
-        beta = beta0 * np.exp(x5)
-        D = beta * np.exp((R0 - R) / H0) * V
-        G = -Gm0 / R ** 3
-        
-        dx1 = x3
-        dx2 = x4
-        dx3 = D * x3 + G * x1
-        dx4 = D * x4 + G * x2
-        dx5 = np.zeros_like(x5)
-        drift = np.array([dx1, dx2, dx3, dx4, dx5])
-        
-        perturb = np.zeros((5,) + np.shape(w1))
-        perturb[2] = w1
-        perturb[3] = w2
-        
-        T = 0.05
-        return x + drift * T + perturb * np.sqrt(T)
-    
-    def h(self, t, x, u=None):
-        [x1, x2, x3, x4, x5] = np.asarray(x)
-        
-        xr = 6374
-        yr = 0
-        
-        rr = np.hypot(x1 - xr, x2 - yr)
-        theta = np.arctan2(x2 - yr, x1 - xr)
-        
-        return np.array([rr, theta])
-
-
-def sim():
-    model = EulerDiscretizedAtmosphericReentry()
-    
-    N = 4001
-    x = np.zeros((N, model.nx))
-    x[0] = np.random.multivariate_normal(
-        [6500.4, 349.14, -1.8093, -6.7967, 0.6932], 
-        np.diag([1e-6, 1e-6, 1e-6, 1e-6, 0])
+    ut.transform(ut_work, f)
+    dx_dq = parametrized_mean_cov.dx_dq
+    dPx_dq = parametrized_mean_cov.dPx_dq
+    analytical_x, analytical_Px = ut.transform_diff(
+        ut_work, df_dq, df_dx, dx_dq, dPx_dq
     )
-    w = np.random.multivariate_normal([0, 0], model.w_cov, N)
-    
-    for k in range(N-1):
-        x[k+1] = model.f(k, x[k], [], w[k])
-
-    y = ma.zeros((N, 2))
-    v = np.random.multivariate_normal([0, 0], model.w_cov, (N + 1) // 2)
-    y[::2] = model.h(None, x[::2].T).T + v
-    y[1::2] = ma.masked
-    
-    return [x, y, model]
+    assert ArrayDiff(numerical_x, analytical_x) < 1e-8
+    assert ArrayDiff(numerical_Px, analytical_Px) < 1e-8
 
 
-def run_filter():
-    [x_sim, y, model] = sim()
+def test_ut_diff_q(ut, ut_work, model, q, nx, nq):
+    """Test the derivative of the unscented transform sigma points."""
+    if not hasattr(ut, 'sqrt_diff'):
+        pytest.skip("Square-root derivative not implemented yet.")
     
-    x0_mean = [6500.4, 349.14, -1.8093, -6.7967, 0]
-    x0_cov = np.diag([1e-6, 1e-6, 1e-6, 1e-6, 1])
-    filter = kalman.DTUnscentedKalmanFilter(
-        model, x0_mean, x0_cov, sqrt='cholesky', kappa=0.5
+    def ut_x(q):
+        return ut.transform(ut_work, lambda x: model.f(x=x, q=q))[0]
+    def ut_Px(q):
+        return ut.transform(ut_work, lambda x: model.f(x=x, q=q))[1]
+    numerical_x = utils.central_diff(ut_x, q)
+    numerical_Px = utils.central_diff(ut_Px, q)
+    
+    def df_dq(x):
+        return model.df_dq(x=x, q=q)
+    def df_dx(x):
+        return model.df_dx(x=x, q=q)
+    ut.transform(ut_work, lambda x: model.f(x=x, q=q))
+    dx_dq = np.zeros((nq, nx))
+    dPx_dq = np.zeros((nq, nx, nx))
+    analytical_x, analytical_Px = ut.transform_diff(
+        ut_work, df_dq, df_dx, dx_dq, dPx_dq
     )
-    filter.filter(y)
+    assert ArrayDiff(numerical_x, analytical_x) < 1e-8
+    assert ArrayDiff(numerical_Px, analytical_Px) < 1e-8
 
-    return [filter, x_sim, y, model]
