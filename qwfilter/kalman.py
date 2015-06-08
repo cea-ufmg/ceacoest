@@ -407,7 +407,6 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
         work.k += 1
         work.x = f
         work.Px = Pf + Q
-        work._a = work.pred_ut.osigma
         return work.x, work.Px
     
     def prediction_diff(self, work):
@@ -430,7 +429,6 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
         work.prev_dPx_dq = work.dPx_dq
         work.dx_dq = Df_Dq
         work.dPx_dq = DPf_Dq + DQ_Dq
-        work._da = np.rollaxis(work.pred_ut.Dosigma_Dq, -2)
     
     def _calculate_prediction_hess(self, dQ_dq, dQ_dx, ut_work):
         k = self.k
