@@ -18,7 +18,7 @@ from qwfilter import kalman, utils
 
 
 pytest_plugins = "qwfilter.testsupport.array_cmp"
-from qwfilter.testsupport.array_cmp import ArrayCmp, ArrayDiff
+from qwfilter.testsupport.array_cmp import ArrayDiff
 
 
 @pytest.fixture(params=range(4))
