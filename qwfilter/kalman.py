@@ -269,6 +269,7 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
         dPo_dq = np.einsum('klj,ki,k->lij', dodev_dq, work.odev, weights)
         dPo_dq += np.swapaxes(dPo_dq, -1, -2)
         
+        work.Dosigma_Dq = Dosigma_Dq
         work.dodev_dq = dodev_dq
         work.do_dq = do_dq
         work.dPo_dq = dPo_dq
@@ -406,6 +407,7 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
         work.k += 1
         work.x = f
         work.Px = Pf + Q
+        work._a = work.pred_ut.osigma
         return work.x, work.Px
     
     def prediction_diff(self, work):
@@ -424,10 +426,11 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
         dQ_dx = self.model.dQ_dx(k, x)
         DQ_Dq = dQ_dq + np.einsum('ij,jkl', work.dx_dq, dQ_dx)
         
-        work.prev_dx_dq = work.dx_dq.copy()
-        work.prev_dPx_dq = work.dPx_dq.copy()
-        work.dx_dq += Df_Dq
-        work.dPx_dq += DPf_Dq + DQ_Dq
+        work.prev_dx_dq = work.dx_dq
+        work.prev_dPx_dq = work.dPx_dq
+        work.dx_dq = Df_Dq
+        work.dPx_dq = DPf_Dq + DQ_Dq
+        work._da = np.rollaxis(work.pred_ut.Dosigma_Dq, -2)
     
     def _calculate_prediction_hess(self, dQ_dq, dQ_dx, ut_work):
         k = self.k

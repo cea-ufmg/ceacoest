@@ -53,6 +53,12 @@ def q(seed, nq):
 
 
 @pytest.fixture
+def y(seed):
+    """Random measurement vector."""
+    return np.random.randn(2)
+
+
+@pytest.fixture
 def cov(seed, nx):
     """Random x covariance matrix."""
     M = np.random.randn(nx, nx + 1) / nx
@@ -66,13 +72,13 @@ def A(seed, nx):
     return A
 
 
-@pytest.fixture(params=[0, 0.5, 1])
+@pytest.fixture(params=[0, 0.5, 1], scope='module')
 def ut_kappa(request):
     """Unscented transform kappa parameter."""
     return request.param
 
 
-@pytest.fixture(params=['cholesky', 'svd'])
+@pytest.fixture(params=['cholesky', 'svd'], scope='module')
 def ut_sqrt(request):
     """Unscented transform square root option."""
     return request.param
@@ -90,10 +96,10 @@ def ut(ut_sqrt, ut_kappa, nx):
 def ut_work(x, cov, ut):
     """Unscented transform work data."""
     return ut.Work(x, cov)
-        
+
 
 @pytest.fixture(scope='module')
-def model(nx, nq):
+def model_class(nx, nq):
     '''Discrete-time test model.'''
     
     class SymbolicModel(sym2num.SymbolicModel):
@@ -146,14 +152,14 @@ def model(nx, nq):
             ret[0, 0] = 1 + x[-1] ** 2 * q[-1] ** 2
             return ret
         
-        def R(self, q):
+        def R(self, q, k):
             '''Measurement function.'''
             return [[q[-1]**2 + 0.2, 0.01*q[0]], [0.01*q[0], 1]]
 
-        def X(self, q, x):
+        def X(self, q, k):
             return [q[i % nq] for i in range(nx)]
         
-        def PX(self, q, x):
+        def PX(self, q, k):
             ret = np.eye(nx, dtype=object)
             for i, j in np.ndindex(nq, nq):
                 if i == j:
@@ -170,8 +176,18 @@ def model(nx, nq):
     ModelClass.nx = nx
     ModelClass.nq = nq
     ModelClass.ny = 2
-    defaults = dict(k=0, x=np.zeros(nx), q=np.zeros(nq))
-    return ModelClass(defaults)
+    return ModelClass
+
+
+@pytest.fixture
+def model(model_class, x, q):
+    defaults = dict(k=0, x=x, q=q)
+    return model_class(defaults)
+
+
+@pytest.fixture
+def ukf(model, ut_kappa, ut_sqrt):
+    return kalman.DTUnscentedKalmanFilter(model, kappa=ut_kappa, sqrt=ut_sqrt)
 
 
 def test_ut_sqrt(ut, ut_work, cov):
@@ -252,46 +268,73 @@ def test_ut_diff(ut, model, x, q):
     def df_dq(x):
         return model.df_dq(x=x, q=q)
     
-    def ut_x(q):
-        ut_work = ut.Work(model.f(x=x, q=q), model.Q(x=x, q=q))
-        return ut.transform(ut_work, lambda x: model.f(x=x, q=q))[0]
-    def ut_Px(q):
-        ut_work = ut.Work(model.f(x=x, q=q), model.Q(x=x, q=q))
-        return ut.transform(ut_work, lambda x: model.f(x=x, q=q))[1]
-    numerical_x = utils.central_diff(ut_x, q)
-    numerical_Px = utils.central_diff(ut_Px, q)
+    def ut_out(q):
+        ut_work = ut.Work(model.X(q), model.PX(q))
+        return ut.transform(ut_work, lambda x: model.f(x=x, q=q))
+    numerical_x = utils.central_diff(lambda q: ut_out(q)[0], q)
+    numerical_Px = utils.central_diff(lambda q: ut_out(q)[1], q)
     
-    ut_work = ut.Work(model.f(x=x, q=q), model.Q(x=x, q=q))
+    ut_work = ut.Work(model.X(q), model.PX(q))
     ut.transform(ut_work, f)
     analytical_x, analytical_Px = ut.transform_diff(
-        ut_work, df_dq, df_dx, df_dq(x), model.dQ_dq(x=x, q=q)
+        ut_work, df_dq, df_dx, model.dX_dq(q), model.dPX_dq(q)
     )
     assert ArrayDiff(numerical_x, analytical_x) < 1e-8
     assert ArrayDiff(numerical_Px, analytical_Px) < 1e-8
 
 
-def test_ut_diff_q(ut, ut_work, model, q, nx, nq):
-    """Test the derivative of the unscented transform sigma points."""
+def test_ut_pred_diff(ukf, ut, model, q):
     if not hasattr(ut, 'sqrt_diff'):
-        pytest.skip("Square-root derivative not implemented yet.")
-    
-    def ut_x(q):
-        return ut.transform(ut_work, lambda x: model.f(x=x, q=q))[0]
-    def ut_Px(q):
-        return ut.transform(ut_work, lambda x: model.f(x=x, q=q))[1]
-    numerical_x = utils.central_diff(ut_x, q)
-    numerical_Px = utils.central_diff(ut_Px, q)
-    
-    def df_dq(x):
-        return model.df_dq(x=x, q=q)
-    def df_dx(x):
-        return model.df_dx(x=x, q=q)
-    ut.transform(ut_work, lambda x: model.f(x=x, q=q))
-    dx_dq = np.zeros((nq, nx))
-    dPx_dq = np.zeros((nq, nx, nx))
-    analytical_x, analytical_Px = ut.transform_diff(
-        ut_work, df_dq, df_dx, dx_dq, dPx_dq
-    )
-    assert ArrayDiff(numerical_x, analytical_x) < 1e-8
-    assert ArrayDiff(numerical_Px, analytical_Px) < 1e-8
+        pytest.skip("UT square-root derivative not implemented yet.")
+        
+    work = ukf.Work(model.X(q), model.PX(q))
+    work.dx_dq = model.dX_dq(q)
+    work.dPx_dq = model.dPX_dq(q)
+    ukf.predict(work)
+    ukf.prediction_diff(work)
+    analytical_x = work.dx_dq
+    analytical_Px = work.dPx_dq
 
+    def pred(q):
+        ukf.model = model.parametrize(q=q)
+        work = ukf.Work(model.X(q), model.PX(q))
+        ukf.predict(work)
+        return work
+    numerical_x = utils.central_diff(lambda q: pred(q).x, q)
+    numerical_Px = utils.central_diff(lambda q: pred(q).Px, q)
+    
+    assert ArrayDiff(numerical_x, analytical_x) < 1e-8
+    assert ArrayDiff(numerical_Px, analytical_Px) < 5e-8
+
+
+def test_ut_corr_diff(ukf, ut, model, q, y):
+    if not hasattr(ut, 'sqrt_diff'):
+        pytest.skip("UT square-root derivative not implemented yet.")
+
+    work = ukf.Work(model.X(q), model.PX(q))
+    work.L = 0.0
+    work.dL_dq = np.zeros_like(q)
+    work.dx_dq = model.dX_dq(q)
+    work.dPx_dq = model.dPX_dq(q)
+    ukf.correct(work, y)
+    ukf.update_likelihood(work)
+    ukf.correction_diff(work)
+    ukf.likelihood_diff(work)
+    analytical_L = work.dL_dq
+    analytical_x = work.dx_dq
+    analytical_Px = work.dPx_dq
+    
+    def corr(q):
+        ukf.model = model.parametrize(q=q)
+        work = ukf.Work(model.X(q), model.PX(q))
+        work.L = 0.0
+        ukf.correct(work, y)
+        ukf.update_likelihood(work)
+        return work
+    numerical_L = utils.central_diff(lambda q: corr(q).L, q)
+    numerical_x = utils.central_diff(lambda q: corr(q).x, q)
+    numerical_Px = utils.central_diff(lambda q: corr(q).Px, q)
+    
+    assert ArrayDiff(numerical_L, analytical_L) < 1e-8
+    assert ArrayDiff(numerical_x, analytical_x) < 5e-8
+    assert ArrayDiff(numerical_Px, analytical_Px) < 1e-7
