@@ -580,40 +580,6 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         work.dL_dq -= 0.5 * np.einsum('...ai,...ij,...j', de_dq, PyI, e)
         work.dL_dq -= 0.5 * np.einsum('...i,...aij,...j', e, dPyI_dq, e)
         work.dL_dq -= 0.5 * np.einsum('...i,...ij,...aj', e, PyI, de_dq)
-    
-    def _calculate_correction_grad(self, active, e, K, Pxh, Py, PyI, PyC):
-        k = self.k
-        x = self.x
-        dx_dq = self.dx_dq
-        dPx_dq = self.dPx_dq
-        dR_dq = self.model.dR_dq()[(...,) + np.ix_(active, active)]
-        
-        def Dh_Dq_fun(x, dx_dq):
-            dh_dq = self.model.dh_dq(k, x)[..., active]
-            dh_dx = self.model.dh_dx(k, x)[..., active]
-            return dh_dq + np.einsum('...qx,...xh->...qh', dx_dq, dh_dx)
-        ut_grads = self.__ut.transform_diff(Dh_Dq_fun, dx_dq, dPx_dq, True)
-        Dh_Dq, dPh_dq, dPxh_dq = ut_grads
-        
-        de_dq = -Dh_Dq
-        dPy_dq = dPh_dq + dR_dq
-        dPyI_dq = -np.einsum('...ij,...ajk,...kl', PyI, dPy_dq, PyI)
-        dK_dq = np.einsum('...ik,...akj', Pxh, dPyI_dq)
-        dK_dq += np.einsum('...aik,...kj', dPxh_dq, PyI)
-        
-        self.dx_dq += np.einsum('...aij,...j', dK_dq, e)
-        self.dx_dq += np.einsum('...ij,...aj', K, de_dq)
-        self.dPx_dq -= np.einsum('...aik,...jl,...lk', dK_dq, K, Py)
-        self.dPx_dq -= np.einsum('...ik,...ajl,...lk', K, dK_dq, Py)
-        self.dPx_dq -= np.einsum('...ik,...jl,...alk', K, K, dPy_dq)
-
-        dPyC_dq = cholesky_sqrt_diff(PyC, dPy_dq)
-        diag_PyC = np.einsum('...kk->...k', PyC)
-        diag_dPyC_dq = np.einsum('...kk->...k', dPyC_dq)
-        self.dL_dq -= np.sum(diag_dPyC_dq / diag_PyC, axis=-1)
-        self.dL_dq -= 0.5 * np.einsum('...ai,...ij,...j', de_dq, PyI, e)
-        self.dL_dq -= 0.5 * np.einsum('...i,...aij,...j', e, dPyI_dq, e)
-        self.dL_dq -= 0.5 * np.einsum('...i,...ij,...aj', e, PyI, de_dq)
 
 
 class DTUnscentedKalmanFilter(DTUnscentedPredictor, DTUnscentedCorrector):
