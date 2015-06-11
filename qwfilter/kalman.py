@@ -28,37 +28,10 @@ import scipy.linalg
 from . import utils
 
 
-class DTKalmanFilterWork:
-    """Kalman filter work data."""
-    
-    def __init__(self, x, Px, k=0, **variables):
-        self.x = np.asarray(x)
-        """Current state vector mean."""
-        
-        self.Px = np.asarray(Px)
-        """Current state vector covariance."""
-        
-        self.k = k
-        """Current time step."""
-        
-        for name, value in variables.items():
-            setattr(self, name, value)
-
-
 class DTKalmanFilterBase(metaclass=abc.ABCMeta):
-    """Discrete-time Kalman filter/smoother abstract base class.
-
-    Due to the various use cases of Kalman filters (e.g. online filtering,
-    offline filtering, smoothing, prediction error method parameter estimation,
-    importance sampling for particle filters, etc) this class and subclasses
-    retains only information on the procedures. The data should be managed by
-    other classes such as those holding the filter state and filter history.
-    """
+    """Discrete-time Kalman filter/smoother abstract base class."""
     
-    Work = DTKalmanFilterWork
-    """Work data class."""
-    
-    def __init__(self, model, **options):
+    def __init__(self, model, x, Px, **options):
         """Create a discrete-time Kalman filter.
         
         Parameters
@@ -69,70 +42,80 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         """
         self.model = model
         """The underlying system model."""
+        
+        self.x = np.asarray(x)
+        """State vector mean."""
+        
+        self.Px = np.asarray(Px)
+        """State vector covariance."""
+        
+        self.k = options.get('k', 0)
+        """Time index."""
+        
+        self.L = options.get('L', 0.0)
+        '''Measurement log-likelihood.'''
+        
+        nq = model.nq
+        nx = model.nx
+        
+        self.dL_dq = options.get('dL_dq', np.zeros(nq))
+        '''Measurement log-likelihood derivative.'''
+
+        self.dx_dq = options.get('dx_dq', np.zeros((nq, nx))):
+        '''State vector derivative.'''
+        
+        self.dPx_dq = options.get('dPx_dq', np.zeros((nq, nx, nx))):
+        '''State vector covariance derivative.'''
     
     @abc.abstractmethod
-    def predict(self, work):
+    def predict(self):
         """Predict the state distribution at a next time sample."""
         raise NotImplementedError("Pure abstract method.")
     
     @abc.abstractmethod
-    def correct(self, work, y):
+    def correct(self, y):
         """Correct the state distribution, given the measurement vector."""
         raise NotImplementedError("Pure abstract method.")
     
-    def filter(self, work, y):
+    def filter(self, y):
         y = np.asanyarray(y)
         N = len(y)
-        x = np.zeros((N,) + np.shape(work.x))
-        Px = np.zeros((N,) + np.shape(work.x) + (self.model.nx,))
+        x = np.zeros((N,) + np.shape(self.x))
+        Px = np.zeros((N,) + np.shape(self.x) + (self.model.nx,))
         
         for k in range(N):
-            x[k], Px[k] = self.correct(work, y[k])
+            x[k], Px[k] = self.correct(y[k])
             if k < N - 1:
-                self.predict(work)
+                self.predict()
         
         return x, Px
-
-    def pem_merit(self, work, y):
+    
+    def pem_merit(self, y):
         y = np.asanyarray(y)
         N = len(y)
         
-        if not hasattr(work, 'L'):
-            work.L = 0.0
-
         for k in range(N):
-            self.correct(work, y[k])
-            self.update_likelihood(work)
+            self.correct(y[k])
+            self.update_likelihood()
             if k < N - 1:
-                self.predict(work)
+                self.predict()
         
-        return work.L
-
-    def pem_gradient(self, work, y):
+        return self.L
+    
+    def pem_gradient(self, y):
         y = np.asanyarray(y)
         N = len(y)
-        nx  = self.model.nx
-        nq = self.model.nq
-        
-        if not hasattr(work, 'L'):
-            work.L = 0.0
-        if not hasattr(work, 'dL_dq'):
-            work.dL_dq = np.zeros(nq)
-        if not hasattr(work, 'dx_dq'):
-            work.dx_dq = np.zeros((nq, nx))
-        if not hasattr(work, 'dPx_dq'):
-            work.dPx_dq = np.zeros((nq, nx, nx))
         
         for k in range(N):
-            self.correct(work, y[k])
-            self.correction_diff(work)
-            self.update_likelihood(work)
-            self.likelihood_diff(work)
+            self.correct(y[k])
+            self.correction_diff()
+            self.update_likelihood()
+            self.likelihood_diff()
             if k < N - 1:
-                self.predict(work)
-                self.prediction_diff(work)
+                self.predict()
+                self.prediction_diff()
         
-        return work.dL_dq
+        return self.dL_dq
 
 
 def cholesky_sqrt_diff2(S, d2Q, work):
@@ -163,18 +146,8 @@ def cholesky_sqrt_diff2(S, d2Q, work):
     return d2S
 
 
-class UnscentedTransformWork:
-    """Unscented transform work data."""
-    def __init__(self, i, Pi):
-        self.i = np.asarray(i)
-        self.Pi = np.asarray(Pi)
-
-
 class UnscentedTransformBase(metaclass=abc.ABCMeta):
     """Unscented transform base class."""
-    
-    Work = UnscentedTransformWork
-    """Work data class."""
     
     def __init__(self, ni, **options):
         """Unscented transform object constructor.
@@ -207,42 +180,42 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
         """Transform weights."""
     
     @abc.abstractmethod
-    def sqrt(self, work, Q):
+    def sqrt(self, Q):
         """Unscented transform square root method."""
         raise NotImplementedError("Pure abstract method.")
     
-    def sigma_points(self, work):
+    def sigma_points(self, i, Pi):
         """Generate sigma-points and their deviations.
         
         The sigma points are the lines of the returned matrix.
         """
         ni = self.ni
-        S = self.sqrt(work, (ni + self.kappa) * work.Pi)
+        S = self.sqrt((ni + self.kappa) * Pi)
         idev = np.zeros((self.nsigma, ni))
         idev[:ni] = S
         idev[ni:(2 * ni)] = -S
-        isigma = idev + work.i
+        isigma = idev + i
         
-        work.isigma = isigma
-        work.idev = idev
+        self.isigma = isigma
+        self.idev = idev
         return isigma
     
-    def sigma_points_diff(self, work, di_dq, dPi_dq):
+    def sigma_points_diff(self, di_dq, dPi_dq):
         """Derivative of sigma-points."""
         ni = self.ni
         
-        dS_dq = self.sqrt_diff(work, (ni + self.kappa) * dPi_dq)
+        dS_dq = self.sqrt_diff((ni + self.kappa) * dPi_dq)
         didev_dq = np.zeros((self.nsigma,) + di_dq.shape)
         didev_dq[:ni] = np.rollaxis(dS_dq, -2)
         didev_dq[ni:(2 * ni)] = -didev_dq[:ni]
         disigma_dq = didev_dq + di_dq
         
-        work.didev_dq = didev_dq
-        work.disigma_dq = disigma_dq
+        self.didev_dq = didev_dq
+        self.disigma_dq = disigma_dq
         return disigma_dq
     
-    def transform(self, work, f):
-        isigma = self.sigma_points(work)
+    def transform(self, i, Pi, f):
+        isigma = self.sigma_points(i, Pi)
         weights = self.weights
         
         osigma = f(isigma)
@@ -250,79 +223,74 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
         odev = osigma - o
         Po = np.einsum('ki,kj,k', odev, odev, weights)
         
-        work.osigma = osigma
-        work.odev = odev
-        work.o = o
-        work.Po = Po
+        self.osigma = osigma
+        self.odev = odev
+        self.o = o
+        self.Po = Po
         return (o, Po)
     
-    def transform_diff(self, work, df_dq, df_dx, di_dq, dPi_dq):
+    def transform_diff(self, df_dq, df_di, di_dq, dPi_dq):
         weights = self.weights
-        isigma = work.isigma
+        isigma = self.isigma
         
-        disigma_dq = self.sigma_points_diff(work, di_dq, dPi_dq)
-        Dosigma_Dq = np.einsum('ijk,ilj->ilk', df_dx(isigma), disigma_dq)
+        disigma_dq = self.sigma_points_diff(di_dq, dPi_dq)
+        Dosigma_Dq = np.einsum('ijk,ilj->ilk', df_di(isigma), disigma_dq)
         Dosigma_Dq += df_dq(isigma)
         
         do_dq = np.einsum('k,k...', weights, Dosigma_Dq)
         dodev_dq = Dosigma_Dq - do_dq
-        dPo_dq = np.einsum('klj,ki,k->lij', dodev_dq, work.odev, weights)
+        dPo_dq = np.einsum('klj,ki,k->lij', dodev_dq, self.odev, weights)
         dPo_dq += np.swapaxes(dPo_dq, -1, -2)
         
-        work.Dosigma_Dq = Dosigma_Dq
-        work.dodev_dq = dodev_dq
-        work.do_dq = do_dq
-        work.dPo_dq = dPo_dq
+        self.Dosigma_Dq = Dosigma_Dq
+        self.dodev_dq = dodev_dq
+        self.do_dq = do_dq
+        self.dPo_dq = dPo_dq
         return (do_dq, dPo_dq)
     
-    def crosscov(self, work):
-        return np.einsum('ki,kj,k', work.idev, work.odev, self.weights)
+    def crosscov(self):
+        return np.einsum('ki,kj,k', self.idev, self.odev, self.weights)
     
-    def crosscov_diff(self, work):
+    def crosscov_diff(self):
         dPio_dq = np.einsum('kli,kj,k->lij', 
-                            work.didev_dq, work.odev, self.weights)
+                            self.didev_dq, self.odev, self.weights)
         dPio_dq += np.einsum('ki,klj,k->lij', 
-                             work.idev, work.dodev_dq, self.weights)
+                             self.idev, self.dodev_dq, self.weights)
         return dPio_dq
 
 
 class SVDUnscentedTransform(UnscentedTransformBase):
     """Unscented transform using singular value decomposition."""
     
-    def sqrt(self, work, Q):
+    def sqrt(self, Q):
         """Unscented transform square root method."""
         [U, s, VT] = scipy.linalg.svd(Q)
-        work.S = np.transpose(U * np.sqrt(s))
-        return work.S
+        self.S = np.transpose(U * np.sqrt(s))
+        return self.S
 
 
 class DifferentiableCholesky:
     
-    Work = attrdict.AttrDict
-    
-    @staticmethod
-    def initialize_gradient_data(work, ni):
-        if getattr(work, 'gradient_data_initialized', 0) == ni:
+    gradient_data_initialized = 0
+
+    def initialize_gradient_data(self, ni):
+        if self.gradient_data_initialized == ni:
             return
         
-        work.ni_range = np.arange(ni)
-        work.ni_tril_indices = np.tril_indices(ni)
-        work.gradient_data_initialized = ni
+        self.ni_range = np.arange(ni)
+        self.ni_tril_indices = np.tril_indices(ni)
+        self.gradient_data_initialized = ni
  
-    @staticmethod
-    def decompose(work, Q):
+    def __call__(self, Q):
         """Perform the Cholesky decomposition."""
-        work.S = scipy.linalg.cholesky(Q, lower=False)
-        return work.S
+        self.S = scipy.linalg.cholesky(Q, lower=False)
+        return self.S
     
-    @classmethod
-    def diff(cls, work, dQ_dq):
+    def diff(self, dQ_dq):
         """Derivatives of Cholesky decomposition.
         
         Parameters
         ----------
-        work :
-            Work data.
         dQ_dq : (nq, ni, ni) array_like
             The derivatives of `Q` with respect to some parameter vector.
              Must be symmetric with respect to the last two axes, i.e., 
@@ -336,20 +304,20 @@ class DifferentiableCholesky:
         
         """
         nq = len(dQ_dq)
-        ni = len(work.S)
-        cls.initialize_gradient_data(work, ni)
+        ni = len(self.S)
+        self.initialize_gradient_data(ni)
         
-        k = work.ni_range
-        i, j = work.ni_tril_indices
+        k = self.ni_range
+        i, j = self.ni_tril_indices
         ix, jx, kx = np.ix_(i, j, k)
         
         A = np.zeros((ni, ni, ni, ni))
-        A[ix, jx, ix, kx] = work.S[kx, jx]
-        A[ix, jx, jx, kx] += work.S[kx, ix]
+        A[ix, jx, ix, kx] = self.S[kx, jx]
+        A[ix, jx, jx, kx] += self.S[kx, ix]
         A_tril = A[i, j][..., i, j]
         A_tril_inv = scipy.linalg.inv(A_tril)
         
-        dQ_dq_tril = dQ_dq[..., i, j]        
+        dQ_dq_tril = dQ_dq[..., i, j]
         dS_dq_tril = np.einsum('ab,...b->...a', A_tril_inv, dQ_dq_tril)
         dS_dq = np.zeros((nq, ni, ni))
         dS_dq[..., j, i] = dS_dq_tril
@@ -359,13 +327,17 @@ class DifferentiableCholesky:
 class CholeskyUnscentedTransform(UnscentedTransformBase):
     """Unscented transform using Cholesky decomposition."""
     
-    def sqrt(self, work, Q):
-        """Unscented transform square root method."""
-        return DifferentiableCholesky.decompose(work, Q)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cholesky = DifferentiableCholesky()
     
-    def sqrt_diff(self, work, dQ_dq):
+    def sqrt(self, Q):
+        """Unscented transform square root method."""
+        return self.cholesky(Q)
+    
+    def sqrt_diff(self, dQ_dq):
         """Derivatives of Unscented transform Cholesky decomposition."""
-        return DifferentiableCholesky.diff(work, dQ_dq)
+        return self.cholesky.diff(dQ_dq)
 
 
 def choose_ut_transform_class(options):
@@ -381,9 +353,9 @@ def choose_ut_transform_class(options):
 
 class DTUnscentedPredictor(DTKalmanFilterBase):
     
-    def __init__(self, model, **options):
+    def __init__(self, model, x, Px, **options):
         # Initialize base
-        super().__init__(model, **options)
+        super().__init__(model, x, Px, **options)
         
         # Get transform options
         ut_options = options.copy()
@@ -393,42 +365,41 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
         UTClass = choose_ut_transform_class(ut_options)
         self.__ut = UTClass(model.nx, **ut_options)
     
-    def predict(self, work):
+    def predict(self):
         """Predict the state distribution at the next time index."""
         def f_fun(x):
-            return self.model.f(work.k, x)
+            return self.model.f(self.k, x)
         
-        work.pred_ut = self.__ut.Work(work.x, work.Px)
-        f, Pf = self.__ut.transform(work.pred_ut, f_fun)
-        Q = self.model.Q(work.k, work.x)
+        f, Pf = self.__ut.transform(self.x, self.Px, f_fun)
+        Q = self.model.Q(self.k, self.x)
         
-        work.prev_x = work.x
-        work.prev_Px = work.Px
-        work.k += 1
-        work.x = f
-        work.Px = Pf + Q
-        return work.x, work.Px
+        self.prev_x = self.x
+        self.prev_Px = self.Px
+        self.k += 1
+        self.x = f
+        self.Px = Pf + Q
+        return self.x, self.Px
     
-    def prediction_diff(self, work):
+    def prediction_diff(self):
         """Calculate the derivatives of the prediction."""
-        k = work.k - 1 
-        x = work.prev_x
+        k = self.k - 1 
+        x = self.prev_x
         
         def df_dq_fun(x):
             return self.model.df_dq(k, x)
         def df_dx_fun(x):
             return self.model.df_dx(k, x)
         Df_Dq, DPf_Dq = self.__ut.transform_diff(
-            work.pred_ut, df_dq_fun, df_dx_fun, work.dx_dq, work.dPx_dq
+            df_dq_fun, df_dx_fun, self.dx_dq, self.dPx_dq
         )
         dQ_dq = self.model.dQ_dq(k, x)
         dQ_dx = self.model.dQ_dx(k, x)
-        DQ_Dq = dQ_dq + np.einsum('ij,jkl', work.dx_dq, dQ_dx)
+        DQ_Dq = dQ_dq + np.einsum('ij,jkl', self.dx_dq, dQ_dx)
         
-        work.prev_dx_dq = work.dx_dq
-        work.prev_dPx_dq = work.dPx_dq
-        work.dx_dq = Df_Dq
-        work.dPx_dq = DPf_Dq + DQ_Dq
+        self.prev_dx_dq = self.dx_dq
+        self.prev_dPx_dq = self.dPx_dq
+        self.dx_dq = Df_Dq
+        self.dPx_dq = DPf_Dq + DQ_Dq
     
     def _calculate_prediction_hess(self, dQ_dq, dQ_dx, ut_work):
         k = self.k
@@ -461,9 +432,9 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
 
 class DTUnscentedCorrector(DTKalmanFilterBase):
     
-    def __init__(self, model, **options):
+    def __init__(self, model, x, Px, **options):
         # Initialize base
-        super().__init__(model, **options)
+        super().__init__(model, x, Px, **options)
         
         # Get transform options
         ut_options = options.copy()
@@ -473,113 +444,112 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         UTClass = choose_ut_transform_class(ut_options)
         self.__ut = UTClass(model.nx, **ut_options)
     
-    def correct(self, work, y):
+    def correct(self, y):
         """Correct the state distribution, given the measurement vector."""
         # Get the y-mask
         mask = ma.getmaskarray(y)
-        work.active = active = ~mask
+        self.active = active = ~mask
         if np.all(mask):
-            return work.x, work.Px
+            return self.x, self.Px
         
         # Remove inactive outputs
         y = ma.compressed(y)
         R = self.model.R()[np.ix_(active, active)]
         def h_fun(x):
-            return self.model.h(work.k, x)[..., active]
+            return self.model.h(self.k, x)[..., active]
         
         # Perform unscented transform
-        work.corr_ut = self.__ut.Work(work.x, work.Px)
-        h, Ph = self.__ut.transform(work.corr_ut, h_fun)
-        Pxh = self.__ut.crosscov(work.corr_ut)
+        h, Ph = self.__ut.transform(self.x, self.Px, h_fun)
+        Pxh = self.__ut.crosscov()
         
         # Factorize covariance
-        work.py_chol = DifferentiableCholesky.Work()
+        self.__chol = DifferentiableCholesky()
         Py = Ph + R
-        PyC = DifferentiableCholesky.decompose(work.py_chol, Py)
+        PyC = self.__chol(Py)
         PyCI = scipy.linalg.inv(PyC)
         PyI = np.einsum('ik,jk', PyCI, PyCI)
         
         # Perform correction
         e = y - h
         K = np.einsum('ik,kj', Pxh, PyI)
-        x_corr = work.x + np.einsum('ij,j', K, e)
-        Px_corr = work.Px - np.einsum('ik,jl,kl', K, K, Py)
+        x_corr = self.x + np.einsum('ij,j', K, e)
+        Px_corr = self.Px - np.einsum('ik,jl,kl', K, K, Py)
         
         # Save and return the correction data
-        work.prev_x = work.x
-        work.prev_Px = work.Px
-        work.e = e
-        work.x = x_corr
-        work.Px = Px_corr
-        work.Pxh = Pxh
-        work.Py = Py
-        work.PyI = PyI
-        work.PyC = PyC
-        work.PyCI = PyCI
-        work.K = K
+        self.prev_x = self.x
+        self.prev_Px = self.Px
+        self.e = e
+        self.x = x_corr
+        self.Px = Px_corr
+        self.Pxh = Pxh
+        self.Py = Py
+        self.PyI = PyI
+        self.PyC = PyC
+        self.PyCI = PyCI
+        self.K = K
         return x_corr, Px_corr
 
-    def correction_diff(self, work):
+    def correction_diff(self):
         """Calculate the derivatives of the correction."""
-        if not np.any(work.active):
+        if not np.any(self.active):
             return
         
         # Get the model and transform derivatives
         def dh_dq_fun(x):
-            return self.model.dh_dq(work.k, x)[..., work.active]
+            return self.model.dh_dq(self.k, x)[..., self.active]
         def dh_dx_fun(x):
-            return self.model.dh_dx(work.k, x)[..., work.active]
+            return self.model.dh_dx(self.k, x)[..., self.active]
         Dh_Dq, DPh_Dq = self.__ut.transform_diff(
-            work.corr_ut, dh_dq_fun, dh_dx_fun, work.dx_dq, work.dPx_dq
+            self.corr_ut, dh_dq_fun, dh_dx_fun, self.dx_dq, self.dPx_dq
         )
-        dPxh_dq = self.__ut.crosscov_diff(work.corr_ut)
-        dR_dq = self.model.dR_dq()[(...,) + np.ix_(work.active, work.active)]
+        dPxh_dq = self.__ut.crosscov_diff(self.corr_ut)
+        dR_dq = self.model.dR_dq()[(...,) + np.ix_(self.active, self.active)]
 
         # Calculate the correction derivatives
         de_dq = -Dh_Dq
         dPy_dq = DPh_Dq + dR_dq
-        dPyI_dq = -np.einsum('ij,ajk,kl', work.PyI, dPy_dq, work.PyI)
-        dK_dq = np.einsum('ik,akj', work.Pxh, dPyI_dq)
-        dK_dq += np.einsum('aik,kj', dPxh_dq, work.PyI)
+        dPyI_dq = -np.einsum('ij,ajk,kl', self.PyI, dPy_dq, self.PyI)
+        dK_dq = np.einsum('ik,akj', self.Pxh, dPyI_dq)
+        dK_dq += np.einsum('aik,kj', dPxh_dq, self.PyI)
 
-        work.de_dq = de_dq
-        work.dPy_dq = dPy_dq
-        work.dPyI_dq = dPyI_dq
-        work.prev_dx_dq = work.dx_dq.copy()
-        work.prev_dPx_dq = work.dPx_dq.copy()
-        work.dx_dq += np.einsum('...aij,...j', dK_dq, work.e)
-        work.dx_dq += np.einsum('...ij,...aj', work.K, de_dq)
-        work.dPx_dq -= np.einsum('...aik,...jl,...lk', dK_dq, work.K, work.Py)
-        work.dPx_dq -= np.einsum('...ik,...ajl,...lk', work.K, dK_dq, work.Py)
-        work.dPx_dq -= np.einsum('...ik,...jl,...alk', work.K, work.K, dPy_dq)
+        self.de_dq = de_dq
+        self.dPy_dq = dPy_dq
+        self.dPyI_dq = dPyI_dq
+        self.prev_dx_dq = self.dx_dq.copy()
+        self.prev_dPx_dq = self.dPx_dq.copy()
+        self.dx_dq += np.einsum('...aij,...j', dK_dq, self.e)
+        self.dx_dq += np.einsum('...ij,...aj', self.K, de_dq)
+        self.dPx_dq -= np.einsum('...aik,...jl,...lk', dK_dq, self.K, self.Py)
+        self.dPx_dq -= np.einsum('...ik,...ajl,...lk', self.K, dK_dq, self.Py)
+        self.dPx_dq -= np.einsum('...ik,...jl,...alk', self.K, self.K, dPy_dq)
     
-    def update_likelihood(self, work):
+    def update_likelihood(self):
         """Update measurement log-likelihood."""
-        if not np.any(work.active):
+        if not np.any(self.active):
             return
+        
+        self.PyCD = np.einsum('...kk->...k', self.PyC)
+        self.L -= 0.5 * np.einsum('...i,...ij,...j', self.e, self.PyI, self.e) 
+        self.L -= np.log(self.PyCD).sum(-1)
     
-        work.PyCD = np.einsum('...kk->...k', work.PyC)
-        work.L -= 0.5 * np.einsum('...i,...ij,...j', work.e, work.PyI, work.e) 
-        work.L -= np.log(work.PyCD).sum(-1)
-
-    def likelihood_diff(self, work):
+    def likelihood_diff(self):
         """Calculate measurement log-likelihood derivatives."""
-        if not np.any(work.active):
+        if not np.any(self.active):
             return
-
+        
         # Get the work variables
-        e = work.e
-        PyI = work.PyI
-        de_dq = work.de_dq
-        dPyI_dq = work.dPyI_dq
+        e = self.e
+        PyI = self.PyI
+        de_dq = self.de_dq
+        dPyI_dq = self.dPyI_dq
         
         # Calculate the likelihood derivatives
-        dPyC_dq = DifferentiableCholesky.diff(work.py_chol, work.dPy_dq)
+        dPyC_dq = self.__chol.diff(self.dPy_dq)
         dPyCD_dq = np.einsum('...kk->...k', dPyC_dq)
-        work.dL_dq -= np.sum(dPyCD_dq / work.PyCD, axis=-1)
-        work.dL_dq -= 0.5 * np.einsum('...ai,...ij,...j', de_dq, PyI, e)
-        work.dL_dq -= 0.5 * np.einsum('...i,...aij,...j', e, dPyI_dq, e)
-        work.dL_dq -= 0.5 * np.einsum('...i,...ij,...aj', e, PyI, de_dq)
+        self.dL_dq -= np.sum(dPyCD_dq / self.PyCD, axis=-1)
+        self.dL_dq -= 0.5 * np.einsum('...ai,...ij,...j', de_dq, PyI, e)
+        self.dL_dq -= 0.5 * np.einsum('...i,...aij,...j', e, dPyI_dq, e)
+        self.dL_dq -= 0.5 * np.einsum('...i,...ij,...aj', e, PyI, de_dq)
 
 
 class DTUnscentedKalmanFilter(DTUnscentedPredictor, DTUnscentedCorrector):
