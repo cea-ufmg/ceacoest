@@ -131,17 +131,13 @@ def pem(model, t, x, y, q):
     
     def merit(q, new=None):
         mq = model.parametrize(q=q)
-        kf = kalman.DTUnscentedKalmanFilter(mq)
-        work = kf.Work(x0, Px0, L=0)
-        return kf.pem_merit(work, y)
+        kf = kalman.DTUnscentedKalmanFilter(mq, x0, Px0)
+        return kf.pem_merit(y)
     
     def grad(q, new=None):
         mq = model.parametrize(q=q)
-        kf = kalman.DTUnscentedKalmanFilter(mq)
-        work = kf.Work(x0, Px0, L=0, dL_dq=np.zeros(model.nq))
-        work.dx_dq = np.zeros((model.nq, model.nx))
-        work.dPx_dq = np.zeros((model.nq, model.nx, model.nx))
-        return kf.pem_gradient(work, y)
+        kf = kalman.DTUnscentedKalmanFilter(mq, x0, Px0)
+        return kf.pem_gradient(y)
     
     def hess(q, new_q=1, obj_factor=1, lmult=1, new_lmult=1):
         return obj_factor * utils.central_diff(grad, q)[hess_inds]

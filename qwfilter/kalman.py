@@ -61,10 +61,10 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         self.dL_dq = options.get('dL_dq', np.zeros(nq))
         '''Measurement log-likelihood derivative.'''
 
-        self.dx_dq = options.get('dx_dq', np.zeros((nq, nx))):
+        self.dx_dq = options.get('dx_dq', np.zeros((nq, nx)))
         '''State vector derivative.'''
         
-        self.dPx_dq = options.get('dPx_dq', np.zeros((nq, nx, nx))):
+        self.dPx_dq = options.get('dPx_dq', np.zeros((nq, nx, nx)))
         '''State vector covariance derivative.'''
     
     @abc.abstractmethod
