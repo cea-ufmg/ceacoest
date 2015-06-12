@@ -112,7 +112,10 @@ def model_class(nx, nq):
                        ('d2Q_dx_dq', 'dQ_dx', 'q'),
                        ('d2Q_dq2', 'dQ_dq',  'q'),
                        ('dh_dx', 'h', 'x'), ('dh_dq', 'h', 'q'),
-                       ('dR_dq', 'R', 'q'),
+                       ('d2h_dx2', 'dh_dx',  'x'), 
+                       ('d2h_dx_dq', 'dh_dx', 'q'),
+                       ('d2h_dq2', 'dh_dq',  'q'),
+                       ('dR_dq', 'R', 'q'), ('d2R_dq2', 'dR_dq', 'q'),
                        ('dv_dq', 'v', 'q'), ('d2v_dq2', 'dv_dq', 'q'),
                        ('dPv_dq', 'Pv', 'q'), ('d2Pv_dq2', 'dPv_dq', 'q')]
         '''List of the model function derivatives to calculate / generate.'''
@@ -303,16 +306,20 @@ def test_ut_diff(ut, model, x, q):
     
     def transform(q):
         mq = model.parametrize(q=q)
-        return ut.transform(mq.v(), mq.Pv(), lambda x: mq.f(x=x))
+        out = ut.transform(mq.v(), mq.Pv(), lambda x: mq.f(x=x))
+        return out + (ut.crosscov(),)
     numerical_x = utils.central_diff(lambda q: transform(q)[0], q)
     numerical_Px = utils.central_diff(lambda q: transform(q)[1], q)
+    numerical_Pio = utils.central_diff(lambda q: transform(q)[2], q)
     
     ut.transform(model.v(), model.Pv(), lambda x: model.f(x=x))
     analytical_x, analytical_Px = ut.transform_diff(
         df_dq, df_dx, model.dv_dq(), model.dPv_dq()
     )
+    analytical_Pio = ut.crosscov_diff()
     assert ArrayDiff(numerical_x, analytical_x) < 1e-8
     assert ArrayDiff(numerical_Px, analytical_Px) < 1e-8
+    assert ArrayDiff(numerical_Pio, analytical_Pio) < 1e-8
 
 
 def test_ut_diff2(ut, model, x, q):
@@ -375,6 +382,28 @@ def test_ut_pred_diff(parametrized_ukf, ut, model, q):
     assert ArrayDiff(numerical_Px, analytical_Px) < 5e-8
 
 
+def test_ut_pred_diff2(parametrized_ukf, ut, model, q):
+    if not hasattr(ut, 'sqrt_diff'):
+        pytest.skip("UT square-root derivative not implemented yet.")
+
+    def pred(q):
+        ukf = parametrized_ukf(q)
+        ukf.predict()
+        ukf.prediction_diff()
+        return ukf
+    numerical_x = utils.central_diff(lambda q: pred(q).dx_dq, q)
+    numerical_Px = utils.central_diff(lambda q: pred(q).dPx_dq, q)
+    
+    ukf = parametrized_ukf(q)
+    ukf.predict()
+    ukf.prediction_diff()
+    ukf.prediction_diff2()
+    analytical_x = ukf.d2x_dq2
+    analytical_Px = ukf.d2Px_dq2
+    assert ArrayDiff(numerical_x, analytical_x) < 1e-8
+    assert ArrayDiff(numerical_Px, analytical_Px) < 1e-8
+
+
 def test_ut_corr_diff(parametrized_ukf, ut, model, q, y):
     if not hasattr(ut, 'sqrt_diff'):
         pytest.skip("UT square-root derivative not implemented yet.")
@@ -398,4 +427,31 @@ def test_ut_corr_diff(parametrized_ukf, ut, model, q, y):
     analytical_Px = ukf.dPx_dq
     assert ArrayDiff(numerical_L, analytical_L) < 5e-8
     assert ArrayDiff(numerical_x, analytical_x) < 5e-8
+    assert ArrayDiff(numerical_Px, analytical_Px) < 1e-7
+
+def test_ut_corr_diff2(parametrized_ukf, ut, model, q, y):
+    if not hasattr(ut, 'sqrt_diff'):
+        pytest.skip("UT square-root derivative not implemented yet.")
+        
+    def corr(q):
+        ukf = parametrized_ukf(q)
+        ukf.correct(y)
+        ukf.correction_diff()
+        ukf.update_likelihood()
+        return ukf
+    numerical_L = utils.central_diff(lambda q: corr(q).dL_dq, q)
+    numerical_x = utils.central_diff(lambda q: corr(q).dx_dq, q)
+    numerical_Px = utils.central_diff(lambda q: corr(q).dPx_dq, q)
+    
+    ukf = parametrized_ukf(q)
+    ukf.correct(y)
+    ukf.update_likelihood()
+    ukf.correction_diff()
+    ukf.correction_diff2()
+    ukf.likelihood_diff()
+    #analytical_L = ukf.dL_dq
+    analytical_x = ukf.d2x_dq2
+    analytical_Px = ukf.d2Px_dq2
+    #assert ArrayDiff(numerical_L, analytical_L) < 5e-8
+    assert ArrayDiff(numerical_x, analytical_x) < 1e-7
     assert ArrayDiff(numerical_Px, analytical_Px) < 1e-7

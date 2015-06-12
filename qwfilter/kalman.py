@@ -61,10 +61,19 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         self.dL_dq = options.get('dL_dq', np.zeros(nq))
         '''Measurement log-likelihood derivative.'''
 
+        self.d2L_dq2 = options.get('dL_dq', np.zeros((nq, nq)))
+        '''Measurement log-likelihood derivative.'''
+
         self.dx_dq = options.get('dx_dq', np.zeros((nq, nx)))
         '''State vector derivative.'''
         
         self.dPx_dq = options.get('dPx_dq', np.zeros((nq, nx, nx)))
+        '''State vector covariance derivative.'''
+
+        self.d2x_dq2 = options.get('dx_dq', np.zeros((nq, nq, nx)))
+        '''State vector derivative.'''
+        
+        self.d2Px_dq2 = options.get('dPx_dq', np.zeros((nq, nq, nx, nx)))
         '''State vector covariance derivative.'''
     
     @abc.abstractmethod
@@ -446,38 +455,34 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
         dQ_dx = self.model.dQ_dx(k, x)
         DQ_Dq = dQ_dq + np.einsum('ij,jkl', self.dx_dq, dQ_dx)
         
+        self.dQ_dx = dQ_dx
         self.prev_dx_dq = self.dx_dq
-        self.prev_dPx_dq = self.dPx_dq
         self.dx_dq = Df_Dq
         self.dPx_dq = DPf_Dq + DQ_Dq
-    
-    def _calculate_prediction_hess(self, dQ_dq, dQ_dx, ut_work):
-        k = self.k
-        x = self.x
-        dx_dq = self.dx_dq
-        dPx_dq = self.dPx_dq
-        d2x_dq2 = self.d2x_dq2
-        d2Px_dq2 = self.d2Px_dq2
-        
-        d2Q_dq2 = self.model.d2Q_dq2(k, x)
-        d2Q_dq_dx = self.model.d2Q_dq_dx(k, x)
-        D2Q_Dq2 = d2Q_dq2 + np.einsum('...aijk,...bi', dQ_dq_dx, dx_dq)
-        D2Q_Dq2 += np.einsum('...aij,...jkl', d2x_dq2, dQ_dx)
-        D2Q_Dq2 += np.einsum('...ij,...bjkl,...ab', dx_dq, d2Q_dx2, dx_dq)
-        D2Q_Dq2 += np.einsum('...ij,...ajkl', dx_dq, d2Q_dq_dx)
 
-        def Df_Dq_fun(x, dx_dq):
-            df_dq = self.model.df_dq(k, x)
-            df_dx = self.model.df_dx(k, x)
-            d2f_dq2 = self.model.d2f_dq2(k, x)
-            d2f_dq_dx = self.model.d2f_dq_dx(k, x)
-            d2f_dq2  = self.model.d2f_dq2(k, x)
-            Df_Dq = d2f_dq2 + np.einsum('...akc,...bk', d2f_dq_dx, dx_dq)
-            Df_Dq += np.einsum('...abi,...ij', d2x_dq2, df_dx)
-            Df_Dq += np.einsum('...ai,...bij', dx_dq, d2f_dq_dx)
-            Df_Dq += np.einsum('...ai,...ijk,...bj', dx_dq, d2f_dx2, dx_dq)
-            return Df_Dq
-        Df_Dq, DPf_Dq = self.__ut.transform_diff(Df_Dq_fun, dx_dq, dPx_dq, work)
+    def prediction_diff2(self):
+        """Calculate the second derivatives of the prediction."""
+        k = self.k - 1 
+        x = self.prev_x
+        dx_dq = self.prev_dx_dq
+        
+        def d2f_dq2_fun(x):
+            return self.model.d2f_dq2(k, x)
+        def d2f_dx2_fun(x):
+            return self.model.d2f_dx2(k, x)
+        def d2f_dx_dq_fun(x):
+            return self.model.d2f_dx_dq(k, x)
+        D2f_Dq2, D2Pf_Dq2 = self.__ut.transform_diff2(
+            d2f_dq2_fun, d2f_dx2_fun, d2f_dx_dq_fun, self.d2x_dq2, self.d2Px_dq2
+        )
+        D2Q_Dq2 = np.einsum('bi,aikl', dx_dq, self.model.d2Q_dx_dq(k, x))
+        D2Q_Dq2 += np.swapaxes(D2Q_Dq2, -3, -4)
+        D2Q_Dq2 += self.model.d2Q_dq2(k, x)
+        D2Q_Dq2 += np.einsum('abi,ikl', self.d2x_dq2, self.dQ_dx)
+        D2Q_Dq2 += np.einsum('bi,jikl,aj',
+                             dx_dq, self.model.d2Q_dx2(k, x), dx_dq)
+        self.d2x_dq2 = D2f_Dq2
+        self.d2Px_dq2 = D2Pf_Dq2 + D2Q_Dq2
 
 
 class DTUnscentedCorrector(DTKalmanFilterBase):
@@ -563,8 +568,10 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         dK_dq += np.einsum('aik,kj', dPxh_dq, self.PyI)
 
         self.de_dq = de_dq
+        self.dK_dq = dK_dq
         self.dPy_dq = dPy_dq
         self.dPyI_dq = dPyI_dq
+        self.dPxh_dq = dPxh_dq
         self.prev_dx_dq = self.dx_dq.copy()
         self.prev_dPx_dq = self.dPx_dq.copy()
         self.dx_dq += np.einsum('...aij,...j', dK_dq, self.e)
@@ -572,6 +579,54 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         self.dPx_dq -= np.einsum('...aik,...jl,...lk', dK_dq, self.K, self.Py)
         self.dPx_dq -= np.einsum('...ik,...ajl,...lk', self.K, dK_dq, self.Py)
         self.dPx_dq -= np.einsum('...ik,...jl,...alk', self.K, self.K, dPy_dq)
+
+    def correction_diff2(self):
+        """Calculate the second derivatives of the correction."""
+        if not np.any(self.active):
+            return
+
+        # Get some saved data
+        K = self.K
+        dK_dq = self.dK_dq
+        dPy_dq = self.dPy_dq
+        
+        # Get the model and transform derivatives
+        def d2h_dq2_fun(x):
+            return self.model.d2h_dq2(self.k, x)[..., self.active]
+        def d2h_dx2_fun(x):
+            return self.model.d2h_dx2(self.k, x)[..., self.active]
+        def d2h_dx_dq_fun(x):
+            return self.model.d2h_dx_dq(self.k, x)[..., self.active]
+        D2h_Dq2, D2Ph_Dq2 = self.__ut.transform_diff2(
+            d2h_dq2_fun, d2h_dx2_fun, d2h_dx_dq_fun, self.d2x_dq2, self.d2Px_dq2
+        )
+        d2Pxh_dq2 = self.__ut.crosscov_diff2()
+        d2R_dq2 = self.model.d2R_dq2()[(...,) + np.ix_(self.active,self.active)]
+        
+        # Calculate the correction derivatives
+        d2e_dq2 = -D2h_Dq2
+        d2Py_dq2 = D2Ph_Dq2 + d2R_dq2
+        d2PyI_dq2 = -np.einsum('aij,bjk,kl', self.dPyI_dq, dPy_dq, self.PyI)
+        d2PyI_dq2 -= np.einsum('ij,abjk,kl', self.PyI, d2Py_dq2, self.PyI)
+        d2PyI_dq2 -= np.einsum('ij,bjk,akl', self.PyI, dPy_dq, self.dPyI_dq)
+        d2K_dq2 = np.einsum('aik,bkj', self.dPxh_dq, self.dPyI_dq)
+        d2K_dq2 += np.einsum('ik,abkj', self.Pxh, d2PyI_dq2)
+        d2K_dq2 += np.einsum('abik,kj', d2Pxh_dq2, self.PyI)
+        d2K_dq2 += np.einsum('bik,akj', self.dPxh_dq, self.dPyI_dq)
+
+        self.d2x_dq2 += np.einsum('abij,j', d2K_dq2, self.e)
+        self.d2x_dq2 += np.einsum('bij,aj', dK_dq, self.de_dq)
+        self.d2x_dq2 += np.einsum('aij,bj', dK_dq, self.de_dq)
+        self.d2x_dq2 += np.einsum('ij,abj', K, d2e_dq2)
+        self.d2Px_dq2 -= np.einsum('abik,jl,lk', d2K_dq2, K, self.Py)
+        self.d2Px_dq2 -= np.einsum('bik,ajl,lk', dK_dq, dK_dq, self.Py)
+        self.d2Px_dq2 -= np.einsum('bik,jl,alk', dK_dq, K, dPy_dq)
+        self.d2Px_dq2 -= np.einsum('aik,bjl,lk', dK_dq, dK_dq, self.Py)
+        self.d2Px_dq2 -= np.einsum('ik,abjl,lk', K, d2K_dq2, self.Py)
+        self.d2Px_dq2 -= np.einsum('ik,bjl,alk', K, dK_dq, dPy_dq)
+        self.d2Px_dq2 -= np.einsum('aik,jl,blk', dK_dq, K, dPy_dq)
+        self.d2Px_dq2 -= np.einsum('ik,ajl,blk', K, dK_dq, dPy_dq)
+        self.d2Px_dq2 -= np.einsum('ik,jl,ablk', K, K, d2Py_dq2)
     
     def update_likelihood(self):
         """Update measurement log-likelihood."""
