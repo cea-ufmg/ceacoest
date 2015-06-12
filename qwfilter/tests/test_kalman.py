@@ -92,21 +92,15 @@ def ut(ut_sqrt, ut_kappa, nx):
     return UTClass(nx, **options)
 
 
-@pytest.fixture
-def ut_work(x, cov, ut):
-    """Unscented transform work data."""
-    return ut.Work(x, cov)
-
-
 @pytest.fixture(scope='module')
 def model_class(nx, nq):
     '''Discrete-time test model.'''
     
     class SymbolicModel(sym2num.SymbolicModel):
-        var_names = {'k', 'x', 'q'}
+        var_names = {'k', 'x', 'q', 'Px'}
         '''Name of model variables.'''
         
-        function_names = {'f', 'h', 'Q', 'R', 'X', 'PX'}
+        function_names = {'f', 'h', 'Q', 'R', 'v', 'Pv'}
         '''Name of the model functions.'''
         
         derivatives = [('df_dx', 'f', 'x'), ('df_dq', 'f', 'q'),
@@ -119,8 +113,8 @@ def model_class(nx, nq):
                        ('d2Q_dq2', 'dQ_dq',  'q'),
                        ('dh_dx', 'h', 'x'), ('dh_dq', 'h', 'q'),
                        ('dR_dq', 'R', 'q'),
-                       ('dX_dq', 'X', 'q'),
-                       ('dPX_dq', 'PX', 'q'),]
+                       ('dv_dq', 'v', 'q'),
+                       ('dPv_dq', 'Pv', 'q'),]
         '''List of the model function derivatives to calculate / generate.'''
         
         k = 'k'
@@ -131,7 +125,10 @@ def model_class(nx, nq):
     
         q = ['q%d' % i for i in range(nq)]
         '''State vector.'''
-        
+
+        Px = [['Px%d_%d' % (i, j) for j in range(nx)] for i in range(nx)]
+        '''State covariance matrix.'''
+
         def f(self, k, x, q):
             '''Drift function.'''
             ret = np.zeros(nx, dtype=object)
@@ -156,19 +153,20 @@ def model_class(nx, nq):
             '''Measurement function.'''
             return [[q[-1]**2 + 0.2, 0.01*q[0]], [0.01*q[0], 1]]
 
-        def X(self, q, k):
+        def v(self, q, x):
+            '''Parameter dependent state vector.'''
             return [q[i % nq] for i in range(nx)]
         
-        def PX(self, q, k):
-            ret = np.eye(nx, dtype=object)
-            for i, j in np.ndindex(nq, nq):
+        def Pv(self, q, Px):
+            '''Parameter dependent state covariance.'''
+            Pv = Px.copy()
+            for i, j in np.ndindex(nx, nx):
                 if i == j:
-                    ret[i % nx, j % nx] += q[i] ** 2
+                    Pv[i, j] += 1e-2 * q[(i + j) % nq]**2
                 else:
-                    ret[i % nx, j % nx] += q[i] * 1e-3 / (i + j + 1)
-                    ret[j % nx, i % nx] += q[i] * 1e-3 / (i + j + 1)
-            return ret
-
+                    Pv[i, j] += q[(i + j) % nq] * 1e-3
+            return Pv
+    
     ModelClass = sym2num.class_obj(
         SymbolicModel(), sym2num.ScipyPrinter(),
         name='GeneratedModel', meta=sym2num.ParametrizedModel.meta
@@ -180,19 +178,24 @@ def model_class(nx, nq):
 
 
 @pytest.fixture
-def model(model_class, x, q):
-    defaults = dict(k=0, x=x, q=q)
+def model(model_class, x, q, cov):
+    defaults = dict(k=0, x=x, q=q, Px=cov)
     return model_class(defaults)
 
 
 @pytest.fixture
-def ukf(model, ut_kappa, ut_sqrt):
-    return kalman.DTUnscentedKalmanFilter(model, kappa=ut_kappa, sqrt=ut_sqrt)
+def parametrized_ukf(model, ut_kappa, ut_sqrt):
+    def factory(q):
+        mq = model.parametrize(q)
+        return kalman.DTUnscentedKalmanFilter(
+            mq, mq.v(), mq.Pv(), kappa=ut_kappa, sqrt=ut_sqrt
+        )
+    return factory
 
 
-def test_ut_sqrt(ut, ut_work, cov):
+def test_ut_sqrt(ut, cov):
     """Test if the ut_sqrt functions satisfy their definition."""
-    S = ut.sqrt(ut_work, cov)
+    S = ut.sqrt(cov)
     STS = np.dot(S.T, S)
     assert ArrayDiff(STS, cov) < 1e-8
 
@@ -202,31 +205,29 @@ def test_ut_sqrt_diff(ut, model, q):
     if not hasattr(ut, 'sqrt_diff'):
         pytest.skip("Square-root derivative not implemented yet.")
     
-    ut_work = ut.Work(model.X(q), model.PX(q))
     def S(q):
-        return ut.sqrt(ut_work, model.PX(q))
+        return ut.sqrt(model.Pv(q))
     numerical = utils.central_diff(S, q)
     
-    ut.sqrt(ut_work, model.PX(q))
-    analytical = ut.sqrt_diff(ut_work, model.dPX_dq(q))
+    ut.sqrt(model.Pv(q))
+    analytical = ut.sqrt_diff(model.dPv_dq(q))
     assert ArrayDiff(numerical, analytical) < 1e-8
 
 
-def test_sigma_points(ut, ut_work, x, cov):
+def test_sigma_points(ut, x, cov):
     """Test if the mean and covariance of the sigma-points is sane."""
-    sigma = ut.sigma_points(ut_work)
+    sigma = ut.sigma_points(x, cov)
     ut_mean = np.dot(ut.weights, sigma)
     assert ArrayDiff(ut_mean, x) < 1e-8
     
-    idev = ut_work.idev
-    ut_cov = np.einsum('ki,kj,k', idev, idev, ut.weights)
+    ut_cov = np.einsum('ki,kj,k', ut.idev, ut.idev, ut.weights)
     assert ArrayDiff(ut_cov, cov) < 1e-8
 
 
-def test_affine_ut(ut, ut_work, x, cov, A, nx):
+def test_affine_ut(ut, x, cov, A, nx):
     """Test the unscented transform of an affine function."""
     f = lambda x: np.dot(x, A.T) + np.arange(nx)
-    [ut_mean, ut_cov] = ut.transform(ut_work, f)
+    [ut_mean, ut_cov] = ut.transform(x, cov, f)
     
     desired_mean = f(x)
     assert ArrayDiff(ut_mean, desired_mean) < 1e-8
@@ -234,7 +235,7 @@ def test_affine_ut(ut, ut_work, x, cov, A, nx):
     desired_cov = A.dot(cov).dot(A.T)
     assert ArrayDiff(ut_cov, desired_cov) < 1e-8
     
-    ut_crosscov = ut.crosscov(ut_work)
+    ut_crosscov = ut.crosscov()
     desired_crosscov = np.dot(cov, A.T)
     assert ArrayDiff(ut_crosscov, desired_crosscov) < 1e-8
 
@@ -245,14 +246,12 @@ def test_sigma_points_diff(ut, model, q):
         pytest.skip("Square-root derivative not implemented yet.")
     
     def sigma(q):
-        ut_work = ut.Work(model.X(q), model.PX(q))
-        return ut.sigma_points(ut_work)
+        return ut.sigma_points(model.v(q), model.Pv(q))
     numerical = utils.central_diff(sigma, q)
     numerical = np.rollaxis(numerical, -2)
     
-    ut_work = ut.Work(model.X(q), model.PX(q))
-    ut.sigma_points(ut_work)
-    analytical = ut.sigma_points_diff(ut_work, model.dX_dq(q), model.dPX_dq(q))
+    ut.sigma_points(model.v(q), model.Pv(q))
+    analytical = ut.sigma_points_diff(model.dv_dq(q), model.dPv_dq(q))
     assert ArrayDiff(numerical, analytical) < 1e-8
 
 
@@ -262,79 +261,67 @@ def test_ut_diff(ut, model, x, q):
         pytest.skip("Square-root derivative not implemented yet.")
     
     def f(x):
-        return model.f(x=x, q=q)
+        return model.f(x=x)
     def df_dx(x):
-        return model.df_dx(x=x, q=q)
+        return model.df_dx(x=x)
     def df_dq(x):
-        return model.df_dq(x=x, q=q)
+        return model.df_dq(x=x)
     
-    def ut_out(q):
-        ut_work = ut.Work(model.X(q), model.PX(q))
-        return ut.transform(ut_work, lambda x: model.f(x=x, q=q))
-    numerical_x = utils.central_diff(lambda q: ut_out(q)[0], q)
-    numerical_Px = utils.central_diff(lambda q: ut_out(q)[1], q)
+    def transform(q):
+        mq = model.parametrize(q=q)
+        return ut.transform(mq.v(), mq.Pv(), lambda x: mq.f(x=x))
+    numerical_x = utils.central_diff(lambda q: transform(q)[0], q)
+    numerical_Px = utils.central_diff(lambda q: transform(q)[1], q)
     
-    ut_work = ut.Work(model.X(q), model.PX(q))
-    ut.transform(ut_work, f)
+    ut.transform(model.v(), model.Pv(), f)
     analytical_x, analytical_Px = ut.transform_diff(
-        ut_work, df_dq, df_dx, model.dX_dq(q), model.dPX_dq(q)
+        df_dq, df_dx, model.dv_dq(), model.dPv_dq()
     )
     assert ArrayDiff(numerical_x, analytical_x) < 1e-8
     assert ArrayDiff(numerical_Px, analytical_Px) < 1e-8
 
 
-def test_ut_pred_diff(ukf, ut, model, q):
+def test_ut_pred_diff(parametrized_ukf, ut, model, q):
     if not hasattr(ut, 'sqrt_diff'):
         pytest.skip("UT square-root derivative not implemented yet.")
-        
-    work = ukf.Work(model.X(q), model.PX(q))
-    work.dx_dq = model.dX_dq(q)
-    work.dPx_dq = model.dPX_dq(q)
-    ukf.predict(work)
-    ukf.prediction_diff(work)
-    analytical_x = work.dx_dq
-    analytical_Px = work.dPx_dq
 
     def pred(q):
-        ukf.model = model.parametrize(q=q)
-        work = ukf.Work(model.X(q), model.PX(q))
+        ukf = parametrized_ukf(q)
         ukf.predict(work)
-        return work
+        return ukf
     numerical_x = utils.central_diff(lambda q: pred(q).x, q)
     numerical_Px = utils.central_diff(lambda q: pred(q).Px, q)
-    
+
+    ukf = parametrized_ukf(q)
+    ukf.predict()
+    ukf.prediction_diff()
+    analytical_x = ukf.dx_dq
+    analytical_Px = ukf.dPx_dq
     assert ArrayDiff(numerical_x, analytical_x) < 1e-8
     assert ArrayDiff(numerical_Px, analytical_Px) < 5e-8
 
 
-def test_ut_corr_diff(ukf, ut, model, q, y):
+def test_ut_corr_diff(parametrized_ukf, ut, model, q, y):
     if not hasattr(ut, 'sqrt_diff'):
         pytest.skip("UT square-root derivative not implemented yet.")
-
-    work = ukf.Work(model.X(q), model.PX(q))
-    work.L = 0.0
-    work.dL_dq = np.zeros_like(q)
-    work.dx_dq = model.dX_dq(q)
-    work.dPx_dq = model.dPX_dq(q)
-    ukf.correct(work, y)
-    ukf.update_likelihood(work)
-    ukf.correction_diff(work)
-    ukf.likelihood_diff(work)
-    analytical_L = work.dL_dq
-    analytical_x = work.dx_dq
-    analytical_Px = work.dPx_dq
-    
+        
     def corr(q):
-        ukf.model = model.parametrize(q=q)
-        work = ukf.Work(model.X(q), model.PX(q))
-        work.L = 0.0
-        ukf.correct(work, y)
-        ukf.update_likelihood(work)
-        return work
+        ukf = parametrized_ukf(q)
+        ukf.correct(y)
+        ukf.update_likelihood()
+        return ukf
     numerical_L = utils.central_diff(lambda q: corr(q).L, q)
     numerical_x = utils.central_diff(lambda q: corr(q).x, q)
     numerical_Px = utils.central_diff(lambda q: corr(q).Px, q)
     
+    ukf = parametrized_ukf(q)
+    ukf.correct(y)
+    ukf.update_likelihood()
+    ukf.correction_diff()
+    ukf.likelihood_diff()
+    analytical_L = ukf.dL_dq
+    analytical_x = ukf.dx_dq
+    analytical_Px = ukf.dPx_dq
     assert ArrayDiff(numerical_L, analytical_L) < 1e-8
     assert ArrayDiff(numerical_x, analytical_x) < 5e-8
     assert ArrayDiff(numerical_Px, analytical_Px) < 1e-7

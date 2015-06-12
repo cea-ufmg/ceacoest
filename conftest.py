@@ -6,10 +6,12 @@ import pytest
 
 
 project_root = os.path.dirname(__file__)
-setup_file_path = os.path.join(project_root, 'setup.py')
+setup_file = os.path.join(project_root, 'setup.py')
+examples_dir = os.path.join(project_root, 'examples')
 
 
 def pytest_ignore_collect(path, config):
-    if path == setup_file_path:
+    if path == setup_file:
         return True
-
+    if path == examples_dir:
+        return True

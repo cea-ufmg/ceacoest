@@ -318,7 +318,7 @@ class DifferentiableCholesky:
         A_tril_inv = scipy.linalg.inv(A_tril)
         
         dQ_dq_tril = dQ_dq[..., i, j]
-        dS_dq_tril = np.einsum('ab,...b->...a', A_tril_inv, dQ_dq_tril)
+        dS_dq_tril = np.einsum('ij,aj->ai', A_tril_inv, dQ_dq_tril)
         dS_dq = np.zeros((nq, ni, ni))
         dS_dq[..., j, i] = dS_dq_tril
         return dS_dq
