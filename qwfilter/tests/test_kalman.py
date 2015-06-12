@@ -451,9 +451,9 @@ def test_ut_corr_diff2(parametrized_ukf, ut, model, q, y):
     ukf.correction_diff2()
     ukf.likelihood_diff()
     ukf.likelihood_diff2()
-    analytical_L = ukf.dL_dq
+    analytical_L = ukf.d2L_dq2
     analytical_x = ukf.d2x_dq2
     analytical_Px = ukf.d2Px_dq2
-    assert ArrayDiff(numerical_L, analytical_L) < 5e-8
+    assert ArrayDiff(numerical_L, analytical_L) < 1e-7
     assert ArrayDiff(numerical_x, analytical_x) < 1e-7
     assert ArrayDiff(numerical_Px, analytical_Px) < 1e-7

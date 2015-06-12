@@ -688,6 +688,7 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         self.d2L_dq2 -= 0.5 * np.einsum('i,aij,bj', e, dPyI_dq, de_dq)
         self.d2L_dq2 -= 0.5 * np.einsum('i,ij,abj', e, PyI, d2e_dq2)
 
+
 class DTUnscentedKalmanFilter(DTUnscentedPredictor, DTUnscentedCorrector):
     pass
 
