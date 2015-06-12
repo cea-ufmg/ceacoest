@@ -105,11 +105,11 @@ def model_class(nx, nq):
         
         derivatives = [('df_dx', 'f', 'x'), ('df_dq', 'f', 'q'),
                        ('d2f_dx2', 'df_dx',  'x'), 
-                       ('d2f_dq_dx', 'df_dx', 'q'),
+                       ('d2f_dx_dq', 'df_dx', 'q'),
                        ('d2f_dq2', 'df_dq',  'q'),
                        ('dQ_dx', 'Q', 'x'), ('dQ_dq', 'Q', 'q'),
                        ('d2Q_dx2', 'dQ_dx',  'x'), 
-                       ('d2Q_dq_dx', 'dQ_dx', 'q'),
+                       ('d2Q_dx_dq', 'dQ_dx', 'q'),
                        ('d2Q_dq2', 'dQ_dq',  'q'),
                        ('dh_dx', 'h', 'x'), ('dh_dq', 'h', 'q'),
                        ('dR_dq', 'R', 'q'),
@@ -296,8 +296,6 @@ def test_ut_diff(ut, model, x, q):
     if not hasattr(ut, 'sqrt_diff'):
         pytest.skip("Square-root derivative not implemented yet.")
     
-    def f(x):
-        return model.f(x=x)
     def df_dx(x):
         return model.df_dx(x=x)
     def df_dq(x):
@@ -309,12 +307,47 @@ def test_ut_diff(ut, model, x, q):
     numerical_x = utils.central_diff(lambda q: transform(q)[0], q)
     numerical_Px = utils.central_diff(lambda q: transform(q)[1], q)
     
-    ut.transform(model.v(), model.Pv(), f)
+    ut.transform(model.v(), model.Pv(), lambda x: model.f(x=x))
     analytical_x, analytical_Px = ut.transform_diff(
         df_dq, df_dx, model.dv_dq(), model.dPv_dq()
     )
     assert ArrayDiff(numerical_x, analytical_x) < 1e-8
     assert ArrayDiff(numerical_Px, analytical_Px) < 1e-8
+
+
+def test_ut_diff2(ut, model, x, q):
+    """Test the derivative of the unscented transform sigma points."""
+    if not hasattr(ut, 'sqrt_diff'):
+        pytest.skip("Square-root derivative not implemented yet.")
+    
+    def df_dx(x):
+        return model.df_dx(x=x)
+    def df_dq(x):
+        return model.df_dq(x=x)
+    def d2f_dq2(x):
+        return model.d2f_dq2(x=x)
+    def d2f_dx2(x):
+        return model.d2f_dx2(x=x)
+    def d2f_dx_dq(x):
+        return model.d2f_dx_dq(x=x)
+    
+    def transform(q):
+        mq = model.parametrize(q=q)
+        ut.transform(mq.v(), mq.Pv(), lambda x: mq.f(x=x))
+        return ut.transform_diff(
+            lambda x: mq.df_dq(x=x), lambda x: mq.df_dx(x=x), 
+            mq.dv_dq(), mq.dPv_dq()
+        )
+    numerical_x = utils.central_diff(lambda q: transform(q)[0], q)
+    numerical_Px = utils.central_diff(lambda q: transform(q)[1], q)
+    
+    ut.transform(model.v(), model.Pv(), lambda x: model.f(x=x))
+    ut.transform_diff(df_dq, df_dx, model.dv_dq(), model.dPv_dq())
+    analytical_x, analytical_Px = ut.transform_diff2(
+        d2f_dq2, d2f_dx2, d2f_dx_dq, model.d2v_dq2(), model.d2Pv_dq2()
+    )
+    assert ArrayDiff(numerical_x, analytical_x) < 1e-8
+    assert ArrayDiff(numerical_Px, analytical_Px) < 5e-8
 
 
 def test_ut_pred_diff(parametrized_ukf, ut, model, q):

@@ -9,7 +9,7 @@ TODO
 
 Improvement ideas
 -----------------
-* Allow gradients and Hessian to be calculated offline, saving processing time
+* Allow gradients and Hessian to be calculated offline, saving processing time  
   at the cost of memory.
 
 """
@@ -215,21 +215,44 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
     def transform_diff(self, df_dq, df_di, di_dq, dPi_dq):
         weights = self.weights
         isigma = self.isigma
+        self.df_di = df_di(isigma)
         
         disigma_dq = self.sigma_points_diff(di_dq, dPi_dq)
-        Dosigma_Dq = np.einsum('ijk,ilj->ilk', df_di(isigma), disigma_dq)
-        Dosigma_Dq += df_dq(isigma)
+        Dosigma_Dq = df_dq(isigma)
+        Dosigma_Dq += np.einsum('kif,kai->kaf', self.df_di, disigma_dq)
         
         do_dq = np.einsum('k,k...', weights, Dosigma_Dq)
         dodev_dq = Dosigma_Dq - do_dq
         dPo_dq = np.einsum('klj,ki,k->lij', dodev_dq, self.odev, weights)
         dPo_dq += np.swapaxes(dPo_dq, -1, -2)
         
-        self.Dosigma_Dq = Dosigma_Dq
+        self.disigma_dq = disigma_dq
         self.dodev_dq = dodev_dq
         self.do_dq = do_dq
         self.dPo_dq = dPo_dq
         return (do_dq, dPo_dq)
+    
+    def transform_diff2(self, d2f_dq2, d2f_di2, d2f_di_dq, d2i_dq2, d2Pi_dq2):
+        weights = self.weights
+        isigma = self.isigma
+        disigma_dq = self.disigma_dq
+        dodev_dq = self.dodev_dq
+        
+        d2isigma_dq2 = self.sigma_points_diff2(d2i_dq2, d2Pi_dq2)
+        D2osigma_Dq2 = np.einsum('kaif,kbi->kbaf',
+                                 d2f_di_dq(isigma), disigma_dq)
+        D2osigma_Dq2 += np.swapaxes(D2osigma_Dq2, -2, -3)
+        D2osigma_Dq2 += d2f_dq2(isigma)
+        D2osigma_Dq2 += np.einsum('kijf,kai,kbj->kbaf', d2f_di2(isigma), 
+                                  disigma_dq, disigma_dq)
+        D2osigma_Dq2 += np.einsum('kif,kbai->kbaf', self.df_di, d2isigma_dq2)
+        
+        d2o_dq2 = np.einsum('k,k...', weights, D2osigma_Dq2)
+        d2odev_dq2 = D2osigma_Dq2 - d2o_dq2
+        d2Po_dq2 = np.einsum('kbai,kj,k->baij', d2odev_dq2, self.odev, weights)
+        d2Po_dq2 += np.einsum('kai,kbj,k->baij', dodev_dq, dodev_dq, weights)
+        d2Po_dq2 += np.swapaxes(d2Po_dq2, -1, -2)
+        return (d2o_dq2, d2Po_dq2)
     
     def crosscov(self):
         return np.einsum('ki,kj,k', self.idev, self.odev, self.weights)

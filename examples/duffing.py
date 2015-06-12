@@ -62,11 +62,11 @@ class SymbolicDuffing(sde.SymbolicModel):
 class SymbolicDTDuffing(SymbolicDuffing, sde.ItoTaylorAS15DiscretizedModel):
     derivatives = [('df_dx', 'f', 'x'), ('df_dq', 'f', 'q'),
                    ('d2f_dx2', 'df_dx',  'x'), 
-                   ('d2f_dq_dx', 'df_dx', 'q'),
+                   ('d2f_dx_dq', 'df_dx', 'q'),
                    ('d2f_dq2', 'df_dq',  'q'),
                    ('dQ_dx', 'Q', 'x'), ('dQ_dq', 'Q', 'q'),
                    ('d2Q_dx2', 'dQ_dx',  'x'), 
-                   ('d2Q_dq_dx', 'dQ_dx', 'q'),
+                   ('d2Q_dx_dq', 'dQ_dx', 'q'),
                    ('d2Q_dq2', 'dQ_dq',  'q'),
                    ('dh_dx', 'h', 'x'), ('dh_dq', 'h', 'q'),
                    ('dR_dq', 'R', 'q'),]
