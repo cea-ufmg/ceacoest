@@ -195,6 +195,7 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
         d2idev_dq2[:ni] = np.rollaxis(d2S_dq2, -2)
         d2idev_dq2[ni:(2 * ni)] = -d2idev_dq2[:ni]
         d2isigma_dq2 = d2idev_dq2 + d2i_dq2
+        self.d2idev_dq2 = d2idev_dq2
         return d2isigma_dq2
     
     def transform(self, i, Pi, f):
@@ -252,6 +253,7 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
         d2Po_dq2 = np.einsum('kbai,kj,k->baij', d2odev_dq2, self.odev, weights)
         d2Po_dq2 += np.einsum('kai,kbj,k->baij', dodev_dq, dodev_dq, weights)
         d2Po_dq2 += np.swapaxes(d2Po_dq2, -1, -2)
+        self.d2odev_dq2 = d2odev_dq2
         return (d2o_dq2, d2Po_dq2)
     
     def crosscov(self):
@@ -263,6 +265,16 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
         dPio_dq += np.einsum('ki,klj,k->lij', 
                              self.idev, self.dodev_dq, self.weights)
         return dPio_dq
+
+    def crosscov_diff2(self):
+        d2Pio_dq2 = np.einsum('kai,kbj,k->baij', 
+                              self.didev_dq, self.dodev_dq, self.weights)
+        d2Pio_dq2 += np.swapaxes(d2Pio_dq2, -3, -4)
+        d2Pio_dq2 += np.einsum('kbai,kj,k->baij', 
+                               self.d2idev_dq2, self.odev, self.weights)
+        d2Pio_dq2 += np.einsum('ki,kbaj,k->baij', 
+                               self.idev, self.d2odev_dq2, self.weights)
+        return d2Pio_dq2
 
 
 class SVDUnscentedTransform(UnscentedTransformBase):

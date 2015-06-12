@@ -334,20 +334,25 @@ def test_ut_diff2(ut, model, x, q):
     def transform(q):
         mq = model.parametrize(q=q)
         ut.transform(mq.v(), mq.Pv(), lambda x: mq.f(x=x))
-        return ut.transform_diff(
+        ut.crosscov()
+        diff_out = ut.transform_diff(
             lambda x: mq.df_dq(x=x), lambda x: mq.df_dx(x=x), 
             mq.dv_dq(), mq.dPv_dq()
         )
+        return diff_out + (ut.crosscov_diff(),)
     numerical_x = utils.central_diff(lambda q: transform(q)[0], q)
     numerical_Px = utils.central_diff(lambda q: transform(q)[1], q)
+    numerical_Pio = utils.central_diff(lambda q: transform(q)[2], q)
     
     ut.transform(model.v(), model.Pv(), lambda x: model.f(x=x))
     ut.transform_diff(df_dq, df_dx, model.dv_dq(), model.dPv_dq())
     analytical_x, analytical_Px = ut.transform_diff2(
         d2f_dq2, d2f_dx2, d2f_dx_dq, model.d2v_dq2(), model.d2Pv_dq2()
     )
+    analytical_Pio = ut.crosscov_diff2()
     assert ArrayDiff(numerical_x, analytical_x) < 1e-8
     assert ArrayDiff(numerical_Px, analytical_Px) < 5e-8
+    assert ArrayDiff(numerical_Pio, analytical_Pio) < 5e-8
 
 
 def test_ut_pred_diff(parametrized_ukf, ut, model, q):
