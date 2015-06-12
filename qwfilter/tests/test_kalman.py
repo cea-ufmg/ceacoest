@@ -113,8 +113,8 @@ def model_class(nx, nq):
                        ('d2Q_dq2', 'dQ_dq',  'q'),
                        ('dh_dx', 'h', 'x'), ('dh_dq', 'h', 'q'),
                        ('dR_dq', 'R', 'q'),
-                       ('dv_dq', 'v', 'q'),
-                       ('dPv_dq', 'Pv', 'q'),]
+                       ('dv_dq', 'v', 'q'), ('d2v_dq2', 'dv_dq', 'q'),
+                       ('dPv_dq', 'Pv', 'q'), ('d2Pv_dq2', 'dPv_dq', 'q')]
         '''List of the model function derivatives to calculate / generate.'''
         
         k = 'k'
@@ -214,6 +214,22 @@ def test_ut_sqrt_diff(ut, model, q):
     
     ut.sqrt(model.Pv(q))
     analytical = ut.sqrt_diff(model.dPv_dq(q))
+    assert ArrayDiff(numerical, analytical) < 1e-8
+
+
+def test_ut_sqrt_diff2(ut, model, q):
+    """Check the derivative of the unscented transform square root."""
+    if not hasattr(ut, 'sqrt_diff'):
+        pytest.skip("Square-root derivative not implemented yet.")
+    
+    def dS_dq(q):
+        ut.sqrt(model.Pv(q))
+        return ut.sqrt_diff(model.dPv_dq(q))
+    numerical = utils.central_diff(dS_dq, q)
+    
+    ut.sqrt(model.Pv(q))
+    ut.sqrt_diff(model.dPv_dq(q))
+    analytical = ut.sqrt_diff2(model.d2Pv_dq2(q))
     assert ArrayDiff(numerical, analytical) < 1e-8
 
 

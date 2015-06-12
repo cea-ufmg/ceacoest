@@ -118,34 +118,6 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         return self.dL_dq
 
 
-def cholesky_sqrt_diff2(S, d2Q, work):
-    """Second derivatives of lower triangular Cholesky decomposition."""
-    S = np.asarray(S)
-    dQ = work['dQ']
-    dS = work['dS']
-        
-    n = S.shape[-1]
-    m = dQ.shape[0]
-    (i, j, k) = work['i j k']
-    (ix, jx, kx) = work['ix jx kx']
-    dQ_tril = work['dQ_tril']
-    A_tril = work['A_tril']
-    A_tril_inv = work['A_tril_inv']
-    
-    dA = np.zeros((m, n, n, n, n))
-    dA[:, ix, jx, ix, kx] = dS[:, kx, jx]
-    dA[:, ix, jx, jx, kx] += dS[:, kx, ix]
-    dA_tril = dA[:, i, j][..., i, j]
-    dA_tril_inv = -np.einsum('ij,ajk,kl', A_tril_inv, dA_tril, A_tril_inv)
-
-    d2Q_tril = d2Q[..., i, j]
-    d2S_tril = np.einsum('aij,...j->a...i', dA_tril_inv, dQ_tril)
-    d2S_tril += np.einsum('ij,...j->...i', A_tril_inv, d2Q_tril)
-    d2S = np.zeros(d2Q_tril.shape[:-1] + (n, n))
-    d2S[..., j, i] = d2S_tril
-    return d2S
-
-
 class UnscentedTransformBase(metaclass=abc.ABCMeta):
     """Unscented transform base class."""
     
@@ -271,23 +243,23 @@ class SVDUnscentedTransform(UnscentedTransformBase):
 
 class DifferentiableCholesky:
     
-    gradient_data_initialized = 0
+    diff_data_initialized = 0
 
-    def initialize_gradient_data(self, ni):
-        if self.gradient_data_initialized == ni:
+    def initialize_diff_data(self, ni):
+        if self.diff_data_initialized == ni:
             return
         
         self.ni_range = np.arange(ni)
         self.ni_tril_indices = np.tril_indices(ni)
-        self.gradient_data_initialized = ni
+        self.diff_data_initialized = ni
  
     def __call__(self, Q):
-        """Perform the Cholesky decomposition."""
+        """Perform the upper triangular Cholesky decomposition."""
         self.S = scipy.linalg.cholesky(Q, lower=False)
         return self.S
     
     def diff(self, dQ_dq):
-        """Derivatives of Cholesky decomposition.
+        """Derivatives of upper triangular Cholesky decomposition.
         
         Parameters
         ----------
@@ -305,7 +277,7 @@ class DifferentiableCholesky:
         """
         nq = len(dQ_dq)
         ni = len(self.S)
-        self.initialize_gradient_data(ni)
+        self.initialize_diff_data(ni)
         
         k = self.ni_range
         i, j = self.ni_tril_indices
@@ -314,14 +286,42 @@ class DifferentiableCholesky:
         A = np.zeros((ni, ni, ni, ni))
         A[ix, jx, ix, kx] = self.S[kx, jx]
         A[ix, jx, jx, kx] += self.S[kx, ix]
-        A_tril = A[i, j][..., i, j]
-        A_tril_inv = scipy.linalg.inv(A_tril)
+        AL = A[i, j][..., i, j]
+        ALI = scipy.linalg.inv(AL)
         
-        dQ_dq_tril = dQ_dq[..., i, j]
-        dS_dq_tril = np.einsum('ij,aj->ai', A_tril_inv, dQ_dq_tril)
+        dQL_dq = dQ_dq[..., i, j]
+        dSL_dq = np.einsum('ij,bj->bi', ALI, dQL_dq)
         dS_dq = np.zeros((nq, ni, ni))
-        dS_dq[..., j, i] = dS_dq_tril
+        dS_dq[..., j, i] = dSL_dq
+        
+        self.dQL_dq = dQL_dq
+        self.dS_dq = dS_dq
+        self.AL = AL
+        self.ALI = ALI
         return dS_dq
+    
+    def diff2(self, d2Q_dq2):
+        """Second derivatives of upper triangular Cholesky decomposition."""
+        nq = len(d2Q_dq2)
+        ni = len(self.S)
+        self.initialize_diff_data(ni)
+        
+        k = self.ni_range
+        i, j = self.ni_tril_indices
+        ix, jx, kx = np.ix_(i, j, k)
+        
+        dA_dq = np.zeros((nq, ni, ni, ni, ni))
+        dA_dq[..., ix, jx, ix, kx] = self.dS_dq[..., kx, jx]
+        dA_dq[..., ix, jx, jx, kx] += self.dS_dq[..., kx, ix]
+        dAL_dq = dA_dq[:, i, j][..., i, j]
+        dALI_dq = -np.einsum('ij,ajk,kl', self.ALI, dAL_dq, self.ALI)
+
+        d2QL_dq2 = d2Q_dq2[..., i, j]
+        d2SL_dq2 = np.einsum('ij,abj', self.ALI, d2QL_dq2)
+        d2SL_dq2 += np.einsum('aij,bj', dALI_dq, self.dQL_dq)
+        d2S_dq2 = np.zeros((nq, nq, ni, ni))
+        d2S_dq2[..., j, i] = d2SL_dq2
+        return d2S_dq2
 
 
 class CholeskyUnscentedTransform(UnscentedTransformBase):
@@ -336,8 +336,12 @@ class CholeskyUnscentedTransform(UnscentedTransformBase):
         return self.cholesky(Q)
     
     def sqrt_diff(self, dQ_dq):
-        """Derivatives of Unscented transform Cholesky decomposition."""
+        """Derivatives of unscented transform Cholesky decomposition."""
         return self.cholesky.diff(dQ_dq)
+
+    def sqrt_diff2(self, d2Q_dq2):
+        """Second derivatives of unscented transform Cholesky decomposition."""
+        return self.cholesky.diff2(d2Q_dq2)
 
 
 def choose_ut_transform_class(options):
