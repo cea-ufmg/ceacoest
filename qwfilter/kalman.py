@@ -185,6 +185,17 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
         self.didev_dq = didev_dq
         self.disigma_dq = disigma_dq
         return disigma_dq
+
+    def sigma_points_diff2(self, d2i_dq2, d2Pi_dq2):
+        """Derivative of sigma-points."""
+        ni = self.ni
+        
+        d2S_dq2 = self.sqrt_diff2((ni + self.kappa) * d2Pi_dq2)
+        d2idev_dq2 = np.zeros((self.nsigma,) + d2i_dq2.shape)
+        d2idev_dq2[:ni] = np.rollaxis(d2S_dq2, -2)
+        d2idev_dq2[ni:(2 * ni)] = -d2idev_dq2[:ni]
+        d2isigma_dq2 = d2idev_dq2 + d2i_dq2
+        return d2isigma_dq2
     
     def transform(self, i, Pi, f):
         isigma = self.sigma_points(i, Pi)

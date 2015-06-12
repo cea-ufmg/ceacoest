@@ -219,7 +219,7 @@ def test_ut_sqrt_diff(ut, model, q):
 
 def test_ut_sqrt_diff2(ut, model, q):
     """Check the derivative of the unscented transform square root."""
-    if not hasattr(ut, 'sqrt_diff'):
+    if not hasattr(ut, 'sqrt_diff2'):
         pytest.skip("Square-root derivative not implemented yet.")
     
     def dS_dq(q):
@@ -269,8 +269,25 @@ def test_sigma_points_diff(ut, model, q):
     numerical = utils.central_diff(sigma, q)
     numerical = np.rollaxis(numerical, -2)
     
-    ut.sigma_points(model.v(q), model.Pv(q))
-    analytical = ut.sigma_points_diff(model.dv_dq(q), model.dPv_dq(q))
+    ut.sigma_points(model.v(), model.Pv())
+    analytical = ut.sigma_points_diff(model.dv_dq(), model.dPv_dq())
+    assert ArrayDiff(numerical, analytical) < 1e-8
+
+
+def test_sigma_points_diff2(ut, model, q):
+    """Test the derivative of the unscented transform sigma points."""
+    if not hasattr(ut, 'sqrt_diff2'):
+        pytest.skip("Square-root derivative not implemented yet.")
+    
+    def dsigma_dq(q):
+        ut.sigma_points(model.v(q), model.Pv(q))
+        return ut.sigma_points_diff(model.dv_dq(q), model.dPv_dq(q))
+    numerical = utils.central_diff(dsigma_dq, q)
+    numerical = np.rollaxis(numerical, -3)
+    
+    ut.sigma_points(model.v(), model.Pv())
+    ut.sigma_points_diff(model.dv_dq(), model.dPv_dq())
+    analytical = ut.sigma_points_diff2(model.d2v_dq2(), model.d2Pv_dq2())
     assert ArrayDiff(numerical, analytical) < 1e-8
 
 
