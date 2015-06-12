@@ -186,10 +186,13 @@ def model(model_class, x, q, cov):
 @pytest.fixture
 def parametrized_ukf(model, ut_kappa, ut_sqrt):
     def factory(q):
-        mq = model.parametrize(q)
-        return kalman.DTUnscentedKalmanFilter(
+        mq = model.parametrize(q=q)
+        ukf = kalman.DTUnscentedKalmanFilter(
             mq, mq.v(), mq.Pv(), kappa=ut_kappa, sqrt=ut_sqrt
         )
+        ukf.dx_dq = model.dv_dq()
+        ukf.dPx_dq = model.dPv_dq()
+        return ukf
     return factory
 
 
@@ -214,16 +217,6 @@ def test_ut_sqrt_diff(ut, model, q):
     assert ArrayDiff(numerical, analytical) < 1e-8
 
 
-def test_sigma_points(ut, x, cov):
-    """Test if the mean and covariance of the sigma-points is sane."""
-    sigma = ut.sigma_points(x, cov)
-    ut_mean = np.dot(ut.weights, sigma)
-    assert ArrayDiff(ut_mean, x) < 1e-8
-    
-    ut_cov = np.einsum('ki,kj,k', ut.idev, ut.idev, ut.weights)
-    assert ArrayDiff(ut_cov, cov) < 1e-8
-
-
 def test_affine_ut(ut, x, cov, A, nx):
     """Test the unscented transform of an affine function."""
     f = lambda x: np.dot(x, A.T) + np.arange(nx)
@@ -238,6 +231,16 @@ def test_affine_ut(ut, x, cov, A, nx):
     ut_crosscov = ut.crosscov()
     desired_crosscov = np.dot(cov, A.T)
     assert ArrayDiff(ut_crosscov, desired_crosscov) < 1e-8
+
+
+def test_sigma_points(ut, x, cov):
+    """Test if the mean and covariance of the sigma-points is sane."""
+    sigma = ut.sigma_points(x, cov)
+    ut_mean = np.dot(ut.weights, sigma)
+    assert ArrayDiff(ut_mean, x) < 1e-8
+    
+    ut_cov = np.einsum('ki,kj,k', ut.idev, ut.idev, ut.weights)
+    assert ArrayDiff(ut_cov, cov) < 1e-8
 
 
 def test_sigma_points_diff(ut, model, q):
@@ -287,7 +290,7 @@ def test_ut_pred_diff(parametrized_ukf, ut, model, q):
 
     def pred(q):
         ukf = parametrized_ukf(q)
-        ukf.predict(work)
+        ukf.predict()
         return ukf
     numerical_x = utils.central_diff(lambda q: pred(q).x, q)
     numerical_Px = utils.central_diff(lambda q: pred(q).Px, q)
@@ -322,6 +325,6 @@ def test_ut_corr_diff(parametrized_ukf, ut, model, q, y):
     analytical_L = ukf.dL_dq
     analytical_x = ukf.dx_dq
     analytical_Px = ukf.dPx_dq
-    assert ArrayDiff(numerical_L, analytical_L) < 1e-8
+    assert ArrayDiff(numerical_L, analytical_L) < 5e-8
     assert ArrayDiff(numerical_x, analytical_x) < 5e-8
     assert ArrayDiff(numerical_Px, analytical_Px) < 1e-7

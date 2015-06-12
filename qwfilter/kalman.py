@@ -500,9 +500,9 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         def dh_dx_fun(x):
             return self.model.dh_dx(self.k, x)[..., self.active]
         Dh_Dq, DPh_Dq = self.__ut.transform_diff(
-            self.corr_ut, dh_dq_fun, dh_dx_fun, self.dx_dq, self.dPx_dq
+            dh_dq_fun, dh_dx_fun, self.dx_dq, self.dPx_dq
         )
-        dPxh_dq = self.__ut.crosscov_diff(self.corr_ut)
+        dPxh_dq = self.__ut.crosscov_diff()
         dR_dq = self.model.dR_dq()[(...,) + np.ix_(self.active, self.active)]
 
         # Calculate the correction derivatives
