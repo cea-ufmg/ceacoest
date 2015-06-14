@@ -126,6 +126,24 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         
         return self.dL_dq
 
+    def pem_hessian(self, y):
+        y = np.asanyarray(y)
+        N = len(y)
+        
+        for k in range(N):
+            self.correct(y[k])
+            self.correction_diff()
+            self.correction_diff2()
+            self.update_likelihood()
+            self.likelihood_diff()
+            self.likelihood_diff2()
+            if k < N - 1:
+                self.predict()
+                self.prediction_diff()
+                self.prediction_diff2()
+        
+        return self.d2L_dq2
+
 
 class UnscentedTransformBase(metaclass=abc.ABCMeta):
     """Unscented transform base class."""
@@ -576,10 +594,10 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         self.prev_dPx_dq = self.dPx_dq.copy()
         self.dx_dq += np.einsum('...aij,...j', dK_dq, self.e)
         self.dx_dq += np.einsum('...ij,...aj', self.K, de_dq)
-        self.dPx_dq -= np.einsum('...aik,...jl,...lk', dK_dq, self.K, self.Py)
-        self.dPx_dq -= np.einsum('...ik,...ajl,...lk', self.K, dK_dq, self.Py)
         self.dPx_dq -= np.einsum('...ik,...jl,...alk', self.K, self.K, dPy_dq)
-
+        dK_dq__K__Py = np.einsum('...aik,...jl,...lk', dK_dq, self.K, self.Py)
+        self.dPx_dq -= dK_dq__K__Py + np.swapaxes(dK_dq__K__Py, -1, -2)
+    
     def correction_diff2(self):
         """Calculate the second derivatives of the correction."""
         if not np.any(self.active):
@@ -620,12 +638,12 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         self.d2x_dq2 += np.einsum('ij,abj', K, d2e_dq2)
         self.d2Px_dq2 -= np.einsum('abik,jl,lk', d2K_dq2, K, self.Py)
         self.d2Px_dq2 -= np.einsum('bik,ajl,lk', dK_dq, dK_dq, self.Py)
-        self.d2Px_dq2 -= np.einsum('bik,jl,alk', dK_dq, K, dPy_dq)
         self.d2Px_dq2 -= np.einsum('aik,bjl,lk', dK_dq, dK_dq, self.Py)
+        dK_dq__K__dPy_dq = np.einsum('bik,jl,alk', dK_dq, K, dPy_dq)
+        dK_dq__K__dPy_dq += np.swapaxes(dK_dq__K__dPy_dq, -2, -1)
+        dK_dq__K__dPy_dq += np.swapaxes(dK_dq__K__dPy_dq, -3, -4)
+        self.d2Px_dq2 -= dK_dq__K__dPy_dq
         self.d2Px_dq2 -= np.einsum('ik,abjl,lk', K, d2K_dq2, self.Py)
-        self.d2Px_dq2 -= np.einsum('ik,bjl,alk', K, dK_dq, dPy_dq)
-        self.d2Px_dq2 -= np.einsum('aik,jl,blk', dK_dq, K, dPy_dq)
-        self.d2Px_dq2 -= np.einsum('ik,ajl,blk', K, dK_dq, dPy_dq)
         self.d2Px_dq2 -= np.einsum('ik,jl,ablk', K, K, d2Py_dq2)
         self.d2e_dq2 = d2e_dq2
         self.d2Py_dq2 = d2Py_dq2
@@ -655,9 +673,8 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         dPyC_dq = self.__chol.diff(self.dPy_dq)
         self.dPyCD_dq = np.einsum('...kk->...k', dPyC_dq)
         self.dL_dq -= np.sum(self.dPyCD_dq / self.PyCD, axis=-1)
-        self.dL_dq -= 0.5 * np.einsum('...ai,...ij,...j', de_dq, PyI, e)
+        self.dL_dq -= np.einsum('...ai,...ij,...j', de_dq, PyI, e)
         self.dL_dq -= 0.5 * np.einsum('...i,...aij,...j', e, dPyI_dq, e)
-        self.dL_dq -= 0.5 * np.einsum('...i,...ij,...aj', e, PyI, de_dq)
     
     def likelihood_diff2(self):
         """Calculate measurement log-likelihood derivatives."""
@@ -678,15 +695,12 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         d2PyCD_dq2 = np.einsum('...kk->...k', d2PyC_dq2)
         self.d2L_dq2 -= np.sum(d2PyCD_dq2 / self.PyCD, axis=-1)
         self.d2L_dq2 += np.einsum('ak,bk', dPyCD_dq, dPyCD_dq / self.PyCD**2)
-        self.d2L_dq2 -= 0.5 * np.einsum('abi,ij,j', d2e_dq2, PyI, e)
-        self.d2L_dq2 -= 0.5 * np.einsum('bi,aij,j', de_dq, dPyI_dq, e)
-        self.d2L_dq2 -= 0.5 * np.einsum('bi,ij,aj', de_dq, PyI, de_dq)
-        self.d2L_dq2 -= 0.5 * np.einsum('ai,bij,j', de_dq, dPyI_dq, e)
+        self.d2L_dq2 -= np.einsum('ai,ij,bj', de_dq, PyI, de_dq)
+        self.d2L_dq2 -= np.einsum('abi,ij,j', d2e_dq2, PyI, e)
         self.d2L_dq2 -= 0.5 * np.einsum('i,abij,j', e, d2PyI_dq2, e)
-        self.d2L_dq2 -= 0.5 * np.einsum('i,bij,aj', e, dPyI_dq, de_dq)
-        self.d2L_dq2 -= 0.5 * np.einsum('ai,ij,bj', de_dq, PyI, de_dq)
-        self.d2L_dq2 -= 0.5 * np.einsum('i,aij,bj', e, dPyI_dq, de_dq)
-        self.d2L_dq2 -= 0.5 * np.einsum('i,ij,abj', e, PyI, d2e_dq2)
+        de_dq__dPyI_dq__e = np.einsum('ai,bij,j', de_dq, dPyI_dq, e)
+        self.d2L_dq2 -= de_dq__dPyI_dq__e
+        self.d2L_dq2 -= de_dq__dPyI_dq__e.T
 
 
 class DTUnscentedKalmanFilter(DTUnscentedPredictor, DTUnscentedCorrector):

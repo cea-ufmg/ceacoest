@@ -69,7 +69,10 @@ class SymbolicDTDuffing(SymbolicDuffing, sde.ItoTaylorAS15DiscretizedModel):
                    ('d2Q_dx_dq', 'dQ_dx', 'q'),
                    ('d2Q_dq2', 'dQ_dq',  'q'),
                    ('dh_dx', 'h', 'x'), ('dh_dq', 'h', 'q'),
-                   ('dR_dq', 'R', 'q'),]
+                   ('d2h_dx2', 'dh_dx',  'x'), 
+                   ('d2h_dx_dq', 'dh_dx', 'q'),
+                   ('d2h_dq2', 'dh_dq',  'q'),
+                   ('dR_dq', 'R', 'q'), ('d2R_dq2', 'dR_dq', 'q')]
     '''List of the model function derivatives to calculate / generate.'''
     
     dt = 'dt'
@@ -90,7 +93,7 @@ GeneratedDTDuffing = sym2num.class_obj(
 
 
 def sim():
-    np.random.seed(0)
+    np.random.seed(1)
 
     # Generate the time vector
     dt = 0.05
@@ -127,7 +130,6 @@ def sim():
 def pem(model, t, x, y, q):
     x0 = [1.2, 0.2]
     Px0 = np.diag([0.1, 0.1])
-    opts = dict(sqrt='cholesky')
     
     def merit(q, new=None):
         mq = model.parametrize(q=q)
@@ -139,11 +141,13 @@ def pem(model, t, x, y, q):
         kf = kalman.DTUnscentedKalmanFilter(mq, x0, Px0)
         return kf.pem_gradient(y)
     
+    hess_inds = np.tril_indices(model.nq)
     def hess(q, new_q=1, obj_factor=1, lmult=1, new_lmult=1):
-        return obj_factor * utils.central_diff(grad, q)[hess_inds]
+        mq = model.parametrize(q=q)
+        kf = kalman.DTUnscentedKalmanFilter(mq, x0, Px0)
+        return obj_factor * kf.pem_hessian(y)[hess_inds]
     
     q_bounds = np.tile([[-np.inf], [np.inf]], model.nq)
-    hess_inds = np.tril_indices(model.nq)
     problem = ipopt.Problem(q_bounds, merit, grad, 
                             hess=hess, hess_inds=hess_inds)
     problem.num_option(b'obj_scaling_factor', -1)

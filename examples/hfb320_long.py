@@ -95,11 +95,20 @@ class SymbolicModel(sde.SymbolicModel):
         return np.diag(self.pack('y', mng)) ** 2
 
 
-class SymbolicDTModel(SymbolicModel, sde.ItoTaylorAS15DiscretizedModel):
+class SymbolicDTModel(SymbolicModel, sde.EulerDiscretizedModel):
     derivatives = [('df_dx', 'f', 'x'), ('df_dq', 'f', 'q'),
+                   ('d2f_dx2', 'df_dx',  'x'), 
+                   ('d2f_dx_dq', 'df_dx', 'q'),
+                   ('d2f_dq2', 'df_dq',  'q'),
                    ('dQ_dx', 'Q', 'x'), ('dQ_dq', 'Q', 'q'),
+                   ('d2Q_dx2', 'dQ_dx',  'x'), 
+                   ('d2Q_dx_dq', 'dQ_dx', 'q'),
+                   ('d2Q_dq2', 'dQ_dq',  'q'),
                    ('dh_dx', 'h', 'x'), ('dh_dq', 'h', 'q'),
-                   ('dR_dq', 'R', 'q'),]
+                   ('d2h_dx2', 'dh_dx',  'x'), 
+                   ('d2h_dx_dq', 'dh_dx', 'q'),
+                   ('d2h_dq2', 'dh_dq',  'q'),
+                   ('dR_dq', 'R', 'q'), ('d2R_dq2', 'dR_dq', 'q')]
     '''List of the model function derivatives to calculate / generate.'''
     
     dt = 'dt'
@@ -152,24 +161,24 @@ def pem(t, u, y):
     sampled = dict(t=t, u=u)
     model = GeneratedDTModel(params, sampled)
     
-    opts = {'save_history': False}
     x0 = [1.06023e2, 1.11685e-1, 1.04887e-1, -3.32659e-3]
     Px0 = np.diag([1, 0.005, 0.01, 0.02]) ** 2
     
     def merit(q, new=None):
         mq = model.parametrize(q=q)
-        filter = kalman.DTUnscentedKalmanFilter(mq, x0, Px0, pem=True, **opts)
-        filter.filter(y)
-        return filter.L
+        kf = kalman.DTUnscentedKalmanFilter(mq, x0, Px0)
+        return kf.pem_merit(y)
     
     def grad(q, new=None):
         mq = model.parametrize(q=q)
-        filter = kalman.DTUnscentedKalmanFilter(mq, x0, Px0, pem='grad', **opts)
-        filter.filter(y)
-        return filter.dL_dq
+        kf = kalman.DTUnscentedKalmanFilter(mq, x0, Px0)
+        return kf.pem_gradient(y)
     
+    hess_inds = np.tril_indices(model.nq)
     def hess(q, new_q=1, obj_factor=1, lmult=1, new_lmult=1):
-        return obj_factor * utils.central_diff(grad, q)[hess_inds]
+        mq = model.parametrize(q=q)
+        kf = kalman.DTUnscentedKalmanFilter(mq, x0, Px0)
+        return obj_factor * kf.pem_hessian(y)[hess_inds]
     
     q_lb = dict(
         alpha_png=0, vT_png=0, q_png=0,
@@ -180,10 +189,12 @@ def pem(t, u, y):
     q_ub = dict()
     q_bounds = [model.pack('q', q_lb, fill=-np.inf),
                 model.pack('q', q_ub, fill=np.inf)]
-    hess_inds = np.tril_indices(model.nq)
     problem = ipopt.Problem(q_bounds, merit, grad, 
                             hess=hess, hess_inds=hess_inds)
     problem.num_option(b'obj_scaling_factor', -1)
     (qopt, solinfo) = problem.solve(q)
     return problem, qopt, solinfo
 
+#q = [1.24e-1, -6.57e-2, 3.14e-1, -1.30e-1, 1.65e-1, 4.52, 1.14e-1, 8.5e-3,
+#     -1.04, -4.87e1, -1.6, 2.51e-3, 3.37e-1, 2.45e-3, 6.09e-2, 1.64e-3,
+#     3.89e-4, 2.15e-2,  1.03e-2, 7.18e-2]
