@@ -40,10 +40,17 @@ def nq(request):
     return request.param
 
 
+@pytest.fixture(params=[(), (3,), (2, 3, 1, 1)], scope='module')
+def base_shape(request):
+    """Base shape of broadcasting."""
+    return request.param
+
+
 @pytest.fixture
-def x(seed, nx):
+def x(seed, nx, base_shape):
     """Random state vector."""
-    return np.random.randn(nx)
+    x_shape = base_shape + (nx,)
+    return np.random.randn(*x_shape)
 
 
 @pytest.fixture
@@ -59,10 +66,11 @@ def y(seed):
 
 
 @pytest.fixture
-def cov(seed, nx):
+def cov(seed, nx, base_shape):
     """Random x covariance matrix."""
-    M = np.random.randn(nx, nx + 1) / nx
-    return M.dot(M.T)
+    M_shape = base_shape + (nx, nx + 1)
+    M = np.random.randn(*M_shape) / nx
+    return np.einsum('...ik,...jk', M, M)
 
 
 @pytest.fixture
@@ -202,7 +210,7 @@ def parametrized_ukf(model, ut_kappa, ut_sqrt):
 def test_ut_sqrt(ut, cov):
     """Test if the ut_sqrt functions satisfy their definition."""
     S = ut.sqrt(cov)
-    STS = np.dot(S.T, S)
+    STS = np.einsum('...ki,...kj', S, S)
     assert ArrayDiff(STS, cov) < 1e-8
 
 
@@ -217,6 +225,7 @@ def test_ut_sqrt_diff(ut, model, q):
     
     ut.sqrt(model.Pv(q))
     analytical = ut.sqrt_diff(model.dPv_dq(q))
+    analytical = np.rollaxis(analytical, -3)
     assert ArrayDiff(numerical, analytical) < 1e-8
 
 
@@ -233,18 +242,20 @@ def test_ut_sqrt_diff2(ut, model, q):
     ut.sqrt(model.Pv(q))
     ut.sqrt_diff(model.dPv_dq(q))
     analytical = ut.sqrt_diff2(model.d2Pv_dq2(q))
+    analytical = np.rollaxis(analytical, -4)
     assert ArrayDiff(numerical, analytical) < 1e-8
 
 
 def test_affine_ut(ut, x, cov, A, nx):
     """Test the unscented transform of an affine function."""
-    f = lambda x: np.dot(x, A.T) + np.arange(nx)
+    f = lambda x: np.einsum('ij,...j', A, x) + np.arange(nx)
     [ut_mean, ut_cov] = ut.transform(x, cov, f)
     
     desired_mean = f(x)
     assert ArrayDiff(ut_mean, desired_mean) < 1e-8
-
-    desired_cov = A.dot(cov).dot(A.T)
+    
+    desired_cov = np.einsum('...ij,ki,lj', cov, A, A)
+    #desired_cov = A.dot(cov).dot(A.T)
     assert ArrayDiff(ut_cov, desired_cov) < 1e-8
     
     ut_crosscov = ut.crosscov()
@@ -255,10 +266,10 @@ def test_affine_ut(ut, x, cov, A, nx):
 def test_sigma_points(ut, x, cov):
     """Test if the mean and covariance of the sigma-points is sane."""
     sigma = ut.sigma_points(x, cov)
-    ut_mean = np.dot(ut.weights, sigma)
+    ut_mean = np.einsum('k,k...', ut.weights, sigma)
     assert ArrayDiff(ut_mean, x) < 1e-8
     
-    ut_cov = np.einsum('ki,kj,k', ut.idev, ut.idev, ut.weights)
+    ut_cov = np.einsum('k...i,k...j,k', ut.idev, ut.idev, ut.weights)
     assert ArrayDiff(ut_cov, cov) < 1e-8
 
 
@@ -270,11 +281,12 @@ def test_sigma_points_diff(ut, model, q):
     def sigma(q):
         return ut.sigma_points(model.v(q), model.Pv(q))
     numerical = utils.central_diff(sigma, q)
-    numerical = np.rollaxis(numerical, -2)
+    numerical = np.rollaxis(numerical, -2, -1)
     
     ut.sigma_points(model.v(), model.Pv())
     analytical = ut.sigma_points_diff(model.dv_dq(), model.dPv_dq())
-    assert ArrayDiff(numerical, analytical) < 1e-8
+    analytical = np.rollaxis(analytical, -2)
+    assert ArrayDiff(numerical, analytical) < 5e-8
 
 
 def test_sigma_points_diff2(ut, model, q):

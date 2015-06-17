@@ -57,23 +57,26 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         
         nq = model.nq
         nx = model.nx
+        base_shape = self.x.shape[:-1]
+        self.base_shape = base_shape
+        '''Base shape of broadcasting.'''
         
-        self.dL_dq = options.get('dL_dq', np.zeros(nq))
+        self.dL_dq = options.get('dL_dq', np.zeros(base_shape + (nq,)))
         '''Measurement log-likelihood derivative.'''
 
-        self.d2L_dq2 = options.get('dL_dq', np.zeros((nq, nq)))
+        self.d2L_dq2 = options.get('dL_dq', np.zeros(base_shape + (nq, nq)))
         '''Measurement log-likelihood derivative.'''
 
-        self.dx_dq = options.get('dx_dq', np.zeros((nq, nx)))
+        self.dx_dq = options.get('dx_dq', np.zeros(base_shape + (nq, nx)))
         '''State vector derivative.'''
         
-        self.dPx_dq = options.get('dPx_dq', np.zeros((nq, nx, nx)))
+        self.dPx_dq = options.get('dPx_dq', np.zeros(base_shape + (nq, nx, nx)))
         '''State vector covariance derivative.'''
 
-        self.d2x_dq2 = options.get('dx_dq', np.zeros((nq, nq, nx)))
+        self.d2x_dq2 = options.get('dx_dq', np.zeros(base_shape + (nq, nq, nx)))
         '''State vector derivative.'''
         
-        self.d2Px_dq2 = options.get('dPx_dq', np.zeros((nq, nq, nx, nx)))
+        self.d2Px_dq2 = options.get('dPx_dq',np.zeros(base_shape+(nq,nq,nx,nx)))
         '''State vector covariance derivative.'''
     
     @abc.abstractmethod
@@ -186,11 +189,11 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
     def sigma_points(self, i, Pi):
         """Generate sigma-points and their deviations.
         
-        The sigma points are the lines of the returned matrix.
+        The sigma points are the first dimension of the returned array.
         """
         ni = self.ni
-        S = self.sqrt((ni + self.kappa) * Pi)
-        idev = np.zeros((self.nsigma, ni))
+        S = np.rollaxis(self.sqrt((ni + self.kappa) * Pi), -2)
+        idev = np.zeros((self.nsigma,) + np.shape(i))
         idev[:ni] = S
         idev[ni:(2 * ni)] = -S
         isigma = idev + i
@@ -230,9 +233,9 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
         weights = self.weights
         
         osigma = f(isigma)
-        o = np.einsum('k,ki', weights, osigma)
+        o = np.einsum('k,k...->...', weights, osigma)
         odev = osigma - o
-        Po = np.einsum('ki,kj,k', odev, odev, weights)
+        Po = np.einsum('k...i,k...j,k', odev, odev, weights)
         
         self.osigma = osigma
         self.odev = odev
@@ -243,15 +246,16 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
     def transform_diff(self, df_dq, df_di, di_dq, dPi_dq):
         weights = self.weights
         isigma = self.isigma
+        odev = self.odev
         self.df_di = df_di(isigma)
         
         disigma_dq = self.sigma_points_diff(di_dq, dPi_dq)
         Dosigma_Dq = df_dq(isigma)
-        Dosigma_Dq += np.einsum('kif,kai->kaf', self.df_di, disigma_dq)
+        Dosigma_Dq += np.einsum('k...if,k...ai->k...af', self.df_di, disigma_dq)
         
         do_dq = np.einsum('k,k...', weights, Dosigma_Dq)
         dodev_dq = Dosigma_Dq - do_dq
-        dPo_dq = np.einsum('klj,ki,k->lij', dodev_dq, self.odev, weights)
+        dPo_dq = np.einsum('k...lj,k...i,k->...lij', dodev_dq, odev, weights)
         dPo_dq += np.swapaxes(dPo_dq, -1, -2)
         
         self.disigma_dq = disigma_dq
@@ -266,40 +270,42 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
         disigma_dq = self.disigma_dq
         dodev_dq = self.dodev_dq
         
+        
         d2isigma_dq2 = self.sigma_points_diff2(d2i_dq2, d2Pi_dq2)
-        D2osigma_Dq2 = np.einsum('kaif,kbi->kbaf',
+        D2osigma_Dq2 = np.einsum('k...aif,k...bi->k...baf',
                                  d2f_di_dq(isigma), disigma_dq)
         D2osigma_Dq2 += np.swapaxes(D2osigma_Dq2, -2, -3)
         D2osigma_Dq2 += d2f_dq2(isigma)
-        D2osigma_Dq2 += np.einsum('kijf,kai,kbj->kbaf', d2f_di2(isigma), 
-                                  disigma_dq, disigma_dq)
-        D2osigma_Dq2 += np.einsum('kif,kbai->kbaf', self.df_di, d2isigma_dq2)
+        D2osigma_Dq2 += np.einsum('k...ijf,k...ai,k...bj->k...baf',
+                                  d2f_di2(isigma), disigma_dq, disigma_dq)
+        D2osigma_Dq2 += np.einsum('k...if,k...bai->k...baf', 
+                                  self.df_di, d2isigma_dq2)
         
         d2o_dq2 = np.einsum('k,k...', weights, D2osigma_Dq2)
         d2odev_dq2 = D2osigma_Dq2 - d2o_dq2
-        d2Po_dq2 = np.einsum('kbai,kj,k->baij', d2odev_dq2, self.odev, weights)
-        d2Po_dq2 += np.einsum('kai,kbj,k->baij', dodev_dq, dodev_dq, weights)
+        d2Po_dq2 = np.einsum('k...bai,k...j,k', d2odev_dq2, self.odev, weights)
+        d2Po_dq2 += np.einsum('k...ai,k...bj,k', dodev_dq, dodev_dq, weights)
         d2Po_dq2 += np.swapaxes(d2Po_dq2, -1, -2)
         self.d2odev_dq2 = d2odev_dq2
         return (d2o_dq2, d2Po_dq2)
     
     def crosscov(self):
-        return np.einsum('ki,kj,k', self.idev, self.odev, self.weights)
+        return np.einsum('k...i,k...j,k', self.idev, self.odev, self.weights)
     
     def crosscov_diff(self):
-        dPio_dq = np.einsum('kli,kj,k->lij', 
+        dPio_dq = np.einsum('k...ai,k...j,k', 
                             self.didev_dq, self.odev, self.weights)
-        dPio_dq += np.einsum('ki,klj,k->lij', 
+        dPio_dq += np.einsum('k...i,k...aj,k', 
                              self.idev, self.dodev_dq, self.weights)
         return dPio_dq
 
     def crosscov_diff2(self):
-        d2Pio_dq2 = np.einsum('kai,kbj,k->baij', 
+        d2Pio_dq2 = np.einsum('k...ai,k...bj,k', 
                               self.didev_dq, self.dodev_dq, self.weights)
         d2Pio_dq2 += np.swapaxes(d2Pio_dq2, -3, -4)
-        d2Pio_dq2 += np.einsum('kbai,kj,k->baij', 
+        d2Pio_dq2 += np.einsum('k...bai,k...j,k', 
                                self.d2idev_dq2, self.odev, self.weights)
-        d2Pio_dq2 += np.einsum('ki,kbaj,k->baij', 
+        d2Pio_dq2 += np.einsum('k...i,k...baj,k',
                                self.idev, self.d2odev_dq2, self.weights)
         return d2Pio_dq2
 
@@ -309,8 +315,8 @@ class SVDUnscentedTransform(UnscentedTransformBase):
     
     def sqrt(self, Q):
         """Unscented transform square root method."""
-        [U, s, VT] = scipy.linalg.svd(Q)
-        self.S = np.transpose(U * np.sqrt(s))
+        [U, s, VT] = np.linalg.svd(Q)
+        self.S = np.einsum('...ij,...j->...ji', U, np.sqrt(s))
         return self.S
 
 
@@ -328,7 +334,7 @@ class DifferentiableCholesky:
  
     def __call__(self, Q):
         """Perform the upper triangular Cholesky decomposition."""
-        self.S = scipy.linalg.cholesky(Q, lower=False)
+        self.S = np.swapaxes(np.linalg.cholesky(Q), -1, -2)
         return self.S
     
     def diff(self, dQ_dq):
@@ -336,35 +342,35 @@ class DifferentiableCholesky:
         
         Parameters
         ----------
-        dQ_dq : (nq, ni, ni) array_like
+        dQ_dq : (..., nq, ni, ni) array_like
             The derivatives of `Q` with respect to some parameter vector.
              Must be symmetric with respect to the last two axes, i.e., 
             `dQ_dq[..., i, j] == dQ_dq[..., j, i]` for all `i, j` pairs.
         
         Returns
         -------
-        dS_dq : (nq, ni, ni) array_like
+        dS_dq : (..., nq, ni, ni) array_like
             The derivative of the Cholesky decomposition of `Q` with respect
             to the parameter vector.
         
         """
-        nq = len(dQ_dq)
-        ni = len(self.S)
+        nq = np.size(dQ_dq, -3)
+        ni = np.size(self.S, -1)
         self.initialize_diff_data(ni)
         
         k = self.ni_range
         i, j = self.ni_tril_indices
         ix, jx, kx = np.ix_(i, j, k)
         
-        A = np.zeros((ni, ni, ni, ni))
-        A[ix, jx, ix, kx] = self.S[kx, jx]
-        A[ix, jx, jx, kx] += self.S[kx, ix]
-        AL = A[i, j][..., i, j]
-        ALI = scipy.linalg.inv(AL)
+        A = np.zeros(self.S.shape + (ni, ni))
+        A[..., ix, jx, ix, kx] = self.S[..., kx, jx]
+        A[..., ix, jx, jx, kx] += self.S[..., kx, ix]
+        AL = A[..., i, j, :, :][..., i, j]
+        ALI = np.linalg.inv(AL)
         
         dQL_dq = dQ_dq[..., i, j]
-        dSL_dq = np.einsum('ij,bj->bi', ALI, dQL_dq)
-        dS_dq = np.zeros((nq, ni, ni))
+        dSL_dq = np.einsum('...ij,...bj', ALI, dQL_dq)
+        dS_dq = np.zeros_like(dQ_dq)
         dS_dq[..., j, i] = dSL_dq
         
         self.dQL_dq = dQL_dq
@@ -375,24 +381,24 @@ class DifferentiableCholesky:
     
     def diff2(self, d2Q_dq2):
         """Second derivatives of upper triangular Cholesky decomposition."""
-        nq = len(d2Q_dq2)
-        ni = len(self.S)
+        nq = np.size(d2Q_dq2, -3)
+        ni = np.size(self.S, -1)
         self.initialize_diff_data(ni)
         
         k = self.ni_range
         i, j = self.ni_tril_indices
         ix, jx, kx = np.ix_(i, j, k)
         
-        dA_dq = np.zeros((nq, ni, ni, ni, ni))
+        dA_dq = np.zeros(self.dS_dq.shape + (ni, ni))
         dA_dq[..., ix, jx, ix, kx] = self.dS_dq[..., kx, jx]
         dA_dq[..., ix, jx, jx, kx] += self.dS_dq[..., kx, ix]
-        dAL_dq = dA_dq[:, i, j][..., i, j]
-        dALI_dq = -np.einsum('ij,ajk,kl', self.ALI, dAL_dq, self.ALI)
+        dAL_dq = dA_dq[..., i, j, :, :][..., i, j]
+        dALI_dq = -np.einsum('...ij,...ajk,...kl', self.ALI, dAL_dq, self.ALI)
 
         d2QL_dq2 = d2Q_dq2[..., i, j]
-        d2SL_dq2 = np.einsum('ij,abj', self.ALI, d2QL_dq2)
-        d2SL_dq2 += np.einsum('aij,bj', dALI_dq, self.dQL_dq)
-        d2S_dq2 = np.zeros((nq, nq, ni, ni))
+        d2SL_dq2 = np.einsum('...ij,...abj', self.ALI, d2QL_dq2)
+        d2SL_dq2 += np.einsum('...aij,...bj', dALI_dq, self.dQL_dq)
+        d2S_dq2 = np.zeros(self.S.shape[:-2] + (nq, nq, ni, ni))
         d2S_dq2[..., j, i] = d2SL_dq2
         return d2S_dq2
 
@@ -471,7 +477,7 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
         )
         dQ_dq = self.model.dQ_dq(k, x)
         dQ_dx = self.model.dQ_dx(k, x)
-        DQ_Dq = dQ_dq + np.einsum('ij,jkl', self.dx_dq, dQ_dx)
+        DQ_Dq = dQ_dq + np.einsum('...ij,...jkl', self.dx_dq, dQ_dx)
         
         self.dQ_dx = dQ_dx
         self.prev_dx_dq = self.dx_dq
@@ -493,11 +499,12 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
         D2f_Dq2, D2Pf_Dq2 = self.__ut.transform_diff2(
             d2f_dq2_fun, d2f_dx2_fun, d2f_dx_dq_fun, self.d2x_dq2, self.d2Px_dq2
         )
-        D2Q_Dq2 = np.einsum('bi,aikl', dx_dq, self.model.d2Q_dx_dq(k, x))
+        d2Q_dx_dq = self.model.d2Q_dx_dq(k, x)
+        D2Q_Dq2 = np.einsum('...bi,...aikl', dx_dq, d2Q_dx_dq)
         D2Q_Dq2 += np.swapaxes(D2Q_Dq2, -3, -4)
         D2Q_Dq2 += self.model.d2Q_dq2(k, x)
-        D2Q_Dq2 += np.einsum('abi,ikl', self.d2x_dq2, self.dQ_dx)
-        D2Q_Dq2 += np.einsum('bi,jikl,aj',
+        D2Q_Dq2 += np.einsum('...abi,...ikl', self.d2x_dq2, self.dQ_dx)
+        D2Q_Dq2 += np.einsum('...bi,...jikl,...aj',
                              dx_dq, self.model.d2Q_dx2(k, x), dx_dq)
         self.d2x_dq2 = D2f_Dq2
         self.d2Px_dq2 = D2Pf_Dq2 + D2Q_Dq2
@@ -540,13 +547,13 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         Py = Ph + R
         PyC = self.__chol(Py)
         PyCI = scipy.linalg.inv(PyC)
-        PyI = np.einsum('ik,jk', PyCI, PyCI)
+        PyI = np.einsum('...ik,...jk', PyCI, PyCI)
         
         # Perform correction
         e = y - h
-        K = np.einsum('ik,kj', Pxh, PyI)
-        x_corr = self.x + np.einsum('ij,j', K, e)
-        Px_corr = self.Px - np.einsum('ik,jl,kl', K, K, Py)
+        K = np.einsum('...ik,...kj', Pxh, PyI)
+        x_corr = self.x + np.einsum('...ij,...j', K, e)
+        Px_corr = self.Px - np.einsum('...ik,...jl,...kl', K, K, Py)
         
         # Save and return the correction data
         self.prev_x = self.x
@@ -581,9 +588,9 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         # Calculate the correction derivatives
         de_dq = -Dh_Dq
         dPy_dq = DPh_Dq + dR_dq
-        dPyI_dq = -np.einsum('ij,ajk,kl', self.PyI, dPy_dq, self.PyI)
-        dK_dq = np.einsum('ik,akj', self.Pxh, dPyI_dq)
-        dK_dq += np.einsum('aik,kj', dPxh_dq, self.PyI)
+        dPyI_dq = -np.einsum('...ij,...ajk,...kl', self.PyI, dPy_dq, self.PyI)
+        dK_dq = np.einsum('...ik,...akj', self.Pxh, dPyI_dq)
+        dK_dq += np.einsum('...aik,...kj', dPxh_dq, self.PyI)
 
         self.de_dq = de_dq
         self.dK_dq = dK_dq
@@ -605,8 +612,10 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
 
         # Get some saved data
         K = self.K
+        PyI = self.PyI
         dK_dq = self.dK_dq
         dPy_dq = self.dPy_dq
+        dPyI_dq = self.dPyI_dq
         
         # Get the model and transform derivatives
         def d2h_dq2_fun(x):
@@ -624,27 +633,27 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         # Calculate the correction derivatives
         d2e_dq2 = -D2h_Dq2
         d2Py_dq2 = D2Ph_Dq2 + d2R_dq2
-        d2PyI_dq2 = -np.einsum('aij,bjk,kl', self.dPyI_dq, dPy_dq, self.PyI)
-        d2PyI_dq2 -= np.einsum('ij,abjk,kl', self.PyI, d2Py_dq2, self.PyI)
-        d2PyI_dq2 -= np.einsum('ij,bjk,akl', self.PyI, dPy_dq, self.dPyI_dq)
-        d2K_dq2 = np.einsum('aik,bkj', self.dPxh_dq, self.dPyI_dq)
-        d2K_dq2 += np.einsum('ik,abkj', self.Pxh, d2PyI_dq2)
-        d2K_dq2 += np.einsum('abik,kj', d2Pxh_dq2, self.PyI)
-        d2K_dq2 += np.einsum('bik,akj', self.dPxh_dq, self.dPyI_dq)
+        d2PyI_dq2 = -np.einsum('...aij,...bjk,...kl', dPyI_dq, dPy_dq, PyI)
+        d2PyI_dq2 += np.swapaxes(d2PyI_dq2, -1, -2)
+        d2PyI_dq2 -= np.einsum('...ij,...abjk,...kl', PyI, d2Py_dq2, PyI)
+        d2K_dq2 = np.einsum('...aik,...bkj', self.dPxh_dq, dPyI_dq)
+        d2K_dq2 += np.einsum('...ik,...abkj', self.Pxh, d2PyI_dq2)
+        d2K_dq2 += np.einsum('...abik,...kj', d2Pxh_dq2, PyI)
+        d2K_dq2 += np.einsum('...bik,...akj', self.dPxh_dq, dPyI_dq)
 
-        self.d2x_dq2 += np.einsum('abij,j', d2K_dq2, self.e)
-        self.d2x_dq2 += np.einsum('bij,aj', dK_dq, self.de_dq)
-        self.d2x_dq2 += np.einsum('aij,bj', dK_dq, self.de_dq)
-        self.d2x_dq2 += np.einsum('ij,abj', K, d2e_dq2)
-        self.d2Px_dq2 -= np.einsum('abik,jl,lk', d2K_dq2, K, self.Py)
-        self.d2Px_dq2 -= np.einsum('bik,ajl,lk', dK_dq, dK_dq, self.Py)
-        self.d2Px_dq2 -= np.einsum('aik,bjl,lk', dK_dq, dK_dq, self.Py)
-        dK_dq__K__dPy_dq = np.einsum('bik,jl,alk', dK_dq, K, dPy_dq)
+        self.d2x_dq2 += np.einsum('...abij,...j', d2K_dq2, self.e)
+        self.d2x_dq2 += np.einsum('...bij,...aj', dK_dq, self.de_dq)
+        self.d2x_dq2 += np.einsum('...aij,...bj', dK_dq, self.de_dq)
+        self.d2x_dq2 += np.einsum('...ij,...abj', K, d2e_dq2)
+        self.d2Px_dq2 -= np.einsum('...abik,...jl,...lk', d2K_dq2, K, self.Py)
+        self.d2Px_dq2 -= np.einsum('...bik,...ajl,...lk', dK_dq, dK_dq, self.Py)
+        self.d2Px_dq2 -= np.einsum('...aik,...bjl,...lk', dK_dq, dK_dq, self.Py)
+        dK_dq__K__dPy_dq = np.einsum('...bik,...jl,...alk', dK_dq, K, dPy_dq)
         dK_dq__K__dPy_dq += np.swapaxes(dK_dq__K__dPy_dq, -2, -1)
         dK_dq__K__dPy_dq += np.swapaxes(dK_dq__K__dPy_dq, -3, -4)
         self.d2Px_dq2 -= dK_dq__K__dPy_dq
-        self.d2Px_dq2 -= np.einsum('ik,abjl,lk', K, d2K_dq2, self.Py)
-        self.d2Px_dq2 -= np.einsum('ik,jl,ablk', K, K, d2Py_dq2)
+        self.d2Px_dq2 -= np.einsum('...ik,...abjl,...lk', K, d2K_dq2, self.Py)
+        self.d2Px_dq2 -= np.einsum('...ik,...jl,...ablk', K, K, d2Py_dq2)
         self.d2e_dq2 = d2e_dq2
         self.d2Py_dq2 = d2Py_dq2
         self.d2PyI_dq2 = d2PyI_dq2
@@ -684,6 +693,7 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         # Get the work variables
         e = self.e
         PyI = self.PyI
+        PyCD = self.PyCD
         de_dq = self.de_dq
         dPyI_dq = self.dPyI_dq
         dPyCD_dq = self.dPyCD_dq
@@ -693,12 +703,12 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         # Calculate the likelihood derivatives
         d2PyC_dq2 = self.__chol.diff2(self.d2Py_dq2)
         d2PyCD_dq2 = np.einsum('...kk->...k', d2PyC_dq2)
-        self.d2L_dq2 -= np.sum(d2PyCD_dq2 / self.PyCD, axis=-1)
-        self.d2L_dq2 += np.einsum('ak,bk', dPyCD_dq, dPyCD_dq / self.PyCD**2)
-        self.d2L_dq2 -= np.einsum('ai,ij,bj', de_dq, PyI, de_dq)
-        self.d2L_dq2 -= np.einsum('abi,ij,j', d2e_dq2, PyI, e)
-        self.d2L_dq2 -= 0.5 * np.einsum('i,abij,j', e, d2PyI_dq2, e)
-        de_dq__dPyI_dq__e = np.einsum('ai,bij,j', de_dq, dPyI_dq, e)
+        self.d2L_dq2 -= np.sum(d2PyCD_dq2 / PyCD, axis=-1)
+        self.d2L_dq2 += np.einsum('...ak,...bk', dPyCD_dq, dPyCD_dq / PyCD**2)
+        self.d2L_dq2 -= np.einsum('...ai,...ij,...bj', de_dq, PyI, de_dq)
+        self.d2L_dq2 -= np.einsum('...abi,...ij,...j', d2e_dq2, PyI, e)
+        self.d2L_dq2 -= 0.5 * np.einsum('...i,...abij,...j', e, d2PyI_dq2, e)
+        de_dq__dPyI_dq__e = np.einsum('...ai,...bij,...j', de_dq, dPyI_dq, e)
         self.d2L_dq2 -= de_dq__dPyI_dq__e
         self.d2L_dq2 -= de_dq__dPyI_dq__e.T
 

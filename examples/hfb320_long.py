@@ -182,14 +182,15 @@ def pem(t, u, y):
     
     q_lb = dict(
         alpha_png=0, vT_png=0, q_png=0,
-        vT_mng=0.05/np.sqrt(12), alpha_mng=1e-3/np.sqrt(12), 
-        theta_mng=5e-4/np.sqrt(12), q_mng=5e-4/np.sqrt(12), 
+        vT_mng=0.3, alpha_mng=1e-3/np.sqrt(12),
+        theta_mng=5e-4/np.sqrt(12), q_mng=5e-4/np.sqrt(12),
         ax_mng=1e-2/np.sqrt(12), az_mng=5e-2/np.sqrt(12)
     )
-    q_ub = dict()
-    q_bounds = [model.pack('q', q_lb, fill=-np.inf),
-                model.pack('q', q_ub, fill=np.inf)]
-    problem = ipopt.Problem(q_bounds, merit, grad, 
+    q_ub = dict(q_mng=1e-2)
+    q_fix = dict(theta_png=0)
+    q_bounds = [model.pack('q', dict(q_lb, **q_fix), fill=-np.inf),
+                model.pack('q', dict(q_ub, **q_fix), fill=np.inf)]
+    problem = ipopt.Problem(q_bounds, merit, grad,
                             hess=hess, hess_inds=hess_inds)
     problem.num_option(b'obj_scaling_factor', -1)
     (qopt, solinfo) = problem.solve(q)
