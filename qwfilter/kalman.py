@@ -23,7 +23,6 @@ import attrdict
 import numpy as np
 import numpy.ma as ma
 import numpy.linalg
-import scipy.linalg
 
 from . import utils
 
@@ -546,7 +545,7 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         self.__chol = DifferentiableCholesky()
         Py = Ph + R
         PyC = self.__chol(Py)
-        PyCI = scipy.linalg.inv(PyC)
+        PyCI = np.linalg.inv(PyC)
         PyI = np.einsum('...ik,...jk', PyCI, PyCI)
         
         # Perform correction
@@ -681,7 +680,7 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         # Calculate the likelihood derivatives
         dPyC_dq = self.__chol.diff(self.dPy_dq)
         self.dPyCD_dq = np.einsum('...kk->...k', dPyC_dq)
-        self.dL_dq -= np.sum(self.dPyCD_dq / self.PyCD, axis=-1)
+        self.dL_dq -= np.sum(self.dPyCD_dq / self.PyCD[..., None, :], axis=-1)
         self.dL_dq -= np.einsum('...ai,...ij,...j', de_dq, PyI, e)
         self.dL_dq -= 0.5 * np.einsum('...i,...aij,...j', e, dPyI_dq, e)
     
@@ -703,14 +702,15 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         # Calculate the likelihood derivatives
         d2PyC_dq2 = self.__chol.diff2(self.d2Py_dq2)
         d2PyCD_dq2 = np.einsum('...kk->...k', d2PyC_dq2)
-        self.d2L_dq2 -= np.sum(d2PyCD_dq2 / PyCD, axis=-1)
-        self.d2L_dq2 += np.einsum('...ak,...bk', dPyCD_dq, dPyCD_dq / PyCD**2)
+        self.d2L_dq2 -= np.sum(d2PyCD_dq2 / PyCD[..., None, None, :], axis=-1)
+        self.d2L_dq2 += np.einsum('...ak,...bk', dPyCD_dq,
+                                  dPyCD_dq / PyCD[..., None, :]**2)
         self.d2L_dq2 -= np.einsum('...ai,...ij,...bj', de_dq, PyI, de_dq)
         self.d2L_dq2 -= np.einsum('...abi,...ij,...j', d2e_dq2, PyI, e)
         self.d2L_dq2 -= 0.5 * np.einsum('...i,...abij,...j', e, d2PyI_dq2, e)
         de_dq__dPyI_dq__e = np.einsum('...ai,...bij,...j', de_dq, dPyI_dq, e)
         self.d2L_dq2 -= de_dq__dPyI_dq__e
-        self.d2L_dq2 -= de_dq__dPyI_dq__e.T
+        self.d2L_dq2 -= np.swapaxes(de_dq__dPyI_dq__e, -1, -2)
 
 
 class DTUnscentedKalmanFilter(DTUnscentedPredictor, DTUnscentedCorrector):

@@ -40,7 +40,7 @@ def nq(request):
     return request.param
 
 
-@pytest.fixture(params=[(), (3,), (2, 3, 1, 1)], scope='module')
+@pytest.fixture(params=[(), (2, 1, 2, 1)], scope='module')
 def base_shape(request):
     """Base shape of broadcasting."""
     return request.param
@@ -173,7 +173,7 @@ def model_class(nx, nq):
             Pv = Px.copy()
             for i, j in np.ndindex(nx, nx):
                 if i == j:
-                    Pv[i, j] += 1e-2 * q[(i + j) % nq]**2
+                    Pv[i, j] +=  1 + 0.5 * sympy.sin(q[(i + j) % nq])
                 else:
                     Pv[i, j] += q[(i + j) % nq] * 1e-3
             return Pv
@@ -281,7 +281,6 @@ def test_sigma_points_diff(ut, model, q):
     def sigma(q):
         return ut.sigma_points(model.v(q), model.Pv(q))
     numerical = utils.central_diff(sigma, q)
-    numerical = np.rollaxis(numerical, -2, -1)
     
     ut.sigma_points(model.v(), model.Pv())
     analytical = ut.sigma_points_diff(model.dv_dq(), model.dPv_dq())
@@ -298,12 +297,12 @@ def test_sigma_points_diff2(ut, model, q):
         ut.sigma_points(model.v(q), model.Pv(q))
         return ut.sigma_points_diff(model.dv_dq(q), model.dPv_dq(q))
     numerical = utils.central_diff(dsigma_dq, q)
-    numerical = np.rollaxis(numerical, -3)
     
     ut.sigma_points(model.v(), model.Pv())
     ut.sigma_points_diff(model.dv_dq(), model.dPv_dq())
     analytical = ut.sigma_points_diff2(model.d2v_dq2(), model.d2Pv_dq2())
-    assert ArrayDiff(numerical, analytical) < 1e-8
+    analytical = np.rollaxis(analytical, -3)
+    assert ArrayDiff(numerical, analytical) < 5e-8
 
 
 def test_ut_diff(ut, model, x, q):
@@ -329,8 +328,11 @@ def test_ut_diff(ut, model, x, q):
         df_dq, df_dx, model.dv_dq(), model.dPv_dq()
     )
     analytical_Pio = ut.crosscov_diff()
+    analytical_x = np.rollaxis(analytical_x, -2)
+    analytical_Px = np.rollaxis(analytical_Px, -3)
+    analytical_Pio = np.rollaxis(analytical_Pio, -3)
     assert ArrayDiff(numerical_x, analytical_x) < 1e-8
-    assert ArrayDiff(numerical_Px, analytical_Px) < 1e-8
+    assert ArrayDiff(numerical_Px, analytical_Px) < 5e-8
     assert ArrayDiff(numerical_Pio, analytical_Pio) < 1e-8
 
 
@@ -369,6 +371,9 @@ def test_ut_diff2(ut, model, x, q):
         d2f_dq2, d2f_dx2, d2f_dx_dq, model.d2v_dq2(), model.d2Pv_dq2()
     )
     analytical_Pio = ut.crosscov_diff2()
+    analytical_x = np.rollaxis(analytical_x, -3)
+    analytical_Px = np.rollaxis(analytical_Px, -4)
+    analytical_Pio = np.rollaxis(analytical_Pio, -4)
     assert ArrayDiff(numerical_x, analytical_x) < 1e-8
     assert ArrayDiff(numerical_Px, analytical_Px) < 5e-8
     assert ArrayDiff(numerical_Pio, analytical_Pio) < 5e-8
@@ -388,8 +393,8 @@ def test_ut_pred_diff(parametrized_ukf, ut, model, q):
     ukf = parametrized_ukf(q)
     ukf.predict()
     ukf.prediction_diff()
-    analytical_x = ukf.dx_dq
-    analytical_Px = ukf.dPx_dq
+    analytical_x = np.rollaxis(ukf.dx_dq, -2)
+    analytical_Px = np.rollaxis(ukf.dPx_dq, -3)
     assert ArrayDiff(numerical_x, analytical_x) < 1e-8
     assert ArrayDiff(numerical_Px, analytical_Px) < 5e-8
 
@@ -410,10 +415,10 @@ def test_ut_pred_diff2(parametrized_ukf, ut, model, q):
     ukf.predict()
     ukf.prediction_diff()
     ukf.prediction_diff2()
-    analytical_x = ukf.d2x_dq2
-    analytical_Px = ukf.d2Px_dq2
+    analytical_x = np.rollaxis(ukf.d2x_dq2, -3)
+    analytical_Px = np.rollaxis(ukf.d2Px_dq2, -4)
     assert ArrayDiff(numerical_x, analytical_x) < 1e-8
-    assert ArrayDiff(numerical_Px, analytical_Px) < 1e-8
+    assert ArrayDiff(numerical_Px, analytical_Px) < 5e-8
 
 
 def test_ut_corr_diff(parametrized_ukf, ut, model, q, y):
@@ -434,12 +439,12 @@ def test_ut_corr_diff(parametrized_ukf, ut, model, q, y):
     ukf.update_likelihood()
     ukf.correction_diff()
     ukf.likelihood_diff()
-    analytical_L = ukf.dL_dq
-    analytical_x = ukf.dx_dq
-    analytical_Px = ukf.dPx_dq
+    analytical_L = np.rollaxis(ukf.dL_dq, -1)
+    analytical_x = np.rollaxis(ukf.dx_dq, -2)
+    analytical_Px = np.rollaxis(ukf.dPx_dq, -3)
     assert ArrayDiff(numerical_L, analytical_L) < 5e-8
-    assert ArrayDiff(numerical_x, analytical_x) < 5e-8
-    assert ArrayDiff(numerical_Px, analytical_Px) < 1e-7
+    assert ArrayDiff(numerical_x, analytical_x) < 1e-7
+    assert ArrayDiff(numerical_Px, analytical_Px) < 4e-7
 
 def test_ut_corr_diff2(parametrized_ukf, ut, model, q, y):
     if not hasattr(ut, 'sqrt_diff'):
@@ -463,9 +468,9 @@ def test_ut_corr_diff2(parametrized_ukf, ut, model, q, y):
     ukf.correction_diff2()
     ukf.likelihood_diff()
     ukf.likelihood_diff2()
-    analytical_L = ukf.d2L_dq2
-    analytical_x = ukf.d2x_dq2
-    analytical_Px = ukf.d2Px_dq2
-    assert ArrayDiff(numerical_L, analytical_L) < 1e-7
-    assert ArrayDiff(numerical_x, analytical_x) < 1e-7
-    assert ArrayDiff(numerical_Px, analytical_Px) < 1e-7
+    analytical_L = np.rollaxis(ukf.d2L_dq2, -2)
+    analytical_x = np.rollaxis(ukf.d2x_dq2, -3)
+    analytical_Px = np.rollaxis(ukf.d2Px_dq2, -4)
+    assert ArrayDiff(numerical_L, analytical_L) < 5e-7
+    assert ArrayDiff(numerical_x, analytical_x) < 5e-6
+    assert ArrayDiff(numerical_Px, analytical_Px) < 1e-5
