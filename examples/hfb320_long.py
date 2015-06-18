@@ -154,10 +154,10 @@ def pem(t, u, y):
         vT_mng=0.05, alpha_mng=1e-3, theta_mng=5e-4, q_mng=5e-4, 
         ax_mng=1e-2, az_mng=5e-2
     )
-    q = GeneratedDTModel.pack('q', given)
+    q0 = GeneratedDTModel.pack('q', given)
     c = GeneratedDTModel.pack('c', given)
     dt = t[1] - t[0]
-    params = dict(q=q, c=c, dt=dt)
+    params = dict(q=q0, c=c, dt=dt)
     sampled = dict(t=t, u=u)
     model = GeneratedDTModel(params, sampled)
     
@@ -182,18 +182,18 @@ def pem(t, u, y):
     
     q_lb = dict(
         alpha_png=0, vT_png=0, q_png=0,
-        vT_mng=0.3, alpha_mng=1e-3/np.sqrt(12),
+        vT_mng=0.05/np.sqrt(12), alpha_mng=1e-3/np.sqrt(12),
         theta_mng=5e-4/np.sqrt(12), q_mng=5e-4/np.sqrt(12),
         ax_mng=1e-2/np.sqrt(12), az_mng=5e-2/np.sqrt(12)
     )
-    q_ub = dict(q_mng=1e-2)
-    q_fix = dict(theta_png=0)
+    q_ub = dict()
+    q_fix = dict(theta_png=0, vT_mng=0.3, q_mng=1e-2)
     q_bounds = [model.pack('q', dict(q_lb, **q_fix), fill=-np.inf),
                 model.pack('q', dict(q_ub, **q_fix), fill=np.inf)]
     problem = ipopt.Problem(q_bounds, merit, grad,
                             hess=hess, hess_inds=hess_inds)
     problem.num_option(b'obj_scaling_factor', -1)
-    (qopt, solinfo) = problem.solve(q)
+    (qopt, solinfo) = problem.solve(q0)
     return problem, qopt, solinfo
 
 #qopt = array([1.24545680e-01, -6.57255675e-02, 3.14555447e-01,

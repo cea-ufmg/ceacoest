@@ -379,7 +379,7 @@ def test_ut_diff2(ut, model, x, q):
     assert ArrayDiff(numerical_Pio, analytical_Pio) < 5e-8
 
 
-def test_ut_pred_diff(parametrized_ukf, ut, model, q):
+def test_ut_pred_diff(parametrized_ukf, ut, q):
     if not hasattr(ut, 'sqrt_diff'):
         pytest.skip("UT square-root derivative not implemented yet.")
 
@@ -399,7 +399,7 @@ def test_ut_pred_diff(parametrized_ukf, ut, model, q):
     assert ArrayDiff(numerical_Px, analytical_Px) < 5e-8
 
 
-def test_ut_pred_diff2(parametrized_ukf, ut, model, q):
+def test_ut_pred_diff2(parametrized_ukf, ut, q):
     if not hasattr(ut, 'sqrt_diff'):
         pytest.skip("UT square-root derivative not implemented yet.")
 
@@ -421,7 +421,7 @@ def test_ut_pred_diff2(parametrized_ukf, ut, model, q):
     assert ArrayDiff(numerical_Px, analytical_Px) < 5e-8
 
 
-def test_ut_corr_diff(parametrized_ukf, ut, model, q, y):
+def test_ut_corr_diff(parametrized_ukf, ut, q, y):
     if not hasattr(ut, 'sqrt_diff'):
         pytest.skip("UT square-root derivative not implemented yet.")
         
@@ -446,7 +446,7 @@ def test_ut_corr_diff(parametrized_ukf, ut, model, q, y):
     assert ArrayDiff(numerical_x, analytical_x) < 1e-7
     assert ArrayDiff(numerical_Px, analytical_Px) < 4e-7
 
-def test_ut_corr_diff2(parametrized_ukf, ut, model, q, y):
+def test_ut_corr_diff2(parametrized_ukf, ut, q, y):
     if not hasattr(ut, 'sqrt_diff'):
         pytest.skip("UT square-root derivative not implemented yet.")
         
@@ -474,3 +474,28 @@ def test_ut_corr_diff2(parametrized_ukf, ut, model, q, y):
     assert ArrayDiff(numerical_L, analytical_L) < 5e-7
     assert ArrayDiff(numerical_x, analytical_x) < 5e-6
     assert ArrayDiff(numerical_Px, analytical_Px) < 1e-5
+
+
+def test_ukf_pem_grad(parametrized_ukf, ut, q, y):
+    if not hasattr(ut, 'sqrt_diff'):
+        pytest.skip("UT square-root derivative not implemented yet.")
+    
+    yN = np.arange(3)[:, None] + y
+    def merit(q):
+        return parametrized_ukf(q).pem_merit(yN)
+    numerical = utils.central_diff(merit, q)
+    analytical = np.rollaxis(parametrized_ukf(q).pem_gradient(yN), -1)
+    assert ArrayDiff(numerical, analytical) < 1e-7
+
+
+def test_ukf_pem_hessian(parametrized_ukf, ut, q, y):
+    if not hasattr(ut, 'sqrt_diff'):
+        pytest.skip("UT square-root derivative not implemented yet.")
+    
+    yN = np.arange(3)[:, None] + y
+    def merit(q):
+        return parametrized_ukf(q).pem_gradient(yN)
+    numerical = utils.central_diff(merit, q)
+    analytical = np.rollaxis(parametrized_ukf(q).pem_hessian(yN), -2)
+    assert ArrayDiff(numerical, analytical) < 4e-7
+

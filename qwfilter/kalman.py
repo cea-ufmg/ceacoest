@@ -232,7 +232,7 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
         weights = self.weights
         
         osigma = f(isigma)
-        o = np.einsum('k,k...->...', weights, osigma)
+        o = np.einsum('k,k...', weights, osigma)
         odev = osigma - o
         Po = np.einsum('k...i,k...j,k', odev, odev, weights)
         
@@ -265,6 +265,7 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
     
     def transform_diff2(self, d2f_dq2, d2f_di2, d2f_di_dq, d2i_dq2, d2Pi_dq2):
         weights = self.weights
+        odev = self.odev
         isigma = self.isigma
         disigma_dq = self.disigma_dq
         dodev_dq = self.dodev_dq
@@ -282,8 +283,8 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
         
         d2o_dq2 = np.einsum('k,k...', weights, D2osigma_Dq2)
         d2odev_dq2 = D2osigma_Dq2 - d2o_dq2
-        d2Po_dq2 = np.einsum('k...bai,k...j,k', d2odev_dq2, self.odev, weights)
-        d2Po_dq2 += np.einsum('k...ai,k...bj,k', dodev_dq, dodev_dq, weights)
+        d2Po_dq2 = np.einsum('k...abi,k...j,k', d2odev_dq2, odev, weights)
+        d2Po_dq2 += np.einsum('k...bi,k...aj,k', dodev_dq, dodev_dq, weights)
         d2Po_dq2 += np.swapaxes(d2Po_dq2, -1, -2)
         self.d2odev_dq2 = d2odev_dq2
         return (d2o_dq2, d2Po_dq2)
@@ -294,17 +295,17 @@ class UnscentedTransformBase(metaclass=abc.ABCMeta):
     def crosscov_diff(self):
         dPio_dq = np.einsum('k...ai,k...j,k', 
                             self.didev_dq, self.odev, self.weights)
-        dPio_dq += np.einsum('k...i,k...aj,k', 
+        dPio_dq += np.einsum('k...i,k...aj,k',
                              self.idev, self.dodev_dq, self.weights)
         return dPio_dq
 
     def crosscov_diff2(self):
-        d2Pio_dq2 = np.einsum('k...ai,k...bj,k', 
+        d2Pio_dq2 = np.einsum('k...bi,k...aj,k',
                               self.didev_dq, self.dodev_dq, self.weights)
         d2Pio_dq2 += np.swapaxes(d2Pio_dq2, -3, -4)
-        d2Pio_dq2 += np.einsum('k...bai,k...j,k', 
+        d2Pio_dq2 += np.einsum('k...abi,k...j,k',
                                self.d2idev_dq2, self.odev, self.weights)
-        d2Pio_dq2 += np.einsum('k...i,k...baj,k',
+        d2Pio_dq2 += np.einsum('k...i,k...abj,k',
                                self.idev, self.d2odev_dq2, self.weights)
         return d2Pio_dq2
 
@@ -633,8 +634,8 @@ class DTUnscentedCorrector(DTKalmanFilterBase):
         d2e_dq2 = -D2h_Dq2
         d2Py_dq2 = D2Ph_Dq2 + d2R_dq2
         d2PyI_dq2 = -np.einsum('...aij,...bjk,...kl', dPyI_dq, dPy_dq, PyI)
-        d2PyI_dq2 += np.swapaxes(d2PyI_dq2, -1, -2)
         d2PyI_dq2 -= np.einsum('...ij,...abjk,...kl', PyI, d2Py_dq2, PyI)
+        d2PyI_dq2 -= np.einsum('...ij,...bjk,...akl', PyI, dPy_dq, dPyI_dq)
         d2K_dq2 = np.einsum('...aik,...bkj', self.dPxh_dq, dPyI_dq)
         d2K_dq2 += np.einsum('...ik,...abkj', self.Pxh, d2PyI_dq2)
         d2K_dq2 += np.einsum('...abik,...kj', d2Pxh_dq2, PyI)
