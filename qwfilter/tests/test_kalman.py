@@ -9,7 +9,7 @@ TODO
 
 import numpy as np
 import numpy.ma as ma
-import numpy.testing
+import numpy.linalg
 import pytest
 import sympy
 import sym2num
@@ -30,13 +30,19 @@ def seed(request):
 
 @pytest.fixture(params=range(1, 5), scope='module')
 def nx(request):
-    """Number of states to test with."""
+    """Number of model states."""
     return request.param
 
 
-@pytest.fixture(params=range(1, 3), scope='module')
+@pytest.fixture(params=[1, 3], scope='module')
+def ny(request):
+    """Number of model outputs."""
+    return request.param
+
+
+@pytest.fixture(params=[1, 3], scope='module')
 def nq(request):
-    """Number of parameters to test with."""
+    """Number of model parameters."""
     return request.param
 
 
@@ -60,9 +66,9 @@ def q(seed, nq):
 
 
 @pytest.fixture
-def y(seed):
+def y(seed, ny):
     """Random measurement vector."""
-    return np.random.randn(2)
+    return np.random.randn(ny)
 
 
 @pytest.fixture
@@ -101,7 +107,7 @@ def ut(ut_sqrt, ut_kappa, nx):
 
 
 @pytest.fixture(scope='module')
-def model_class(nx, nq):
+def model_class(nx, ny, nq):
     '''Discrete-time test model.'''
     
     class SymbolicModel(sym2num.SymbolicModel):
@@ -145,37 +151,48 @@ def model_class(nx, nq):
             ret = np.zeros(nx, dtype=object)
             for i, j in np.ndindex(nx, nq):
                 if i >= j:
-                    ret[i] = ret[i] + sympy.sin(i + j + x[i] + q[j])
+                    ret[i] += sympy.sin(i + j + sum(x[i:-j//2]) + sum(q[j:]))
             return ret
         
         def h(self, k, x, q):
             '''Measurement function.'''
-            return [x[0] * q[0], x[-1] * x[0]]
+            return [sympy.cos(sum(x[i:]) + sum(q[-i:])) for i in range(ny)]
 
         def Q(self, k, x, q):
             '''Measurement function.'''
-            ret = np.eye(nx, dtype=object)
-            ret[0, -1] = x[0]**2  * q[0]**2 * 1e-3
-            ret[-1, 0] = ret[0, -1]
-            ret[0, 0] = 1 + x[-1] ** 2 * q[-1] ** 2
+            ret = 2 * np.eye(nx, dtype=object)
+            for i, j in np.ndindex(nx, nx):
+                if i < j:
+                    ret[i, j] += sympy.cos(sum(x[:i + j]) + sum(q[-i:j])) / 2
+                    ret[j, i] += sympy.cos(sum(x[:i + j]) + sum(q[-i:j])) / 2
+                elif i == j:
+                    ret[i, j] += sympy.cos(sum(x[:i + 1]) + sum(q[:-i])) / 2
             return ret
         
         def R(self, q, k):
             '''Measurement function.'''
-            return [[q[-1]**2 + 0.2, 0.01*q[0]], [0.01*q[0], 1]]
-
+            ret = 2 * np.eye(ny, dtype=object)
+            for i, j in np.ndindex(ny, ny):
+                if i < j:
+                    ret[i, j] += sympy.sin(sum(q[-j:i]))
+                    ret[j, i] += sympy.sin(sum(q[-j:i]))
+                elif i == j:
+                    ret[i, j] += sympy.sin(sum(q[-j:i]))
+            return ret
+        
         def v(self, q, x):
             '''Parameter dependent state vector.'''
-            return [q[i % nq] for i in range(nx)]
+            return x + [sympy.sin(sum(q[i:])) for i in range(nx)]
         
         def Pv(self, q, Px):
             '''Parameter dependent state covariance.'''
-            Pv = Px.copy()
+            Pv = Px + np.eye(nx)
             for i, j in np.ndindex(nx, nx):
                 if i == j:
-                    Pv[i, j] +=  1 + 0.5 * sympy.sin(q[(i + j) % nq])
-                else:
-                    Pv[i, j] += q[(i + j) % nq] * 1e-3
+                    Pv[i, j] +=  sympy.sin(sum(q[:-i]))
+                elif i < j:
+                    Pv[i, j] +=  sympy.sin(sum(q[j:i]))
+                    Pv[j, i] +=  sympy.sin(sum(q[j:i]))
             return Pv
     
     ModelClass = sym2num.class_obj(
@@ -184,7 +201,7 @@ def model_class(nx, nq):
     )
     ModelClass.nx = nx
     ModelClass.nq = nq
-    ModelClass.ny = 2
+    ModelClass.ny = ny
     return ModelClass
 
 
@@ -205,6 +222,23 @@ def parametrized_ukf(model, ut_kappa, ut_sqrt):
         ukf.dPx_dq = model.dPv_dq()
         return ukf
     return factory
+
+def is_symmetric_positive_definite(M, tol=1e-8):
+    '''Whether a matrix is symmetric positive definite.'''
+    val, vec = np.linalg.eig(M)
+    return np.all(val > tol) and ArrayDiff(M, np.swapaxes(M, -1, -2)) < tol
+
+
+def test_cov_pd(cov):
+    '''Test if the covariance matrix generated is positive definite.'''
+    assert is_symmetric_positive_definite(cov)
+
+
+def test_model_vars(model):
+    '''Test if the model variables are consistent.'''
+    assert is_symmetric_positive_definite(model.Q())
+    assert is_symmetric_positive_definite(model.R())
+    assert is_symmetric_positive_definite(model.Pv())
 
 
 def test_ut_sqrt(ut, cov):
@@ -332,7 +366,7 @@ def test_ut_diff(ut, model, x, q):
     analytical_Px = np.rollaxis(analytical_Px, -3)
     analytical_Pio = np.rollaxis(analytical_Pio, -3)
     assert ArrayDiff(numerical_x, analytical_x) < 1e-8
-    assert ArrayDiff(numerical_Px, analytical_Px) < 5e-8
+    assert ArrayDiff(numerical_Px, analytical_Px) < 1e-8
     assert ArrayDiff(numerical_Pio, analytical_Pio) < 1e-8
 
 
@@ -443,8 +477,8 @@ def test_ut_corr_diff(parametrized_ukf, ut, q, y):
     analytical_x = np.rollaxis(ukf.dx_dq, -2)
     analytical_Px = np.rollaxis(ukf.dPx_dq, -3)
     assert ArrayDiff(numerical_L, analytical_L) < 5e-8
-    assert ArrayDiff(numerical_x, analytical_x) < 1e-7
-    assert ArrayDiff(numerical_Px, analytical_Px) < 4e-7
+    assert ArrayDiff(numerical_x, analytical_x) < 5e-8
+    assert ArrayDiff(numerical_Px, analytical_Px) < 5e-8
 
 def test_ut_corr_diff2(parametrized_ukf, ut, q, y):
     if not hasattr(ut, 'sqrt_diff'):
@@ -471,9 +505,9 @@ def test_ut_corr_diff2(parametrized_ukf, ut, q, y):
     analytical_L = np.rollaxis(ukf.d2L_dq2, -2)
     analytical_x = np.rollaxis(ukf.d2x_dq2, -3)
     analytical_Px = np.rollaxis(ukf.d2Px_dq2, -4)
-    assert ArrayDiff(numerical_L, analytical_L) < 5e-7
-    assert ArrayDiff(numerical_x, analytical_x) < 5e-6
-    assert ArrayDiff(numerical_Px, analytical_Px) < 1e-5
+    assert ArrayDiff(numerical_L, analytical_L) < 5e-8
+    assert ArrayDiff(numerical_x, analytical_x) < 5e-8
+    assert ArrayDiff(numerical_Px, analytical_Px) < 5e-8
 
 
 def test_ukf_pem_grad(parametrized_ukf, ut, q, y):
@@ -485,7 +519,7 @@ def test_ukf_pem_grad(parametrized_ukf, ut, q, y):
         return parametrized_ukf(q).pem_merit(yN)
     numerical = utils.central_diff(merit, q)
     analytical = np.rollaxis(parametrized_ukf(q).pem_gradient(yN), -1)
-    assert ArrayDiff(numerical, analytical) < 1e-7
+    assert ArrayDiff(numerical, analytical) < 5e-8
 
 
 def test_ukf_pem_hessian(parametrized_ukf, ut, q, y):
@@ -497,5 +531,5 @@ def test_ukf_pem_hessian(parametrized_ukf, ut, q, y):
         return parametrized_ukf(q).pem_gradient(yN)
     numerical = utils.central_diff(merit, q)
     analytical = np.rollaxis(parametrized_ukf(q).pem_hessian(yN), -2)
-    assert ArrayDiff(numerical, analytical) < 4e-7
+    assert ArrayDiff(numerical, analytical) < 5e-8
 
