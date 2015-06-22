@@ -75,7 +75,7 @@ class SymbolicModel(sde.SymbolicModel):
         return R
 
 
-class SymbolicDTModel(SymbolicModel, sde.ItoTaylorAS15DiscretizedModel):
+class SymbolicDTModel(SymbolicModel, sde.EulerDiscretizedModel):
     derivatives = [('df_dx', 'f', 'x'), ('df_dq', 'f', 'q'),
                    ('d2f_dx2', 'df_dx',  'x'), 
                    ('d2f_dx_dq', 'df_dx', 'q'),
@@ -111,7 +111,7 @@ GeneratedDTModel = sym2num.class_obj(
 def load_data():
     module_dir = os.path.dirname(__file__)
     filepath = os.path.join(module_dir, 'data', 'trakstar.mat')
-    interval = slice(1, 8600)
+    interval = slice(1, 3750)
     
     data = io.loadmat(filepath)
     tmeas = data['time'].flatten()[interval]
@@ -166,11 +166,17 @@ def pem(t, y):
         kf = kalman.DTUnscentedKalmanFilter(mq, x0, Px0)
         return obj_factor * kf.pem_hessian(y)[hess_inds]
     
-    q_bounds = np.tile([[-np.inf], [np.inf]], model.nq)
-    problem = ipopt.Problem(q_bounds, merit, grad, 
+    q_lb = dict(
+        pos_meas_std=0, ang_meas_std=0,
+        linvel_png=0, angvel_png=0,
+    )
+    q_ub = dict()
+    q_fix = dict()
+    q_bounds = [model.pack('q', dict(q_lb, **q_fix), fill=-np.inf),
+                model.pack('q', dict(q_ub, **q_fix), fill=np.inf)]
+    problem = ipopt.Problem(q_bounds, merit, grad,
                             hess=hess, hess_inds=hess_inds)
     problem.num_option(b'obj_scaling_factor', -1)
     (qopt, solinfo) = problem.solve(q0)
-
+    
     return problem, qopt, solinfo, model, q0, x0, Px0
-

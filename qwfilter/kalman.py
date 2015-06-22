@@ -3,14 +3,10 @@
 TODO
 ----
 * Add derivative of SVD square root.
-* Vectorize the UT functions.
 * Make docstrings for all constructors.
-* Implement filter Hessian.
 
 Improvement ideas
 -----------------
-* Allow gradients and Hessian to be calculated offline, saving processing time  
-  at the cost of memory.
 
 """
 
@@ -87,17 +83,51 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
     def correct(self, y):
         """Correct the state distribution, given the measurement vector."""
         raise NotImplementedError("Pure abstract method.")
+
+    def smoother_correction(self, xpred, Pxpred, Pxf, xsmooth, Pxsmooth):
+        PxIpred = np.linalg.inv(Pxpred)
+        K = np.einsum('...ij,...jk', Pxf, PxIpred)
+        e = xsmooth - xpred
+        x_inc = np.einsum('...ij,...j', K, e)
+        Px_inc = np.einsum('...ij,...jk,...lk', K, Pxsmooth - Pxpred, K)
+        return x_inc, Px_inc
     
     def filter(self, y):
         y = np.asanyarray(y)
         N = len(y)
-        x = np.zeros((N,) + np.shape(self.x))
-        Px = np.zeros((N,) + np.shape(self.x) + (self.model.nx,))
+        x = np.zeros((N,) + self.x.shape)
+        Px = np.zeros((N,) + self.x.shape + (self.model.nx,))
         
         for k in range(N):
             x[k], Px[k] = self.correct(y[k])
             if k < N - 1:
                 self.predict()
+        
+        return x, Px
+
+    def smooth(self, y):
+        y = np.asanyarray(y)
+        N = len(y)
+        x = np.zeros((N,) + np.shape(self.x))
+        xpred = np.zeros_like(x)
+        Px = np.zeros((N,) + np.shape(self.x) + (self.model.nx,))
+        Pxpred = np.zeros_like(Px)
+        Pxfpred = np.zeros((N - 1,) + np.shape(self.x) + (self.model.nx,))
+        
+        xpred[0] = self.x
+        Pxpred[0] = self.Px
+        for k in range(N):
+            x[k], Px[k] = self.correct(y[k])
+            if k < N - 1:
+                xpred[k+1], Pxpred[k+1] = self.predict()
+                Pxfpred[k] = self.prediction_crosscov()
+        
+        for k in reversed(range(1, N)):
+            x_inc, Px_inc = self.smoother_correction(
+                xpred[k], Pxpred[k], Pxfpred[k-1], x[k], Px[k]
+            )
+            x[k - 1] += x_inc
+            Px[k - 1] += Px_inc
         
         return x, Px
     
@@ -508,6 +538,9 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
                              dx_dq, self.model.d2Q_dx2(k, x), dx_dq)
         self.d2x_dq2 = D2f_Dq2
         self.d2Px_dq2 = D2Pf_Dq2 + D2Q_Dq2
+
+    def prediction_crosscov(self):
+        return self.__ut.crosscov()
 
 
 class DTUnscentedCorrector(DTKalmanFilterBase):
