@@ -1,4 +1,4 @@
-'''Path reconstruction of an Ascention Technology trakSTAR sensor.'''
+'''Attitude reconstruction of an Ascention Technology trakSTAR sensor.'''
 
 
 import os
@@ -25,14 +25,13 @@ class SymbolicModel(sde.SymbolicModel):
     t = 't'
     '''Time variable.'''
     
-    x = ['x', 'y', 'z', 'u', 'v', 'w', 
-         'phi', 'theta', 'psi', 'p', 'q', 'r']
+    x = ['phi', 'theta', 'psi', 'p', 'q', 'r']
     '''State vector.'''
     
-    y = ['x_meas', 'y_meas', 'z_meas', 'phi_meas', 'theta_meas', 'psi_meas']
+    y = ['phi_meas', 'theta_meas', 'psi_meas']
     '''Measurement vector.'''
     
-    q = ['linvel_png', 'angvel_png', 'pos_meas_std', 'ang_meas_std']
+    q = ['angvel_png', 'ang_meas_std']
     '''Parameter vector.'''
     
     c = []
@@ -46,10 +45,10 @@ class SymbolicModel(sde.SymbolicModel):
         costheta = sympy.cos(s.theta)
         tantheta = sympy.tan(s.theta)
         derivs = dict(
-            x=s.u, y=s.v, z=s.w, u=0, v=0, w=0, p=0, q=0, r=0,
             phi=s.p + s.q*tantheta*sinphi + s.r*tantheta*cosphi,
             theta=s.q*cosphi - s.r*sinphi,
-            psi=s.q*sinphi/costheta + s.r*cosphi/costheta
+            psi=s.q*sinphi/costheta + s.r*cosphi/costheta,
+            p=0, q=0, r=0
         )
         return self.pack('x', derivs)
     
@@ -57,25 +56,23 @@ class SymbolicModel(sde.SymbolicModel):
         '''Diffusion matrix.'''
         s = self.symbols(t=t, x=x, q=q, c=c)
         g = np.zeros((x.size, 6), object)
-        g[[3, 4, 5], [0, 1, 2]] = s.linvel_png
-        g[[9, 10, 11], [3, 4, 5]] = s.angvel_png
+        g[[3, 4, 5], [0, 1, 2]] = s.angvel_png
         return g
     
     def h(self, t, x, q, c):
         '''Measurement function.'''
         s = self.symbols(t=t, x=x, q=q, c=c)
-        meas = dict(x_meas=s.x, y_meas=s.y, z_meas=s.z, 
-                    phi_meas=s.phi, theta_meas=s.theta, psi_meas=s.psi)
+        meas = dict(phi_meas=s.phi, theta_meas=s.theta, psi_meas=s.psi)
         return self.pack('y', meas)
     
     def R(self, q, c):
         '''Measurement function.'''
         s = self.symbols(q=q, c=c)
-        R = np.diag(np.repeat([s.pos_meas_std, s.ang_meas_std], 3))**2
+        R = np.diag(np.repeat([s.ang_meas_std], 3))**2
         return R
 
 
-class SymbolicDTModel(SymbolicModel, sde.EulerDiscretizedModel):
+class SymbolicDTModel(SymbolicModel, sde.ItoTaylorAS15DiscretizedModel):
     derivatives = [('df_dx', 'f', 'x'), ('df_dq', 'f', 'q'),
                    ('d2f_dx2', 'df_dx',  'x'), 
                    ('d2f_dx_dq', 'df_dx', 'q'),
@@ -111,34 +108,28 @@ GeneratedDTModel = sym2num.class_obj(
 def load_data():
     module_dir = os.path.dirname(__file__)
     filepath = os.path.join(module_dir, 'data', 'trakstar.mat')
-    interval = slice(1, 3750)
+    interval = slice(95, 400)
+    upsample = 4
     
     data = io.loadmat(filepath)
-    tmeas = data['time'].flatten()[interval]
-    tmeas -= tmeas[0]
+    dt = (data['time'].flat[1] - data['time'].flat[0]) / upsample
     q0, q1, q2, q3 = data['q'][interval].T
     phi = np.arctan2(2*(q0*q1 + q2*q3), 1 - 2*(q1**2 + q2**2))
     theta = np.arcsin(2*(q0*q2 - q1*q3))
     psi = np.arctan2(2*(q0*q3 + q1*q2), 1 - 2*(q2**2 + q3**2))
     
-    y_dict = dict(
-        x_meas=data['x'].flatten()[interval],
-        y_meas=data['y'].flatten()[interval],
-        z_meas=data['z'].flatten()[interval],
-        phi_meas=phi, theta_meas=theta, psi_meas=psi,
-    )
-    y_dict['x_meas'] -= y_dict['x_meas'][0]
-    y_dict['y_meas'] -= y_dict['y_meas'][0]
-    y_dict['z_meas'] -= y_dict['z_meas'][0]
-    y = GeneratedDTModel.pack('y', y_dict, fill=np.zeros_like(tmeas))
-    return tmeas, y
+    N = len(q0)
+    t = np.arange(N * upsample) * dt
+    y_dict = dict(phi_meas=phi, theta_meas=theta, psi_meas=psi)
+    y = ma.masked_all((N * upsample, GeneratedDTModel.ny))
+    y[::upsample] = GeneratedDTModel.pack('y', y_dict, fill=np.zeros_like(q0))
+    return t, y
 
 
 def pem(t, y):
     # Instantiate the model
     given = dict(
-        pos_meas_std=0.04, ang_meas_std=5e-4,
-        linvel_png=50, angvel_png=5,
+        ang_meas_std=2.4e-4, angvel_png=3,
     )
     dt = t[1] - t[0]
     q0 = GeneratedDTModel.pack('q', given)
@@ -147,8 +138,8 @@ def pem(t, y):
     sampled = dict(t=t)
     model = GeneratedDTModel(params, sampled)
     x0 = np.zeros(GeneratedDTModel.nx)
-    x0[-3:] = y[0, -3:]
-    Px0 = np.diag(np.repeat([1, 10, 1e-3, 1e-3], 3))
+    x0[:3] = y[0, :3]
+    Px0 = np.diag(np.repeat([1e-3, 1e-3], 3))
     
     def merit(q, new=None):
         mq = model.parametrize(q=q)
@@ -166,12 +157,9 @@ def pem(t, y):
         kf = kalman.DTUnscentedKalmanFilter(mq, x0, Px0)
         return obj_factor * kf.pem_hessian(y)[hess_inds]
     
-    q_lb = dict(
-        pos_meas_std=0, ang_meas_std=0,
-        linvel_png=0, angvel_png=0,
-    )
+    q_lb = dict(ang_meas_std=0, angvel_png=0)
     q_ub = dict()
-    q_fix = dict()
+    q_fix = dict(ang_meas_std=2.4e-4)
     q_bounds = [model.pack('q', dict(q_lb, **q_fix), fill=-np.inf),
                 model.pack('q', dict(q_ub, **q_fix), fill=np.inf)]
     problem = ipopt.Problem(q_bounds, merit, grad,
