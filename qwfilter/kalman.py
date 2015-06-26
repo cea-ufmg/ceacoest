@@ -379,7 +379,7 @@ class DifferentiableCholesky:
         
         Returns
         -------
-        dS_dq : (..., nq, ni, ni) array_like
+        dS_dq : (..., nq, ni, ni) array
             The derivative of the Cholesky decomposition of `Q` with respect
             to the parameter vector.
         
