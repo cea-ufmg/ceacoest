@@ -14,11 +14,11 @@ import pytest
 import sympy
 import sym2num
 
-from qwfilter import kalman, utils
+from ceacoest import kalman, utils
 
 
-pytest_plugins = "qwfilter.testsupport.array_cmp"
-from qwfilter.testsupport.array_cmp import ArrayDiff
+pytest_plugins = "ceacoest.testsupport.array_cmp"
+from ceacoest.testsupport.array_cmp import ArrayDiff
 
 
 @pytest.fixture(params=range(4))

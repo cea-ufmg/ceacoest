@@ -16,7 +16,7 @@ import sympy
 import sym2num
 
 
-sde_model_append_template = """\
+sde_model_append_template = '''\
     nx = {nx}
     """Length of the state vector."""
 
@@ -27,7 +27,7 @@ sde_model_append_template = """\
     """Length of the process noise vector."""
 
     nq = {nq}
-    """Length of the unknown parameter vector.""""""
+    """Length of the unknown parameter vector."""'''
 
 
 class SymbolicModel(sym2num.SymbolicModel):
