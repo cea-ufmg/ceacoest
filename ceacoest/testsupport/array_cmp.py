@@ -1,4 +1,4 @@
-'''Pytest plugin for numpy array and array_like comparisons.'''
+"""Pytest plugin for numpy array and array_like comparisons."""
 
 
 import numpy as np
@@ -71,7 +71,7 @@ class ArrayDiff:
 
 
 def pytest_assertrepr_compare(config, op, left, right):
-    '''Return explanation for comparisons in failing ArrayDiff assertions.'''
+    """Return explanation for comparisons in failing ArrayDiff assertions."""
     if isinstance(left, ArrayDiff) and op == "<":
         return left.report(config)
 

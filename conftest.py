@@ -1,4 +1,4 @@
-'''pytest configuration module.'''
+"""pytest configuration module."""
 
 import os.path
 

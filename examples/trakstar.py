@@ -1,4 +1,4 @@
-'''Attitude reconstruction of an Ascention Technology trakSTAR sensor.'''
+"""Attitude reconstruction of an Ascention Technology trakSTAR sensor."""
 
 
 import os
@@ -10,35 +10,35 @@ import sym2num
 from numpy import ma
 from scipy import io
 
-from qwfilter import kalman, sde, utils
+from ceacoest import kalman, sde, utils
 
 
 class SymbolicModel(sde.SymbolicModel):
-    '''Symbolic SDE model.'''
+    """Symbolic SDE model."""
     
     var_names = {'t', 'x', 'y', 'q', 'c'}
-    '''Name of model variables.'''
+    """Name of model variables."""
     
     function_names = {'f', 'g', 'h', 'R'}
-    '''Name of the model functions.'''
+    """Name of the model functions."""
     
     t = 't'
-    '''Time variable.'''
+    """Time variable."""
     
     x = ['phi', 'theta', 'psi', 'p', 'q', 'r']
-    '''State vector.'''
+    """State vector."""
     
     y = ['phi_meas', 'theta_meas', 'psi_meas']
-    '''Measurement vector.'''
+    """Measurement vector."""
     
     q = ['angvel_png', 'ang_meas_std']
-    '''Parameter vector.'''
+    """Parameter vector."""
     
     c = []
-    '''Constants vector.'''
+    """Constants vector."""
     
     def f(self, t, x, q, c):
-        '''Drift function.'''
+        """Drift function."""
         s = self.symbols(t=t, x=x, q=q, c=c)
         sinphi = sympy.sin(s.phi)
         cosphi = sympy.cos(s.phi)
@@ -53,20 +53,20 @@ class SymbolicModel(sde.SymbolicModel):
         return self.pack('x', derivs)
     
     def g(self, t, x, q, c):
-        '''Diffusion matrix.'''
+        """Diffusion matrix."""
         s = self.symbols(t=t, x=x, q=q, c=c)
         g = np.zeros((x.size, 6), object)
         g[[3, 4, 5], [0, 1, 2]] = s.angvel_png
         return g
     
     def h(self, t, x, q, c):
-        '''Measurement function.'''
+        """Measurement function."""
         s = self.symbols(t=t, x=x, q=q, c=c)
         meas = dict(phi_meas=s.phi, theta_meas=s.theta, psi_meas=s.psi)
         return self.pack('y', meas)
     
     def R(self, q, c):
-        '''Measurement function.'''
+        """Measurement function."""
         s = self.symbols(q=q, c=c)
         R = np.diag(np.repeat([s.ang_meas_std], 3))**2
         return R
@@ -86,13 +86,13 @@ class SymbolicDTModel(SymbolicModel, sde.ItoTaylorAS15DiscretizedModel):
                    ('d2h_dx_dq', 'dh_dx', 'q'),
                    ('d2h_dq2', 'dh_dq',  'q'),
                    ('dR_dq', 'R', 'q'), ('d2R_dq2', 'dR_dq', 'q')]
-    '''List of the model function derivatives to calculate / generate.'''
+    """List of the model function derivatives to calculate / generate."""
     
     dt = 'dt'
-    '''Discretization time step.'''
+    """Discretization time step."""
 
     k = 'k'
-    '''Discretized sample index.'''
+    """Discretized sample index."""
 
 
 sym_model = SymbolicModel()

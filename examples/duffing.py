@@ -1,4 +1,4 @@
-'''Test various modules using a Duffing oscillator SDE model.'''
+"""Test various modules using a Duffing oscillator SDE model."""
 
 
 import ipopt
@@ -8,35 +8,35 @@ import sym2num
 from numpy import ma
 from scipy import stats
 
-from qwfilter import kalman, sde, utils
+from ceacoest import kalman, sde, utils
 
 
 class SymbolicDuffing(sde.SymbolicModel):
-    '''Symbolic Duffing oscillator model.'''
+    """Symbolic Duffing oscillator model."""
 
     var_names = {'t', 'x', 'y', 'q', 'c'}
-    '''Name of model variables.'''
+    """Name of model variables."""
     
     function_names = {'f', 'g', 'h', 'R'}
-    '''Name of the model functions.'''
+    """Name of the model functions."""
 
     t = 't'
-    '''Time variable.'''
+    """Time variable."""
     
     x = ['x', 'v']
-    '''State vector.'''
+    """State vector."""
     
     y = ['x_meas']
-    '''Measurement vector.'''
+    """Measurement vector."""
     
     q = ['alpha', 'beta', 'delta', 'g2', 'x_meas_std']
-    '''Unknown parameter vector.'''
+    """Unknown parameter vector."""
     
     c = ['gamma', 'omega']
-    '''Constants vector.'''
+    """Constants vector."""
     
     def f(self, t, x, q, c):
-        '''Drift function.'''
+        """Drift function."""
         s = self.symbols(t=t, x=x, q=q, c=c)
         f1 = s.v
         f2 = (-s.delta * s.v - s.beta * s.x - s.alpha * s.x ** 3  +
@@ -44,17 +44,17 @@ class SymbolicDuffing(sde.SymbolicModel):
         return [f1, f2]
     
     def g(self, t, x, q, c):
-        '''Diffusion matrix.'''
+        """Diffusion matrix."""
         s = self.symbols(t=t, x=x, q=q, c=c)
         return [[0, 0], [0, s.g2]]
     
     def h(self, t, x, q, c):
-        '''Measurement function.'''
+        """Measurement function."""
         s = self.symbols(t=t, x=x, q=q, c=c)
         return [s.x]
     
     def R(self, q, c):
-        '''Measurement function.'''
+        """Measurement function."""
         s = self.symbols(q=q, c=c)
         return [[s.x_meas_std ** 2]]
 
@@ -73,13 +73,13 @@ class SymbolicDTDuffing(SymbolicDuffing, sde.ItoTaylorAS15DiscretizedModel):
                    ('d2h_dx_dq', 'dh_dx', 'q'),
                    ('d2h_dq2', 'dh_dq',  'q'),
                    ('dR_dq', 'R', 'q'), ('d2R_dq2', 'dR_dq', 'q')]
-    '''List of the model function derivatives to calculate / generate.'''
+    """List of the model function derivatives to calculate / generate."""
     
     dt = 'dt'
-    '''Discretization time step.'''
+    """Discretization time step."""
 
     k = 'k'
-    '''Discretized sample index.'''
+    """Discretized sample index."""
 
 
 sym_duffing = SymbolicDuffing()

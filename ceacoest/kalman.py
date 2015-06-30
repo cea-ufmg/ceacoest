@@ -48,31 +48,31 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         """Time index."""
         
         self.L = options.get('L', 0.0)
-        '''Measurement log-likelihood.'''
+        """Measurement log-likelihood."""
         
         nq = model.nq
         nx = model.nx
         base_shape = self.x.shape[:-1]
         self.base_shape = base_shape
-        '''Base shape of broadcasting.'''
+        """Base shape of broadcasting."""
         
         self.dL_dq = options.get('dL_dq', np.zeros(base_shape + (nq,)))
-        '''Measurement log-likelihood derivative.'''
+        """Measurement log-likelihood derivative."""
 
         self.d2L_dq2 = options.get('dL_dq', np.zeros(base_shape + (nq, nq)))
-        '''Measurement log-likelihood derivative.'''
+        """Measurement log-likelihood derivative."""
 
         self.dx_dq = options.get('dx_dq', np.zeros(base_shape + (nq, nx)))
-        '''State vector derivative.'''
+        """State vector derivative."""
         
         self.dPx_dq = options.get('dPx_dq', np.zeros(base_shape + (nq, nx, nx)))
-        '''State vector covariance derivative.'''
+        """State vector covariance derivative."""
 
         self.d2x_dq2 = options.get('dx_dq', np.zeros(base_shape + (nq, nq, nx)))
-        '''State vector derivative.'''
+        """State vector derivative."""
         
         self.d2Px_dq2 = options.get('dPx_dq',np.zeros(base_shape+(nq,nq,nx,nx)))
-        '''State vector covariance derivative.'''
+        """State vector covariance derivative."""
     
     @abc.abstractmethod
     def predict(self):

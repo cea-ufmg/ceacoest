@@ -1,10 +1,10 @@
-'''Stochastic differential equation module.
+"""Stochastic differential equation module.
 
 TODO
 ----
  * Merge signatures of f and g for the Ito-Taylor order 1.5 discretization.
 
-'''
+"""
 
 
 import abc
@@ -16,7 +16,7 @@ import sympy
 import sym2num
 
 
-sde_model_append_template = '''\
+sde_model_append_template = """\
     nx = {nx}
     """Length of the state vector."""
 
@@ -27,46 +27,46 @@ sde_model_append_template = '''\
     """Length of the process noise vector."""
 
     nq = {nq}
-    """Length of the unknown parameter vector."""'''
+    """Length of the unknown parameter vector.""""""
 
 
 class SymbolicModel(sym2num.SymbolicModel):
 
     var_names = {'t', 'x'}
-    '''Name of the model variables.'''
+    """Name of the model variables."""
     
     function_names = {'f', 'g'}
-    '''Name of the model functions.'''
+    """Name of the model functions."""
     
     @property
     @abc.abstractmethod
     def t(self):
-        '''The time variable.'''
+        """The time variable."""
         raise NotImplementedError("Pure abstract property, must be overloaded.")
 
     @property
     @abc.abstractmethod
     def x(self):
-        '''The state vector.'''
+        """The state vector."""
         raise NotImplementedError("Pure abstract property, must be overloaded.")
     
     @abc.abstractmethod
     def f(self, t, x, *args):
-        '''SDE drift function.'''
+        """SDE drift function."""
         raise NotImplementedError("Pure abstract method, must be overloaded.")
 
     @abc.abstractmethod
     def g(self, t, x, *args):
-        '''SDE diffusion.'''
+        """SDE diffusion."""
         raise NotImplementedError("Pure abstract method, must be overloaded.")
 
     def _init_variables(self):
-        '''Initialize model variables.'''
+        """Initialize model variables."""
         self.var_names = set.union(self.var_names, {'x', 't'})
         super()._init_variables()
     
     def _init_functions(self):
-        '''Initialize model functions.'''
+        """Initialize model functions."""
         self.function_names = set.union(self.function_names, {'f', 'g'})
         super()._init_functions()
         
@@ -75,7 +75,7 @@ class SymbolicModel(sym2num.SymbolicModel):
             self._add_default_Q()
 
     def _add_default_Q(self):
-        '''Add default implementation for `Q = g * g.T`.'''
+        """Add default implementation for `Q = g * g.T`."""
         g = self.functions['g']
         Qexpr = np.dot(g.out, g.out.T)
         self.functions['Q'] = sym2num.SymbolicFunction(Qexpr, g.args, 'Q')
@@ -95,33 +95,33 @@ class SymbolicDiscretizedModel(SymbolicModel):
     @property
     @abc.abstractmethod
     def k(self):
-        '''The discrete-time sample index.'''
+        """The discrete-time sample index."""
         raise NotImplementedError("Pure abstract property, must be overloaded.")
     
     @property
     @abc.abstractmethod
     def dt(self):
-        '''The time step in a discrete-time transition.'''
+        """The time step in a discrete-time transition."""
         raise NotImplementedError("Pure abstract property, must be overloaded.")
     
     def _init_variables(self):
-        '''Initialize model variables.'''
+        """Initialize model variables."""
         self.var_names = set.union(self.var_names, {'dt', 'k'})
         super()._init_variables()
     
     def _init_functions(self):
-        '''Initialize the model functions.'''
+        """Initialize the model functions."""
         super()._init_functions() # Initialize base class functions
         self._discretize_sde() # Generate the discretized drift and diffusion
         self._discretize_extra() # Discretize any remaining model functions
     
     @abc.abstractmethod
     def _discretize_sde(self):
-        '''Discretize the drift and diffusion functions.'''
+        """Discretize the drift and diffusion functions."""
         raise NotImplementedError("Pure abstract method, must be overloaded.")
 
     def _discretize_extra(self):
-        '''Discretize other model functions.'''
+        """Discretize other model functions."""
         for f in self.functions.values():
             fargs = f.args
             f.args = self._discretized_args(fargs)
@@ -146,7 +146,7 @@ class SymbolicDiscretizedModel(SymbolicModel):
 
 class EulerDiscretizedModel(SymbolicDiscretizedModel):
     def _discretize_sde(self):
-        '''Discretize the drift and diffusion functions.'''
+        """Discretize the drift and diffusion functions."""
         # Get the discretization variables
         t = self.vars['t']
         dt = self.vars['dt']
@@ -168,10 +168,10 @@ class EulerDiscretizedModel(SymbolicDiscretizedModel):
 
 
 class ItoTaylorAS15DiscretizedModel(SymbolicDiscretizedModel):
-    '''Strong order 1.5 Ito--Taylor discretization for additive noise models.'''
+    """Strong order 1.5 Ito--Taylor discretization for additive noise models."""
     
     def _discretize_sde(self):
-        '''Discretize the drift and diffusion functions.'''
+        """Discretize the drift and diffusion functions."""
         # Compute the derivatives
         self.add_derivative('df_dt', 'f', 't')
         self.add_derivative('df_dx', 'f', 'x')

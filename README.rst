@@ -1,4 +1,5 @@
-qwfilter
+ceacoest
 ========
 
-"QW" filtering/smoothing library.
+Control and estimation library of the Centro de Estudos Aeronáuticos (CEA)
+of the Universidade Federal de Minas Gerais (UFMG).

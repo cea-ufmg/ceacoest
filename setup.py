@@ -17,8 +17,8 @@ Topic :: Scientific/Engineering
 Topic :: Software Development'''
 
 setup(
-    name="qwfilter",
-    version="0.1.dev2",
+    name="ceacoest",
+    version="0.1.dev3",
     packages=find_packages(),
     install_requires=["attrdict", "numpy", "scipy", "sym2num"],
     test_requires=["pytest"],
@@ -26,9 +26,9 @@ setup(
     # metadata for upload to PyPI
     author="Dimas Abreu Dutra",
     author_email="dimasadutra@gmail.com",
-    description='"QW" filtering and smoothing library.',
+    description='CEA control and estimation library.',
     classifiers=CLASSIFIERS.split('\n'),
     platforms=["Linux", "Unix"],
     license="MIT",
-    url="http://github.com/dimasad/qwfilter",
+    url="http://github.com/dimasad/ceacoest",
 )

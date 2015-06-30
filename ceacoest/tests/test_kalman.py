@@ -108,14 +108,14 @@ def ut(ut_sqrt, ut_kappa, nx):
 
 @pytest.fixture(scope='module')
 def model_class(nx, ny, nq):
-    '''Discrete-time test model.'''
+    """Discrete-time test model."""
     
     class SymbolicModel(sym2num.SymbolicModel):
         var_names = {'k', 'x', 'q', 'Px'}
-        '''Name of model variables.'''
+        """Name of model variables."""
         
         function_names = {'f', 'h', 'Q', 'R', 'v', 'Pv'}
-        '''Name of the model functions.'''
+        """Name of the model functions."""
         
         derivatives = [('df_dx', 'f', 'x'), ('df_dq', 'f', 'q'),
                        ('d2f_dx2', 'df_dx',  'x'), 
@@ -132,22 +132,22 @@ def model_class(nx, ny, nq):
                        ('dR_dq', 'R', 'q'), ('d2R_dq2', 'dR_dq', 'q'),
                        ('dv_dq', 'v', 'q'), ('d2v_dq2', 'dv_dq', 'q'),
                        ('dPv_dq', 'Pv', 'q'), ('d2Pv_dq2', 'dPv_dq', 'q')]
-        '''List of the model function derivatives to calculate / generate.'''
+        """List of the model function derivatives to calculate / generate."""
         
         k = 'k'
-        '''Discretized sample index.'''
+        """Discretized sample index."""
         
         x = ['x%d' % i for i in range(nx)]
-        '''State vector.'''
+        """State vector."""
     
         q = ['q%d' % i for i in range(nq)]
-        '''State vector.'''
+        """State vector."""
 
         Px = [['Px%d_%d' % (i, j) for j in range(nx)] for i in range(nx)]
-        '''State covariance matrix.'''
+        """State covariance matrix."""
 
         def f(self, k, x, q):
-            '''Drift function.'''
+            """Drift function."""
             ret = np.zeros(nx, dtype=object)
             for i, j in np.ndindex(nx, nq):
                 if i >= j:
@@ -155,11 +155,11 @@ def model_class(nx, ny, nq):
             return ret
         
         def h(self, k, x, q):
-            '''Measurement function.'''
+            """Measurement function."""
             return [sympy.cos(sum(x[i:]) + sum(q[-i:])) for i in range(ny)]
 
         def Q(self, k, x, q):
-            '''Measurement function.'''
+            """Measurement function."""
             ret = 2 * np.eye(nx, dtype=object)
             for i, j in np.ndindex(nx, nx):
                 if i < j:
@@ -170,7 +170,7 @@ def model_class(nx, ny, nq):
             return ret
         
         def R(self, q, k):
-            '''Measurement function.'''
+            """Measurement function."""
             ret = 2 * np.eye(ny, dtype=object)
             for i, j in np.ndindex(ny, ny):
                 if i < j:
@@ -181,11 +181,11 @@ def model_class(nx, ny, nq):
             return ret
         
         def v(self, q, x):
-            '''Parameter dependent state vector.'''
+            """Parameter dependent state vector."""
             return x + [sympy.sin(sum(q[i:])) for i in range(nx)]
         
         def Pv(self, q, Px):
-            '''Parameter dependent state covariance.'''
+            """Parameter dependent state covariance."""
             Pv = Px + np.eye(nx)
             for i, j in np.ndindex(nx, nx):
                 if i == j:
@@ -224,18 +224,18 @@ def parametrized_ukf(model, ut_kappa, ut_sqrt):
     return factory
 
 def is_symmetric_positive_definite(M, tol=1e-8):
-    '''Whether a matrix is symmetric positive definite.'''
+    """Whether a matrix is symmetric positive definite."""
     val, vec = np.linalg.eig(M)
     return np.all(val > tol) and ArrayDiff(M, np.swapaxes(M, -1, -2)) < tol
 
 
 def test_cov_pd(cov):
-    '''Test if the covariance matrix generated is positive definite.'''
+    """Test if the covariance matrix generated is positive definite."""
     assert is_symmetric_positive_definite(cov)
 
 
 def test_model_vars(model):
-    '''Test if the model variables are consistent.'''
+    """Test if the model variables are consistent."""
     assert is_symmetric_positive_definite(model.Q())
     assert is_symmetric_positive_definite(model.R())
     assert is_symmetric_positive_definite(model.Pv())

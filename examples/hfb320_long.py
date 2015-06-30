@@ -1,4 +1,4 @@
-'''Prediction Error Method for the HFB-320 aircraft longitudinal motion.'''
+"""Prediction Error Method for the HFB-320 aircraft longitudinal motion."""
 
 
 import os.path
@@ -10,38 +10,38 @@ import sym2num
 from numpy import ma
 from scipy import stats
 
-from qwfilter import kalman, sde, utils
+from ceacoest import kalman, sde, utils
 
 
 class SymbolicModel(sde.SymbolicModel):
-    '''Symbolic HFB-320 longitudinal motion model.'''
+    """Symbolic HFB-320 longitudinal motion model."""
 
     var_names = {'t', 'x', 'y', 'u', 'q', 'c'}
-    '''Name of model variables.'''
+    """Name of model variables."""
     
     function_names = {'f', 'g', 'h', 'R'}
-    '''Name of the model functions.'''
+    """Name of the model functions."""
 
     t = 't'
-    '''Time variable.'''
+    """Time variable."""
     
     x = ['vT', 'alpha', 'theta', 'q']
-    '''State vector.'''
+    """State vector."""
     
     y = ['vT_meas', 'alpha_meas', 'theta_meas', 'q_meas', 'ax_meas', 'az_meas']
-    '''Measurement vector.'''
+    """Measurement vector."""
 
     u = ['de', 'Fe']
-    '''Exogenous input vector.'''
+    """Exogenous input vector."""
     
     q = ['CD0', 'CDv', 'CDa', 'CL0', 'CLv', 'CLa',
          'Cm0', 'Cmv', 'Cma', 'Cmq', 'Cmde', 
          'alpha_png', 'vT_png', 'q_png',
          'vT_mng', 'alpha_mng', 'theta_mng', 'q_mng', 'ax_mng', 'az_mng']
-    '''Unknown parameter vector.'''
+    """Unknown parameter vector."""
     
     c = ['g0', 'Sbym', 'Scbyiy', 'Feiylt', 'v0', 'rm', 'sigmat', 'rho']
-    '''Constants vector.'''
+    """Constants vector."""
 
     def coefs(self, x, q, u, c):
         s = self.symbols(x=x, q=q, u=u, c=c)
@@ -54,7 +54,7 @@ class SymbolicModel(sde.SymbolicModel):
         return [CD, CL, Cm, Cx, Cz]
     
     def f(self, t, x, q, u, c):
-        '''Drift function.'''
+        """Drift function."""
         [CD, CL, Cm, Cx, Cz] = self.coefs(x, q, u, c)
         s = self.symbols(t=t, x=x, q=q, u=u, c=c)
         qbar = 0.5 * s.rho * s.vT ** 2
@@ -68,14 +68,14 @@ class SymbolicModel(sde.SymbolicModel):
         return self.pack('x', derivs)
     
     def g(self, t, x, q, u, c):
-        '''Diffusion matrix.'''
+        """Diffusion matrix."""
         s = self.symbols(t=t, x=x, q=q, c=c)
         return np.c_[self.pack('x', vT=s.vT_png),
                      self.pack('x', alpha=s.alpha_png),
                      self.pack('x', q=s.q_png)]
     
     def h(self, t, x, q, u, c):
-        '''Measurement function.'''
+        """Measurement function."""
         [CD, CL, Cm, Cx, Cz] = self.coefs(x, q, u, c)
         s = self.symbols(t=t, x=x, q=q, u=u, c=c)
         qbar = 0.5 * s.rho * s.vT ** 2
@@ -87,7 +87,7 @@ class SymbolicModel(sde.SymbolicModel):
         return self.pack('y', meas)
     
     def R(self, q, c):
-        '''Measurement function.'''
+        """Measurement function."""
         s = self.symbols(q=q, c=c)
         mng = dict(vT_meas=s.vT_mng, alpha_meas=s.alpha_mng, 
                    theta_meas=s.theta_mng, q_meas=s.q_mng, 
@@ -109,13 +109,13 @@ class SymbolicDTModel(SymbolicModel, sde.EulerDiscretizedModel):
                    ('d2h_dx_dq', 'dh_dx', 'q'),
                    ('d2h_dq2', 'dh_dq',  'q'),
                    ('dR_dq', 'R', 'q'), ('d2R_dq2', 'dR_dq', 'q')]
-    '''List of the model function derivatives to calculate / generate.'''
+    """List of the model function derivatives to calculate / generate."""
     
     dt = 'dt'
-    '''Discretization time step.'''
+    """Discretization time step."""
     
     k = 'k'
-    '''Discretized sample index.'''
+    """Discretized sample index."""
 
 
 sym_dt_model = SymbolicDTModel()

@@ -1,4 +1,4 @@
-'''General utility and convenience functions.'''
+"""General utility and convenience functions."""
 
 import re
 
@@ -6,7 +6,7 @@ import numpy as np
 
 
 def central_diff(f, x, min_step=1e-7, rel_step=1e-7):
-    '''Vectorized central finite difference.
+    """Vectorized central finite difference.
     
     Parameters
     ----------
@@ -25,7 +25,7 @@ def central_diff(f, x, min_step=1e-7, rel_step=1e-7):
     >>> np.allclose(numerical_diff, analytical_diff)
     True
     
-    '''
+    """
     x = np.asarray(x, float)
     h = np.maximum(x*rel_step, min_step)
 
@@ -47,7 +47,7 @@ def central_diff(f, x, min_step=1e-7, rel_step=1e-7):
 
 
 def forward_diff(f, x, min_step=1e-7, rel_step=1e-7):
-    '''Vectorized forward finite difference.
+    """Vectorized forward finite difference.
     
     Parameters
     ----------
@@ -66,7 +66,7 @@ def forward_diff(f, x, min_step=1e-7, rel_step=1e-7):
     >>> np.allclose(numerical_diff, analytical_diff)
     True
     
-    '''
+    """
     x = np.asarray(x, float)
     h = np.maximum(x*rel_step, min_step)
     f0 = np.asarray(f(x))
@@ -81,13 +81,13 @@ def forward_diff(f, x, min_step=1e-7, rel_step=1e-7):
 
 
 def extract_subkeys(d, base):
-    '''Extract items from a dictionary with keys starting with a given string.
+    """Extract items from a dictionary with keys starting with a given string.
 
     >>> d = {'xxx_yyy': 1, 'xyz': 'abc'}
     >>> extract_subkeys(d, 'xxx_')
     {'yyy': 1}
     
-    '''
+    """
     subkeys = {}
     for key, val in d.items():
         match = re.match('%s(?P<subkey>\w+)' % base, key)
