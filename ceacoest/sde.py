@@ -80,8 +80,8 @@ class SymbolicModel(sym2num.SymbolicModel):
         Qexpr = np.dot(g.out, g.out.T)
         self.functions['Q'] = sym2num.SymbolicFunction(Qexpr, g.args, 'Q')
     
-    def print_class(self, printer, name=None, signature=''):
-        base_code = super().print_class(printer, name, signature)
+    def print_class(self, printer):
+        base_code = super().print_class(printer)
         nx = self.vars['x'].size
         nw = self.functions['g'].out.shape[1]
         nq = self.vars['q'].size if 'q' in self.vars else 0

@@ -94,15 +94,13 @@ class SymbolicDTModel(SymbolicModel, sde.ItoTaylorAS15DiscretizedModel):
     k = 'k'
     """Discretized sample index."""
 
+    meta = sde.DiscretizedModel.meta
+
 
 sym_model = SymbolicModel()
 sym_dt_model = SymbolicDTModel()
 printer = sym2num.ScipyPrinter()
-GeneratedDTModel = sym2num.class_obj(
-    sym_dt_model, printer,
-    name='GeneratedDTModel', 
-    meta=sde.DiscretizedModel.meta
-)
+GeneratedDTModel = sym2num.class_obj(sym_dt_model, printer)
 
 
 def load_data():

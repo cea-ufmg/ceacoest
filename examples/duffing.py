@@ -81,15 +81,13 @@ class SymbolicDTDuffing(SymbolicDuffing, sde.ItoTaylorAS15DiscretizedModel):
     k = 'k'
     """Discretized sample index."""
 
+    meta = sde.DiscretizedModel.meta
+
 
 sym_duffing = SymbolicDuffing()
 sym_dt_duffing = SymbolicDTDuffing()
 printer = sym2num.ScipyPrinter()
-GeneratedDTDuffing = sym2num.class_obj(
-    sym_dt_duffing, printer,
-    name='GeneratedDTDuffing', 
-    meta=sde.DiscretizedModel.meta
-)
+GeneratedDTDuffing = sym2num.class_obj(sym_dt_duffing, printer)
 
 
 def sim():

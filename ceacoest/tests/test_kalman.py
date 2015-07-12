@@ -146,6 +146,8 @@ def model_class(nx, ny, nq):
         Px = [['Px%d_%d' % (i, j) for j in range(nx)] for i in range(nx)]
         """State covariance matrix."""
 
+        meta = sym2num.ParametrizedModel.meta
+        
         def f(self, k, x, q):
             """Drift function."""
             ret = np.zeros(nx, dtype=object)
@@ -195,10 +197,7 @@ def model_class(nx, ny, nq):
                     Pv[j, i] +=  sympy.sin(sum(q[j:i]))
             return Pv
     
-    ModelClass = sym2num.class_obj(
-        SymbolicModel(), sym2num.ScipyPrinter(),
-        name='GeneratedModel', meta=sym2num.ParametrizedModel.meta
-    )
+    ModelClass = sym2num.class_obj(SymbolicModel(), sym2num.ScipyPrinter())
     ModelClass.nx = nx
     ModelClass.nq = nq
     ModelClass.ny = ny

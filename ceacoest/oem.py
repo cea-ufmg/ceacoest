@@ -65,5 +65,6 @@ class CTEstimator:
         return d
 
     def merit(self, d):
+        """Merit function."""
         x, q = self.unpack_decision(d)
         
