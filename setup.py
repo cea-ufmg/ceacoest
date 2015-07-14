@@ -21,7 +21,7 @@ setup(
     version="0.1.dev3",
     packages=find_packages(),
     install_requires=["attrdict", "numpy", "scipy", "sym2num"],
-    test_requires=["pytest"],
+    tests_require=["pytest"],
     
     # metadata for upload to PyPI
     author="Dimas Abreu Dutra",

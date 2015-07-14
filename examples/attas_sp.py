@@ -3,7 +3,7 @@
 
 import os.path
 
-import ipopt
+import yaipopt
 import numpy as np
 import scipy.io
 import sympy

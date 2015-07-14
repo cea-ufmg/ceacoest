@@ -1,7 +1,7 @@
 """Test various modules using a Duffing oscillator SDE model."""
 
 
-import ipopt
+import yaipopt
 import numpy as np
 import sympy
 import sym2num
@@ -146,7 +146,7 @@ def pem(model, t, x, y, q):
         return obj_factor * kf.pem_hessian(y)[hess_inds]
     
     q_bounds = np.tile([[-np.inf], [np.inf]], model.nq)
-    problem = ipopt.Problem(q_bounds, merit, grad, 
+    problem = yaipopt.Problem(q_bounds, merit, grad, 
                             hess=hess, hess_inds=hess_inds)
     problem.num_option(b'obj_scaling_factor', -1)
     (qopt, solinfo) = problem.solve(q)

@@ -3,7 +3,7 @@
 
 import os.path
 
-import ipopt
+import yaipopt
 import numpy as np
 import sympy
 import sym2num
@@ -188,7 +188,7 @@ def pem(t, u, y):
     q_fix = dict(theta_png=0, vT_mng=0.3, q_mng=1e-2)
     q_bounds = [model.pack('q', dict(q_lb, **q_fix), fill=-np.inf),
                 model.pack('q', dict(q_ub, **q_fix), fill=np.inf)]
-    problem = ipopt.Problem(q_bounds, merit, grad,
+    problem = yaipopt.Problem(q_bounds, merit, grad,
                             hess=hess, hess_inds=hess_inds)
     problem.num_option(b'obj_scaling_factor', -1)
     (qopt, solinfo) = problem.solve(q0)
