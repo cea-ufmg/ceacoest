@@ -33,6 +33,12 @@ class SymbolicModel(sym2num.SymbolicModel):
                    ('d2L_dq2', 'dL_dq',  'q'),]
     """List of the model function derivatives to calculate / generate."""
     
+    sparse = ['df_dx', 'df_dq', 'd2f_dx_dq',
+              ('d2f_dx2', lambda i,j,k: i<=j), ('d2f_dq2', lambda i,j,k: i<=j),
+              'd2L_dx_dq',
+              ('d2L_dx2', lambda i,j: i<=j), ('d2L_dq2', lambda i,j: i<=j),]
+    """List of the model functions to generate in a sparse format."""
+    
     t = 't'
     """Time variable."""
     

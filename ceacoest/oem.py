@@ -78,6 +78,17 @@ class CTEstimator:
         d[:self.model.nq] = q
         d[self.model.nq:] = np.ravel(x)
         return d
+
+    def pack_x_ind(self, k, xi):
+        k = np.asarray(k, dtype=int)
+        xi = np.asarray(xi, dtype=int)
+        di = np.zeros(np.size(xi), dtype=int)
+        di = self.model.nq + k[:, None] * self.model.nx + xi
+        return di.flatten()
+
+    def pack_q_ind(self, k, qi):
+        qi = np.asarray(qi, dtype=int)
+        return np.tile(qi, len(k))
     
     def ravel_pieces(self, v):
         assert len(v) == self.ncol
@@ -93,6 +104,44 @@ class CTEstimator:
         xm = x[self.km]
         L = self.model.L(self.ym, self.tm, xm, q, self.um)
         return L.sum()
+
+    def merit_gradient(self, d):
+        """Gradient of merit function."""
+        x, q = self.unpack_decision(d)
+        xm = x[self.km]
+        dM_dx = np.zeros_like(x)
+        dM_dx[self.km] = self.model.dL_dx(self.ym, self.tm, xm, q, self.um)
+        dM_dq = self.model.dL_dq(self.ym, self.tm, xm, q, self.um).sum(axis=0)
+        return self.pack_decision(dM_dx, dM_dq)
+    
+    def merit_hessian_val(self, d):
+        """Values of nonzero elements of merit function Hessian."""
+        x, q = self.unpack_decision(d)
+        xm = x[self.km]
+        d2L_dx2 = self.model.d2L_dx2_val(self.ym, self.tm, xm, q, self.um)
+        d2L_dq2 = self.model.d2L_dq2_val(self.ym, self.tm, xm, q, self.um)
+        d2L_dx_dq = self.model.d2L_dx_dq_val(self.ym, self.tm, xm, q, self.um)
+        return np.concatenate(
+            (d2L_dx2.ravel(), d2L_dq2.ravel(), d2L_dx_dq.ravel())
+        )
+    
+    @property
+    def merit_hessian_ind(self):
+        """Indices of nonzero elements of merit function Hessian."""
+        if not hasattr(self, '_merit_hessian_ind'):
+            km = self.km
+            d2L_dx2 = self.model.d2L_dx2_ind
+            d2L_dq2 = self.model.d2L_dq2_ind
+            d2L_dx_dq = self.model.d2L_dx_dq_ind
+            self._merit_hessian_ind = np.concatenate(
+                ([self.pack_x_ind(km, d2L_dx2[-0]), 
+                  self.pack_x_ind(km, d2L_dx2[-1])],
+                 [self.pack_q_ind(km, d2L_dq2[-0]), 
+                  self.pack_q_ind(km, d2L_dq2[-1])],
+                 [self.pack_q_ind(km, d2L_dx_dq[-0]), 
+                  self.pack_x_ind(km, d2L_dx_dq[-1])]), axis=1
+            )
+        return self._merit_hessian_ind
     
     def defects(self, d):
         """ODE equality constraints."""
