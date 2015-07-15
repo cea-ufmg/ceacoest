@@ -5,7 +5,7 @@ import numpy as np
 from numpy import ma
 from scipy import interpolate
 
-from . import rk
+from . import rk, utils
 
 
 class CTEstimator:
@@ -48,13 +48,13 @@ class CTEstimator:
         self.um = self.uc[self.km]
         """Inputs at the times of active measuments."""
         
-        self.npiece = len(t) - 1
+        self.npieces = len(t) - 1
         """Number of collocation pieces."""
         
-        self.ncol = len(self.tc)
-        """Number of collocation points."""
+        self.ncol = self.collocation.n
+        """Number of collocation points per piece."""
         
-        self.nd = self.ncol * model.nx + model.nq
+        self.nd = len(self.tc) * model.nx + model.nq
         """Length of the decision vector."""
 
         tr = self.ravel_pieces(self.tc)
@@ -71,7 +71,7 @@ class CTEstimator:
         
     def pack_decision(self, x, q):
         """Pack the states and parameters into the decision vector."""
-        assert np.shape(x) == (self.ncol, self.model.nx)
+        assert np.shape(x) == (self.tc.size, self.model.nx)
         assert np.shape(q) == (self.model.nq,)
         
         d = np.empty(self.nd)
@@ -79,20 +79,19 @@ class CTEstimator:
         d[self.model.nq:] = np.ravel(x)
         return d
 
-    def pack_x_ind(self, k, xi):
-        k = np.asarray(k, dtype=int)
+    def pack_x_ind(self, xi, k):
         xi = np.asarray(xi, dtype=int)
-        di = np.zeros(np.size(xi), dtype=int)
+        k = np.asarray(k, dtype=int)
         di = self.model.nq + k[:, None] * self.model.nx + xi
-        return di.flatten()
+        return di
 
-    def pack_q_ind(self, k, qi):
+    def pack_q_ind(self, qi, k):
         qi = np.asarray(qi, dtype=int)
-        return np.tile(qi, len(k))
+        return np.tile(qi, (len(k), 1))
     
     def ravel_pieces(self, v):
-        assert len(v) == self.ncol
-        vr = np.zeros((self.npiece, self.collocation.n) + v.shape[1:])
+        assert len(v) == self.tc.size
+        vr = np.zeros((self.npieces, self.collocation.n) + v.shape[1:])
         vr[:, :-1].flat = v[::-1].flat
         vr[:-1, -1] = vr[1:, 0]
         vr[-1, -1] = v[-1]
@@ -133,14 +132,13 @@ class CTEstimator:
             d2L_dx2 = self.model.d2L_dx2_ind
             d2L_dq2 = self.model.d2L_dq2_ind
             d2L_dx_dq = self.model.d2L_dx_dq_ind
-            self._merit_hessian_ind = np.concatenate(
-                ([self.pack_x_ind(km, d2L_dx2[-0]), 
-                  self.pack_x_ind(km, d2L_dx2[-1])],
-                 [self.pack_q_ind(km, d2L_dq2[-0]), 
-                  self.pack_q_ind(km, d2L_dq2[-1])],
-                 [self.pack_q_ind(km, d2L_dx_dq[-0]), 
-                  self.pack_x_ind(km, d2L_dx_dq[-1])]), axis=1
-            )
+            i = utils.flat_cat(self.pack_x_ind(d2L_dx2[0], km),
+                               self.pack_q_ind(d2L_dq2[0], km),
+                               self.pack_q_ind(d2L_dx_dq[0], km))
+            j = utils.flat_cat(self.pack_x_ind(d2L_dx2[1], km),
+                               self.pack_q_ind(d2L_dq2[1], km),
+                               self.pack_x_ind(d2L_dx_dq[1], km))
+            self._merit_hessian_ind = (i, j)
         return self._merit_hessian_ind
     
     def defects(self, d):
@@ -156,3 +154,21 @@ class CTEstimator:
         finc = np.einsum('ijk,lj,il->ilk', fr, J, dt)
         defects = delta - finc
         return np.ravel(defects)
+
+    def defects_jacobian_val(self, d):
+        x, q = self.unpack_decision(d)
+        df_dx = self.model.df_dx_val(self.tc, x, q, self.uc)
+        df_dq = self.model.df_dq_val(self.tc, x, q, self.uc)
+        J = self.collocation.J
+        dt = self.dt
+        
+        dfr_dx = self.ravel_pieces(df_dx)
+        dfr_dq = self.ravel_pieces(df_dq)
+        return utils.flat_cat(
+            np.ones((self.npieces, self.collocation.ninterv, self.model.nx)),
+            -np.ones((self.npieces, self.collocation.ninterv, self.model.nx)),
+            np.einsum('ijk,lj,il->ijlk', dfr_dx, J, dt),
+            np.einsum('ijk,lj,il->ijlk', dfr_dq, J, dt)
+        )
+
+        

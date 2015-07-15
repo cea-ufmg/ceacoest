@@ -94,3 +94,7 @@ def extract_subkeys(d, base):
         if match:
             subkeys[match.group('subkey')] = val
     return subkeys
+
+
+def flat_cat(*args, order='C'):
+    return np.concatenate([np.ravel(arg, order=order) for arg in args])
