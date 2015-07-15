@@ -1,5 +1,7 @@
 """General utility and convenience functions."""
 
+
+import functools
 import re
 
 import numpy as np
@@ -97,4 +99,21 @@ def extract_subkeys(d, base):
 
 
 def flat_cat(*args, order='C'):
+    """Flattens and then concatenates the array_like sequence.
+
+    >>> flat_cat([[1,2,3]], [4, 5], 6)
+    array([1, 2, 3, 4, 5, 6])
+    
+    """
     return np.concatenate([np.ravel(arg, order=order) for arg in args])
+
+
+def cached(f):
+    """Caches a method with no arguments after first call."""
+    cached_name = '_' + f.__name__
+    @functools.wraps(f)
+    def wrapper(self):
+        if not hasattr(self, cached_name):
+            setattr(self, cached_name, f(self))
+        return getattr(self, cached_name)
+    return wrapper
