@@ -99,7 +99,7 @@ def extract_subkeys(d, base):
 
 
 def flat_cat(*args, order='C'):
-    """Flattens and then concatenates the array_like sequence.
+    """Flattens and then concatenates an array_like sequence.
 
     >>> flat_cat([[1,2,3]], [4, 5], 6)
     array([1, 2, 3, 4, 5, 6])

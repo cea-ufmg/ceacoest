@@ -62,12 +62,17 @@ class ArrayDiff:
                     str(a_shape) + " and " + str(b_shape) + "."]
         
         summary = "arrays not within tolerances rtol={} and atol={}"
-        violations = [str(tup) for tup in zip(*np.nonzero(~self.ok))]
+        violations = []
+        for ind in zip(*np.nonzero(~self.ok)):
+            ai = self.a[ind]
+            bi = self.b[ind]
+            ei = self.err[ind]
+            violations += ["{} a={}\tb={}\terr={}".format(ind, ai, bi, ei)]
         return ([summary.format(self.rtol, self.atol)] + 
                 ["", "a="] + np.array_str(self.a).splitlines() +
                 ["", "b="] + np.array_str(self.b).splitlines() +
                 ["", "a-b="] + np.array_str(self.err).splitlines() +
-                ["", "violations: ", " ".join(violations)])
+                ["", "violations: "] + violations)
 
 
 def pytest_assertrepr_compare(config, op, left, right):

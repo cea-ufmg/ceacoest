@@ -3,7 +3,7 @@
 
 import numpy as np
 from numpy import ma
-from scipy import interpolate
+from scipy import sparse
 
 from . import rk, utils
 
@@ -75,12 +75,11 @@ class CTEstimator:
         """Pack the states and parameters into the decision vector."""
         assert np.shape(x) == (self.tc.size, self.model.nx)
         assert np.shape(q) == (self.model.nq,)
-        
         d = np.empty(self.nd)
         d[:self.model.nq] = q
         d[self.model.nq:] = np.ravel(x)
         return d
-
+    
     def expand_x_ind(self, xi, k=None):
         xi = np.asarray(xi, dtype=int)
         k = np.arange(self.tc.size) if k is None else np.asarray(k, dtype=int)
@@ -95,9 +94,10 @@ class CTEstimator:
     def unravel_pieces(self, v):
         v = np.asarray(v)
         assert len(v) == self.tc.size
+        ncolinterv = self.collocation.ninterv
         vr_shape = (self.npieces, self.collocation.n) + v.shape[1:]
         vr = np.zeros(vr_shape, dtype=v.dtype)
-        vr[:, :-1].flat = v[::-1].flat
+        vr[:, :-1] = np.reshape(v[:-1], (self.npieces,ncolinterv) + v.shape[1:])
         vr[:-1, -1] = vr[1:, 0]
         vr[-1, -1] = v[-1]
         return vr
@@ -156,7 +156,7 @@ class CTEstimator:
         fr = self.unravel_pieces(f)
         delta = xr[:, 1:] - xr[:, :-1]
         finc = np.einsum('ijk,lj,il->ilk', fr, J, dt)
-        defects = delta - finc
+        defects = 0*delta - finc
         return np.ravel(defects)
 
     def defects_jacobian_val(self, d):
@@ -169,12 +169,12 @@ class CTEstimator:
         dfr_dx = self.unravel_pieces(df_dx)
         dfr_dq = self.unravel_pieces(df_dq)
         return utils.flat_cat(
-            np.ones((self.npieces, self.collocation.ninterv, self.model.nx)),
-            -np.ones((self.npieces, self.collocation.ninterv, self.model.nx)),
-            np.einsum('ijk,lj,il->lijk', dfr_dx, J, dt),
-            np.einsum('ijk,lj,il->lijk', dfr_dq, J, dt)
+            0*np.ones((self.npieces, self.collocation.ninterv, self.model.nx)),
+            0*-np.ones((self.npieces, self.collocation.ninterv, self.model.nx)),
+            -np.einsum('ijk,lj,il->lijk', dfr_dx, J, dt),
+            -np.einsum('ijk,lj,il->lijk', dfr_dq, J, dt)
         )
-
+    
     @property
     @utils.cached
     def defects_jacobian_ind(self):
@@ -185,16 +185,80 @@ class CTEstimator:
         offsets = np.arange(self.npieces * self.collocation.ninterv)
         offsets = offsets.reshape((self.npieces, self.collocation.ninterv, 1))
         offsets *= self.model.nx
-        dxr_dx_i = offsets + x_ind
-        dfr_dx_i = np.rollaxis(offsets + df_dx_i, axis=1)[..., None, :]
-        dfr_dq_i = np.rollaxis(offsets + df_dq_i, axis=1)[..., None, :]
-        dxr_dx_j = self.unravel_pieces(self.expand_x_ind(x_ind))
-        dfr_dx_j = self.unravel_pieces(self.expand_x_ind(df_dx_j))
-        dfr_dq_j = self.unravel_pieces(self.expand_q_ind(df_dq_j))
-        i = utils.flat_cat(dxr_dx_i, dxr_dx_i,
-                           np.tile(dfr_dx_i, (self.collocation.n, 1)),
-                           np.tile(dfr_dq_i, (self.collocation.n, 1)))
-        j = utils.flat_cat(dxr_dx_j[:, 1:], dxr_dx_j[:, :-1],
-                           np.tile(dfr_dx_j, self.collocation.ninterv),
-                           np.tile(dfr_dq_j, self.collocation.ninterv))
+        dxr_dx_i = self.unravel_pieces(self.expand_x_ind(x_ind))
+        dfr_dx_i = self.unravel_pieces(self.expand_x_ind(df_dx_i))
+        dfr_dq_i = self.unravel_pieces(self.expand_q_ind(df_dq_i))
+        dxr_dx_j = offsets + x_ind
+        dfr_dx_j = np.rollaxis(offsets + df_dx_j, axis=1)[..., None, :]
+        dfr_dq_j = np.rollaxis(offsets + df_dq_j, axis=1)[..., None, :]
+        i = utils.flat_cat(dxr_dx_i[:, 1:], dxr_dx_i[:, :-1],
+                           np.tile(dfr_dx_i, (self.collocation.ninterv,1,1,1)),
+                           np.tile(dfr_dq_i, (self.collocation.ninterv,1,1,1)))
+        j = utils.flat_cat(dxr_dx_j, dxr_dx_j,
+                           np.tile(dfr_dx_j, (self.collocation.n, 1)),
+                           np.tile(dfr_dq_j, (self.collocation.n, 1)))
         return (i, j)
+        
+    def defects_jacobian(self, d):
+        val = self.defects_jacobian_val(d)
+        ind = self.defects_jacobian_ind
+        shape = (self.nd, self.ndefects)
+        return sparse.coo_matrix((val, ind), shape=shape).todense()
+    
+    def defects_hessian_val(self, d):
+        x, q = self.unpack_decision(d)
+        d2f_dx2 = self.model.d2f_dx2_val(self.tc, x, q, self.uc)
+        d2f_dq2 = self.model.d2f_dq2_val(self.tc, x, q, self.uc)
+        d2f_dx_dq = self.model.d2f_dx_dq_val(self.tc, x, q, self.uc)
+        J = self.collocation.J
+        dt = self.dt
+        
+        d2fr_dx2 = self.unravel_pieces(d2f_dx2)
+        d2fr_dq2 = self.unravel_pieces(d2f_dq2)
+        d2fr_dx_dq = self.unravel_pieces(d2f_dx_dq)
+        return utils.flat_cat(
+            -np.einsum('ijk,lj,il->lijk', d2fr_dx2, J, dt),
+            -np.einsum('ijk,lj,il->lijk', d2fr_dq2, J, dt),
+            -np.einsum('ijk,lj,il->lijk', d2fr_dx_dq, J, dt)
+        )
+    
+    @property
+    @utils.cached
+    def defects_hessian_ind(self):
+        ncolpt = self.collocation.n
+        ncolinterv = self.collocation.ninterv
+        d2f_dx2_i, d2f_dx2_j, d2f_dx2_k = self.model.d2f_dx2_ind
+        d2f_dq2_i, d2f_dq2_j, d2f_dq2_k = self.model.d2f_dq2_ind
+        d2f_dx_dq_i, d2f_dx_dq_j, d2f_dx_dq_k = self.model.d2f_dx_dq_ind
+
+        offsets = np.arange(self.npieces * self.collocation.ninterv)
+        offsets = offsets.reshape((self.npieces, self.collocation.ninterv, 1))
+        offsets *= self.model.nx
+        d2fr_dx2_i = self.unravel_pieces(self.expand_x_ind(d2f_dx2_i))
+        d2fr_dq2_i = self.unravel_pieces(self.expand_q_ind(d2f_dq2_i))
+        d2fr_dx_dq_i = self.unravel_pieces(self.expand_q_ind(d2f_dx_dq_i))
+        d2fr_dx2_j = self.unravel_pieces(self.expand_x_ind(d2f_dx2_j))
+        d2fr_dq2_j = self.unravel_pieces(self.expand_q_ind(d2f_dq2_j))
+        d2fr_dx_dq_j = self.unravel_pieces(self.expand_x_ind(d2f_dx_dq_j))
+        d2fr_dx2_k = np.rollaxis(offsets + d2f_dx2_k, axis=1)[..., None, :]
+        d2fr_dq2_k = np.rollaxis(offsets + d2f_dq2_k, axis=1)[..., None, :]
+        d2fr_dx_dq_k = np.rollaxis(offsets + d2f_dx_dq_k, axis=1)[..., None, :]
+        i = utils.flat_cat(np.tile(d2fr_dx2_i, (ncolinterv, 1, 1, 1)),
+                           np.tile(d2fr_dq2_i, (ncolinterv, 1, 1, 1)),
+                           np.tile(d2fr_dx_dq_i, (ncolinterv, 1, 1, 1)))
+        j = utils.flat_cat(np.tile(d2fr_dx2_j, (ncolinterv, 1, 1, 1)),
+                           np.tile(d2fr_dq2_j, (ncolinterv, 1, 1, 1)),
+                           np.tile(d2fr_dx_dq_j, (ncolinterv, 1, 1, 1)))
+        k = utils.flat_cat(np.tile(d2fr_dx2_k, (ncolpt, 1)),
+                           np.tile(d2fr_dq2_k, (ncolpt, 1)),
+                           np.tile(d2fr_dx_dq_k, (ncolpt, 1)))
+        return (i, j, k)
+
+    def defects_hessian(self, d):
+        val = self.defects_hessian_val(d)
+        hessian = np.zeros((self.nd, self.nd, self.ndefects))
+        for v, i, j, k in zip(val, *self.defects_hessian_ind):
+            hessian[i, j, k] += v
+            if i != j:
+                hessian[j, i, k] += v
+        return hessian
