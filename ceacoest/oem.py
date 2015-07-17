@@ -156,7 +156,7 @@ class CTEstimator:
         fr = self.unravel_pieces(f)
         delta = xr[:, 1:] - xr[:, :-1]
         finc = np.einsum('ijk,lj,il->ilk', fr, J, dt)
-        defects = 0*delta - finc
+        defects = delta - finc
         return np.ravel(defects)
 
     def defects_jacobian_val(self, d):
@@ -169,10 +169,10 @@ class CTEstimator:
         dfr_dx = self.unravel_pieces(df_dx)
         dfr_dq = self.unravel_pieces(df_dq)
         return utils.flat_cat(
-            0*np.ones((self.npieces, self.collocation.ninterv, self.model.nx)),
-            0*-np.ones((self.npieces, self.collocation.ninterv, self.model.nx)),
-            -np.einsum('ijk,lj,il->lijk', dfr_dx, J, dt),
-            -np.einsum('ijk,lj,il->lijk', dfr_dq, J, dt)
+            np.ones((self.npieces, self.collocation.ninterv, self.model.nx)),
+            -np.ones((self.npieces, self.collocation.ninterv, self.model.nx)),
+            -np.einsum('ijk,lj,il->ijkl', dfr_dx, J, dt),
+            -np.einsum('ijk,lj,il->ijkl', dfr_dq, J, dt)
         )
     
     @property
@@ -189,14 +189,14 @@ class CTEstimator:
         dfr_dx_i = self.unravel_pieces(self.expand_x_ind(df_dx_i))
         dfr_dq_i = self.unravel_pieces(self.expand_q_ind(df_dq_i))
         dxr_dx_j = offsets + x_ind
-        dfr_dx_j = np.rollaxis(offsets + df_dx_j, axis=1)[..., None, :]
-        dfr_dq_j = np.rollaxis(offsets + df_dq_j, axis=1)[..., None, :]
+        dfr_dx_j = np.swapaxes(offsets + df_dx_j, 1, 2)
+        dfr_dq_j = np.swapaxes(offsets + df_dq_j, 1, 2)
         i = utils.flat_cat(dxr_dx_i[:, 1:], dxr_dx_i[:, :-1],
-                           np.tile(dfr_dx_i, (self.collocation.ninterv,1,1,1)),
-                           np.tile(dfr_dq_i, (self.collocation.ninterv,1,1,1)))
+                           np.repeat(dfr_dx_i, self.collocation.ninterv),
+                           np.repeat(dfr_dq_i, self.collocation.ninterv))
         j = utils.flat_cat(dxr_dx_j, dxr_dx_j,
-                           np.tile(dfr_dx_j, (self.collocation.n, 1)),
-                           np.tile(dfr_dq_j, (self.collocation.n, 1)))
+                           np.repeat(dfr_dx_j, self.collocation.n, axis=0),
+                           np.repeat(dfr_dq_j, self.collocation.n, axis=0))
         return (i, j)
         
     def defects_jacobian(self, d):
@@ -217,9 +217,9 @@ class CTEstimator:
         d2fr_dq2 = self.unravel_pieces(d2f_dq2)
         d2fr_dx_dq = self.unravel_pieces(d2f_dx_dq)
         return utils.flat_cat(
-            -np.einsum('ijk,lj,il->lijk', d2fr_dx2, J, dt),
-            -np.einsum('ijk,lj,il->lijk', d2fr_dq2, J, dt),
-            -np.einsum('ijk,lj,il->lijk', d2fr_dx_dq, J, dt)
+            -np.einsum('ijk,lj,il->ijkl', d2fr_dx2, J, dt),
+            -np.einsum('ijk,lj,il->ijkl', d2fr_dq2, J, dt),
+            -np.einsum('ijk,lj,il->ijkl', d2fr_dx_dq, J, dt)
         )
     
     @property
@@ -240,18 +240,18 @@ class CTEstimator:
         d2fr_dx2_j = self.unravel_pieces(self.expand_x_ind(d2f_dx2_j))
         d2fr_dq2_j = self.unravel_pieces(self.expand_q_ind(d2f_dq2_j))
         d2fr_dx_dq_j = self.unravel_pieces(self.expand_x_ind(d2f_dx_dq_j))
-        d2fr_dx2_k = np.rollaxis(offsets + d2f_dx2_k, axis=1)[..., None, :]
-        d2fr_dq2_k = np.rollaxis(offsets + d2f_dq2_k, axis=1)[..., None, :]
-        d2fr_dx_dq_k = np.rollaxis(offsets + d2f_dx_dq_k, axis=1)[..., None, :]
-        i = utils.flat_cat(np.tile(d2fr_dx2_i, (ncolinterv, 1, 1, 1)),
-                           np.tile(d2fr_dq2_i, (ncolinterv, 1, 1, 1)),
-                           np.tile(d2fr_dx_dq_i, (ncolinterv, 1, 1, 1)))
-        j = utils.flat_cat(np.tile(d2fr_dx2_j, (ncolinterv, 1, 1, 1)),
-                           np.tile(d2fr_dq2_j, (ncolinterv, 1, 1, 1)),
-                           np.tile(d2fr_dx_dq_j, (ncolinterv, 1, 1, 1)))
-        k = utils.flat_cat(np.tile(d2fr_dx2_k, (ncolpt, 1)),
-                           np.tile(d2fr_dq2_k, (ncolpt, 1)),
-                           np.tile(d2fr_dx_dq_k, (ncolpt, 1)))
+        d2fr_dx2_k = np.swapaxes(offsets + d2f_dx2_k, 1, 2)
+        d2fr_dq2_k = np.swapaxes(offsets + d2f_dq2_k, 1, 2)
+        d2fr_dx_dq_k = np.swapaxes(offsets + d2f_dx_dq_k, 1, 2)
+        i = utils.flat_cat(np.repeat(d2fr_dx2_i, ncolinterv),
+                           np.repeat(d2fr_dq2_i, ncolinterv),
+                           np.repeat(d2fr_dx_dq_i, ncolinterv))
+        j = utils.flat_cat(np.repeat(d2fr_dx2_j, ncolinterv),
+                           np.repeat(d2fr_dq2_j, ncolinterv),
+                           np.repeat(d2fr_dx_dq_j, ncolinterv))
+        k = utils.flat_cat(np.repeat(d2fr_dx2_k, ncolpt, 0),
+                           np.repeat(d2fr_dq2_k, ncolpt, 0),
+                           np.repeat(d2fr_dx_dq_k, ncolpt, 0))
         return (i, j, k)
 
     def defects_hessian(self, d):
