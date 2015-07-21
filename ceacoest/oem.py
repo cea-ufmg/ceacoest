@@ -262,3 +262,8 @@ class CTEstimator:
             if i != j:
                 hessian[j, i, k] += v
         return hessian
+
+    def nlp_yaipopt(self):
+        import yaipopt
+
+        

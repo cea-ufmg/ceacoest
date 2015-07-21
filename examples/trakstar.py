@@ -94,7 +94,15 @@ class SymbolicDTModel(SymbolicModel, sde.ItoTaylorAS15DiscretizedModel):
     k = 'k'
     """Discretized sample index."""
 
-    meta = sde.DiscretizedModel.meta
+    generated_name = "GeneratedDTModel"
+    """Name of the generated class."""
+    
+    meta = 'ceacoest.sde.DiscretizedModel.meta'
+    """Generated model metaclass."""
+    
+    @property
+    def imports(self):
+        return super().imports + ('import ceacoest.sde',)
 
 
 sym_model = SymbolicModel()
@@ -166,3 +174,8 @@ def pem(t, y):
     (qopt, solinfo) = problem.solve(q0)
     
     return problem, qopt, solinfo, model, q0, x0, Px0
+
+
+if __name__ == '__main__':
+    [t, y] = load_data()
+    [problem, qopt, solinfo, model, q0, x0, Px0] = pem(t, y)

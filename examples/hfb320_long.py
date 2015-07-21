@@ -117,7 +117,15 @@ class SymbolicDTModel(SymbolicModel, sde.EulerDiscretizedModel):
     k = 'k'
     """Discretized sample index."""
     
-    meta = sde.DiscretizedModel.meta
+    generated_name = "GeneratedDTModel"
+    """Name of the generated class."""
+    
+    meta = 'ceacoest.sde.DiscretizedModel.meta'
+    """Generated model metaclass."""
+    
+    @property
+    def imports(self):
+        return super().imports + ('import ceacoest.sde',)
 
 
 sym_dt_model = SymbolicDTModel()
