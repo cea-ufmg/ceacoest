@@ -155,7 +155,7 @@ def pem(model, t, x, y, q):
     
     q_bounds = np.tile([[-np.inf], [np.inf]], model.nq)
     problem = yaipopt.Problem(q_bounds, merit, grad, 
-                            hess=hess, hess_inds=hess_inds)
+                              hess=hess, hess_inds=hess_inds)
     problem.num_option(b'obj_scaling_factor', -1)
     (qopt, solinfo) = problem.solve(q)
 

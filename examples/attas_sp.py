@@ -3,7 +3,6 @@
 
 import os.path
 
-import yaipopt
 import numpy as np
 import scipy.io
 import sympy
@@ -106,14 +105,18 @@ def load_data():
     u = interpolate.interp1d(data[:, 0], data[:, [21]] * d2r, axis=0)
     y = ma.empty((t.size, 2))
     y[...] = ma.masked
-    y[::2] = data[:, [12, 7]] * d2r
+    y[::2] = data[:, [7, 12]] * d2r
     return t, u, y
 
 
 if __name__ == '__main__':
     [t, u, y] = load_data()
     
-    given = dict(alpha_meas_std=2e-3, q_meas_std=2e-3)
+    given = dict(
+        alpha_meas_std=2e-3, q_meas_std=2e-3,
+        Z0=-2.52504e-3,Zalpha=-2.13832e-1,  Zq=2.78189e-2,  Zde=1.66147e-1,
+        M0=2.71618e-1, Malpha=-2.73646, Mq=-1.08034, Mde=-3.18940
+    )
     c = GeneratedModel.pack('c', given)
     params = dict(c=c)
     model = GeneratedModel(params)
@@ -123,3 +126,14 @@ if __name__ == '__main__':
     q0 = GeneratedModel.pack('q', given)
     d0 = est.pack_decision(x0, q0)
     
+    x_lb = np.tile(-np.inf, x0.shape)
+    x_ub = np.tile(np.inf, x0.shape)
+    q_lb = {'alpha_meas_std': 0, 'q_meas_std': 0}
+    q_ub = {}
+    q_fix = {}
+    d_lb = est.pack_decision(x_lb, model.pack('q', dict(q_lb,**q_fix), -np.inf))
+    d_ub = est.pack_decision(x_ub, model.pack('q', dict(q_ub,**q_fix), np.inf))
+    nlp = est.nlp_yaipopt([d_lb, d_ub])
+    nlp.str_option('linear_solver', 'ma57')
+    dopt, solinfo = nlp.solve(d0)
+    xopt, qopt = est.unpack_decision(dopt)

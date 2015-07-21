@@ -230,7 +230,10 @@ class CTEstimator:
         d2f_dx2_i, d2f_dx2_j, d2f_dx2_k = self.model.d2f_dx2_ind
         d2f_dq2_i, d2f_dq2_j, d2f_dq2_k = self.model.d2f_dq2_ind
         d2f_dx_dq_i, d2f_dx_dq_j, d2f_dx_dq_k = self.model.d2f_dx_dq_ind
-
+        d2f_dx2_k = np.asarray(d2f_dx2_k, dtype=int)
+        d2f_dq2_k = np.asarray(d2f_dq2_k, dtype=int)
+        d2f_dx_dq_k = np.asarray(d2f_dx_dq_k, dtype=int)
+        
         offsets = np.arange(self.npieces * self.collocation.ninterv)
         offsets = offsets.reshape((self.npieces, self.collocation.ninterv, 1))
         offsets *= self.model.nx
@@ -262,8 +265,36 @@ class CTEstimator:
             if i != j:
                 hessian[j, i, k] += v
         return hessian
-
-    def nlp_yaipopt(self):
+    
+    def nlp_yaipopt(self, d_bounds=None):
         import yaipopt
-
         
+        if d_bounds is None:
+            d_bounds = np.tile([[-np.inf], [np.inf]], self.nd)
+        
+        constr_bounds = np.zeros((2, self.ndefects))
+        constr_jac_ind = self.defects_jacobian_ind[::-1]
+        merit_hess_ind = self.merit_hessian_ind
+        def_hess_ind = self.defects_hessian_ind
+        hess_inds = np.hstack((merit_hess_ind[::-1], def_hess_ind[1::-1]))
+        
+        def merit(d, new_d=True):
+            return self.merit(d)
+        def grad(d, new_d=True):
+            return self.merit_gradient(d)
+        def constr(d, new_d=True):
+            return self.defects(d)
+        def constr_jac(d, new_d=True):
+            return self.defects_jacobian_val(d)
+        def lag_hess(d, new_d, obj_factor, lmult, new_lmult):
+            def_hess = self.defects_hessian_val(d) * lmult[def_hess_ind[2]]
+            merit_hess = self.merit_hessian_val(d) * obj_factor
+            return utils.flat_cat(merit_hess, def_hess)        
+        
+        nlp = yaipopt.Problem(d_bounds, merit, grad,
+                              constr_bounds=constr_bounds,
+                              constr=constr, constr_jac=constr_jac,
+                              constr_jac_inds=constr_jac_ind,
+                              hess=lag_hess, hess_inds=hess_inds)
+        nlp.num_option('obj_scaling_factor', -1)
+        return nlp
