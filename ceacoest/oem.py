@@ -79,7 +79,16 @@ class CTEstimator:
         d[:self.model.nq] = q
         d[self.model.nq:] = np.ravel(x)
         return d
-    
+
+    def pack_bounds(self, q_lb={}, q_ub={}, q_fix={}):
+        """Pack the decision variable bounds."""
+        x_lb = np.tile(-np.inf, (self.tc.size, self.model.nx))
+        x_ub = np.tile(np.inf, (self.tc.size, self.model.nx))
+        q_lb_vec = self.model.pack('q', dict(q_lb, **q_fix), fill=-np.inf)
+        q_ub_vec = self.model.pack('q', dict(q_ub, **q_fix), fill=np.inf)
+        return (self.pack_decision(x_lb, q_lb_vec),
+                self.pack_decision(x_ub, q_ub_vec))
+        
     def expand_x_ind(self, xi, k=None):
         xi = np.asarray(xi, dtype=int)
         k = np.arange(self.tc.size) if k is None else np.asarray(k, dtype=int)
@@ -160,6 +169,7 @@ class CTEstimator:
         return np.ravel(defects)
 
     def defects_jacobian_val(self, d):
+        """Values of nonzero elements of ODE equality constraints Jacobian."""
         x, q = self.unpack_decision(d)
         df_dx = self.model.df_dx_val(self.tc, x, q, self.uc)
         df_dq = self.model.df_dq_val(self.tc, x, q, self.uc)
@@ -178,6 +188,7 @@ class CTEstimator:
     @property
     @utils.cached
     def defects_jacobian_ind(self):
+        """Indices of nonzero elements of ODE equality constraints Jacobian."""
         x_ind = np.arange(self.model.nx)
         df_dx_i, df_dx_j = self.model.df_dx_ind
         df_dq_i, df_dq_j = self.model.df_dq_ind
@@ -200,12 +211,14 @@ class CTEstimator:
         return (i, j)
         
     def defects_jacobian(self, d):
+        """ODE equality constraints Jacobian."""
         val = self.defects_jacobian_val(d)
         ind = self.defects_jacobian_ind
         shape = (self.nd, self.ndefects)
         return sparse.coo_matrix((val, ind), shape=shape).todense()
     
     def defects_hessian_val(self, d):
+        """Values of nonzero elements of ODE equality constraints Hessian."""
         x, q = self.unpack_decision(d)
         d2f_dx2 = self.model.d2f_dx2_val(self.tc, x, q, self.uc)
         d2f_dq2 = self.model.d2f_dq2_val(self.tc, x, q, self.uc)
@@ -225,6 +238,7 @@ class CTEstimator:
     @property
     @utils.cached
     def defects_hessian_ind(self):
+        """Indices of nonzero elements of ODE equality constraints Hessian."""
         ncolpt = self.collocation.n
         ncolinterv = self.collocation.ninterv
         d2f_dx2_i, d2f_dx2_j, d2f_dx2_k = self.model.d2f_dx2_ind
@@ -258,6 +272,7 @@ class CTEstimator:
         return (i, j, k)
 
     def defects_hessian(self, d):
+        """ODE equality constraints Hessian."""
         val = self.defects_hessian_val(d)
         hessian = np.zeros((self.nd, self.nd, self.ndefects))
         for v, i, j, k in zip(val, *self.defects_hessian_ind):

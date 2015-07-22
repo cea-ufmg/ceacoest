@@ -100,7 +100,7 @@ def load_data():
     d2r = np.pi / 180
     module_dir = os.path.dirname(__file__)
     data_file_path = os.path.join(module_dir, 'data', 'fAttasElv1.mat')
-    data = scipy.io.loadmat(data_file_path)['fAttasElv1']
+    data = scipy.io.loadmat(data_file_path)['fAttasElv1'][30:-30]
     t = lininterp(data[:, 0])
     u = interpolate.interp1d(data[:, 0], data[:, [21]] * d2r, axis=0)
     y = ma.empty((t.size, 2))
@@ -126,14 +126,10 @@ if __name__ == '__main__':
     q0 = GeneratedModel.pack('q', given)
     d0 = est.pack_decision(x0, q0)
     
-    x_lb = np.tile(-np.inf, x0.shape)
-    x_ub = np.tile(np.inf, x0.shape)
     q_lb = {'alpha_meas_std': 0, 'q_meas_std': 0}
     q_ub = {}
     q_fix = {}
-    d_lb = est.pack_decision(x_lb, model.pack('q', dict(q_lb,**q_fix), -np.inf))
-    d_ub = est.pack_decision(x_ub, model.pack('q', dict(q_ub,**q_fix), np.inf))
-    nlp = est.nlp_yaipopt([d_lb, d_ub])
-    nlp.str_option('linear_solver', 'ma57')
+    d_bounds = est.pack_bounds(q_lb=q_lb, q_ub=q_ub, q_fix=q_fix)
+    nlp = est.nlp_yaipopt(d_bounds)
     dopt, solinfo = nlp.solve(d0)
     xopt, qopt = est.unpack_decision(dopt)
