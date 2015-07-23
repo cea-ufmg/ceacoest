@@ -26,30 +26,29 @@ class SymbolicModel(sde.SymbolicModel):
     t = 't'
     """Time variable."""
     
-    x = ['phi', 'theta', 'psi', 'p', 'q', 'r']
+    x = ['ax', 'ay', 'az', 'p', 'q', 'r', 'u', 'v', 'w', 'q0', 'q1', 'q2', 'q3']
     """State vector."""
     
-    y = ['phi_meas', 'theta_meas', 'psi_meas']
+    y = ['ax_meas', 'ay_meas', 'az_meas', 'p_meas', 'q_meas', 'r_meas',
+         'magx_meas', 'magy_meas', 'magz_meas']
     """Measurement vector."""
     
-    q = ['angvel_png', 'ang_meas_std']
+    q = ['acc_png', 'omega_png', 'omega_meas_std']
     """Parameter vector."""
     
-    c = []
+    c = ['quat_renorm_gain']
     """Constants vector."""
     
     def f(self, t, x, q, c):
         """Drift function."""
         s = self.symbols(t=t, x=x, q=q, c=c)
-        sinphi = sympy.sin(s.phi)
-        cosphi = sympy.cos(s.phi)
-        costheta = sympy.cos(s.theta)
-        tantheta = sympy.tan(s.theta)
+        renorm = s.quat_renorm_gain*(1 - s.q0**2 - s.q1**2 - s.q2**2 - s.q3**2)
         derivs = dict(
-            phi=s.p + s.q*tantheta*sinphi + s.r*tantheta*cosphi,
-            theta=s.q*cosphi - s.r*sinphi,
-            psi=s.q*sinphi/costheta + s.r*cosphi/costheta,
-            p=0, q=0, r=0
+            p=0, q=0, r=0, ax=0, ay=0, az=0,
+            q0=-0.5*(s.q1*s.p + s.q2*s.q + s.q3*s.r) + renorm*s.q0,
+            q1=-0.5*(-s.q0*s.p - s.q2*s.r + s.q3*s.q) + renorm*s.q1,
+            q2=-0.5*(-s.q0*s.q + s.q1*s.r - s.q3*s.p)  + renorm*s.q2,
+            q3=-0.5*(-s.q0*s.r - s.q1*s.q + s.q2*s.p)  + renorm*s.q3,
         )
         return self.pack('x', derivs)
     
