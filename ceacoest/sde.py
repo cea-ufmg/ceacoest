@@ -123,10 +123,9 @@ class SymbolicDiscretizedModel(SymbolicModel):
     def _discretize_extra(self):
         """Discretize other model functions."""
         for f in self.functions.values():
-            fargs = f.args
-            f.args = self._discretized_args(fargs)
+            f.args = self._discretized_args(f.args, extra=True)
     
-    def _discretized_args(self, args):
+    def _discretized_args(self, args, extra=False):
         # If the function is not time-dependant the arguments are unchanged
         if 't' not in args:
             return args
@@ -140,7 +139,8 @@ class SymbolicDiscretizedModel(SymbolicModel):
         t_index = list(args).index('t')
         t_item = arg_items[t_index]
         arg_items[t_index] = ('k', k)
-        arg_items.extend([t_item, ('dt', dt)])
+        if not extra:
+            arg_items.extend([t_item, ('dt', dt)])
         return collections.OrderedDict(arg_items)
 
 

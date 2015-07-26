@@ -55,7 +55,7 @@ class SymbolicModel(sde.SymbolicModel):
     def g(self, t, x, q, c):
         """Diffusion matrix."""
         s = self.symbols(t=t, x=x, q=q, c=c)
-        g = np.zeros((x.size, 6), object)
+        g = np.zeros((x.size, 3), object)
         g[[3, 4, 5], [0, 1, 2]] = s.angvel_png
         return g
     

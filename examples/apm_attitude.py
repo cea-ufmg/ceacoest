@@ -26,17 +26,18 @@ class SymbolicModel(sde.SymbolicModel):
     t = 't'
     """Time variable."""
     
-    x = ['ax', 'ay', 'az', 'p', 'q', 'r', 'u', 'v', 'w', 'q0', 'q1', 'q2', 'q3']
+    x = ['ax', 'ay', 'az', 'p', 'q', 'r', 'q0', 'q1', 'q2', 'q3']
     """State vector."""
     
     y = ['ax_meas', 'ay_meas', 'az_meas', 'p_meas', 'q_meas', 'r_meas',
          'magx_meas', 'magy_meas', 'magz_meas']
     """Measurement vector."""
     
-    q = ['acc_png', 'omega_png', 'omega_meas_std']
+    q = ['acc_png', 'omega_png', 'acc_mng', 'omega_mng', 'mag_mng',
+         'magex', 'magez']
     """Parameter vector."""
     
-    c = ['quat_renorm_gain']
+    c = ['quat_renorm_gain', 'g0']
     """Constants vector."""
     
     def f(self, t, x, q, c):
@@ -47,8 +48,8 @@ class SymbolicModel(sde.SymbolicModel):
             p=0, q=0, r=0, ax=0, ay=0, az=0,
             q0=-0.5*(s.q1*s.p + s.q2*s.q + s.q3*s.r) + renorm*s.q0,
             q1=-0.5*(-s.q0*s.p - s.q2*s.r + s.q3*s.q) + renorm*s.q1,
-            q2=-0.5*(-s.q0*s.q + s.q1*s.r - s.q3*s.p)  + renorm*s.q2,
-            q3=-0.5*(-s.q0*s.r - s.q1*s.q + s.q2*s.p)  + renorm*s.q3,
+            q2=-0.5*(-s.q0*s.q + s.q1*s.r - s.q3*s.p) + renorm*s.q2,
+            q3=-0.5*(-s.q0*s.r - s.q1*s.q + s.q2*s.p) + renorm*s.q3,
         )
         return self.pack('x', derivs)
     
@@ -56,20 +57,43 @@ class SymbolicModel(sde.SymbolicModel):
         """Diffusion matrix."""
         s = self.symbols(t=t, x=x, q=q, c=c)
         g = np.zeros((x.size, 6), object)
-        g[[3, 4, 5], [0, 1, 2]] = s.angvel_png
+        g[[0, 1, 2], [0, 1, 2]] = s.acc_png
+        g[[3, 4, 5], [3, 4, 5]] = s.omega_png
         return g
     
     def h(self, t, x, q, c):
         """Measurement function."""
         s = self.symbols(t=t, x=x, q=q, c=c)
-        meas = dict(phi_meas=s.phi, theta_meas=s.theta, psi_meas=s.psi)
+        q0 = s.q0
+        q1 = s.q1
+        q2 = s.q2
+        q3 = s.q3
+        e2b = np.array(
+            [[q0**2+q1**2-q2**2-q3**2, 2*(q1*q2 + q0*q3), 2*(q1*q3 - q0*q2)],
+             [2*(q1*q2 - q0*q3), q0**2-q1**2+q2**2-q3**2, 2*(q2*q3 + q0*q1)],
+             [2*(q1*q3 + q0*q2), 2*(q2*q3 - q0*q1), q0**2-q1**2-q2**2+q3**2]],
+            dtype=object
+        )
+        magb = np.dot(e2b, [s.magex, 0, s.magez])
+        gb = np.dot(e2b, [0, 0, s.g0])
+        meas = dict(
+            p_meas=s.p, q_meas=s.q, r_meas=s.r,
+            magx_meas=magb[0], magy_meas=magb[1], magz_meas=magb[2],
+            ax_meas=s.ax - gb[0], 
+            ay_meas=s.ay - gb[1], 
+            az_meas=s.az - gb[2],
+        )
         return self.pack('y', meas)
     
     def R(self, q, c):
         """Measurement function."""
         s = self.symbols(q=q, c=c)
-        R = np.diag(np.repeat([s.ang_meas_std], 3))**2
-        return R
+        std = dict(
+            ax_meas=s.acc_mng, ay_meas=s.acc_mng, az_meas=s.acc_mng, 
+            p_meas=s.omega_mng, q_meas=s.omega_mng, r_meas=s.omega_mng,
+            magx_meas=s.mag_mng, magy_meas=s.mag_mng, magz_meas=s.mag_mng,
+        )
+        return np.diag(self.pack('y', std) ** 2)
 
 
 class SymbolicDTModel(SymbolicModel, sde.ItoTaylorAS15DiscretizedModel):
@@ -90,10 +114,10 @@ class SymbolicDTModel(SymbolicModel, sde.ItoTaylorAS15DiscretizedModel):
     
     dt = 'dt'
     """Discretization time step."""
-
+    
     k = 'k'
     """Discretized sample index."""
-
+    
     generated_name = "GeneratedDTModel"
     """Name of the generated class."""
     
@@ -115,35 +139,57 @@ def load_data():
     module_dir = os.path.dirname(__file__)
     filepath = os.path.join(module_dir, 'data', 'apm.log')
     lines = open(filepath).read().splitlines()
-
-    mag = []
-    imu = []
+    
+    t = []
+    y = []
     for line in lines:
         msgid, *fields = re.split(',\s*', line)
         if msgid == 'MAG':
-            mag.append([float(field) for field in fields])
+            t.append(float(fields[0]) / 1e3)
+            ydict = dict(
+                magx_meas=float(fields[1]),
+                magy_meas=float(fields[2]),
+                magz_meas=float(fields[3]),
+            )
+            y.append(GeneratedDTModel.pack('y', ydict, fill=np.nan))
         elif msgid == 'IMU':
-            imu.append([float(field) for field in fields])
-    mag = np.asarray(mag)
-    imu = np.asarray(imu)
-    #return t, y
+            t.append(float(fields[0]) / 1e3)
+            ydict = dict(
+                p_meas=float(fields[1]),
+                q_meas=float(fields[2]),
+                r_meas=float(fields[3]),
+                ax_meas=float(fields[4]),
+                ay_meas=float(fields[5]),
+                az_meas=float(fields[6]),
+            )
+            y.append(GeneratedDTModel.pack('y', ydict, fill=np.nan))
+    range_ = np.s_[900:1000]#np.s_[900:1800]
+    t = np.asarray(t)[range_]
+    y = ma.masked_invalid(y)[range_]
+    assert np.unique(t).size == t.size
+    return t, y
 
 
 def pem(t, y):
     # Instantiate the model
     given = dict(
-        ang_meas_std=2.4e-4, angvel_png=3,
+        g0=9.81, quat_renorm_gain=4,
+        acc_png=0.01, omega_png=0.0001,
+        acc_mng=0.03, omega_mng=8e-3, mag_mng=1.6,
+        magex=117, magez=0,
     )
-    dt = t[1] - t[0]
+    dt = np.diff(t)
     q0 = GeneratedDTModel.pack('q', given)
     c = GeneratedDTModel.pack('c', given)
-    params = dict(q=q0, c=c, dt=dt)
-    sampled = dict(t=t)
+    params = dict(q=q0, c=c)
+    sampled = dict(dt=dt, t=t)
     model = GeneratedDTModel(params, sampled)
+
+    # Build the initial state and covariance
     x0 = np.zeros(GeneratedDTModel.nx)
-    x0[:3] = y[0, :3]
-    Px0 = np.diag(np.repeat([1e-3, 1e-3], 3))
-    
+    x0[-4] = 1
+    Px0 = np.diag(np.repeat([1, 1e-3, 0.1], (3,3,4)) ** 2)
+
     def merit(q, new=None):
         mq = model.parametrize(q=q)
         kf = kalman.DTUnscentedKalmanFilter(mq, x0, Px0)
@@ -162,7 +208,7 @@ def pem(t, y):
     
     q_lb = dict(ang_meas_std=0, angvel_png=0)
     q_ub = dict()
-    q_fix = dict(ang_meas_std=2.4e-4)
+    q_fix = dict(acc_mng=0.03, omega_mng=8e-3, mag_mng=1.6)
     q_bounds = [model.pack('q', dict(q_lb, **q_fix), fill=-np.inf),
                 model.pack('q', dict(q_ub, **q_fix), fill=np.inf)]
     problem = yaipopt.Problem(q_bounds, merit, grad,
@@ -175,4 +221,5 @@ def pem(t, y):
 
 if __name__ == '__main__':
     [t, y] = load_data()
+    
     
