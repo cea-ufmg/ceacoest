@@ -9,6 +9,7 @@ import numpy as np
 import sympy
 import sym2num
 from numpy import ma
+from scipy import interpolate
 
 from ceacoest import kalman, sde, utils
 
@@ -135,41 +136,40 @@ GeneratedDTModel = sym2num.class_obj(sym_dt_model, printer)
 
 
 def load_data():
+    # Read the log file
     module_dir = os.path.dirname(__file__)
     filepath = os.path.join(module_dir, 'data', 'apm.log')
     lines = open(filepath).read().splitlines()
-    
-    t = []
-    y = []
+
+    # Parse the data
+    data = dict(MAG=[], IMU=[], ATT=[])
     for line in lines:
         msgid, *fields = re.split(',\s*', line)
-        if msgid == 'MAG':
-            t.append(float(fields[0]) / 1e3)
-            ydict = dict(
-                magx_meas=float(fields[1]),
-                magy_meas=float(fields[2]),
-                magz_meas=float(fields[3]),
-            )
-            y.append(GeneratedDTModel.pack('y', ydict, fill=np.nan))
-        elif msgid == 'IMU':
-            t.append(float(fields[0]) / 1e3)
-            ydict = dict(
-                p_meas=float(fields[1]),
-                q_meas=float(fields[2]),
-                r_meas=float(fields[3]),
-                ax_meas=float(fields[4]),
-                ay_meas=float(fields[5]),
-                az_meas=float(fields[6]),
-            )
-            y.append(GeneratedDTModel.pack('y', ydict, fill=np.nan))
+        if msgid in data:
+            data[msgid].append([float(f) for f in fields])
+    data = {key: np.asarray(val) for key, val in data.items()}
+    imu = data['IMU']
+    mag = data['MAG']
+    
+    
+    # Build the output array
+    t = np.sort(np.hstack((imu[:, 0], mag[:, 0])))
+    imu_inds = np.array([tk in imu[:, 0] for tk in t])
+    mag_inds = np.array([tk in mag[:, 0] for tk in t])
+    y = ma.masked_all((t.size, GeneratedDTModel.ny))
+    y[imu_inds, :6] = imu[:, [4, 5, 6, 1, 2, 3]]
+    y[mag_inds, 6:] = mag[:, [1, 2, 3]]
+    t *= 1e-3
+    
+    # Select the experiment interval
     range_ = np.s_[900:1200]#np.s_[900:1800]
-    t = np.asarray(t)[range_]
-    y = ma.masked_invalid(y)[range_]
+    t = t[range_]
+    y = y[range_]
     assert np.unique(t).size == t.size
-    return t, y
+    return t, y, data
 
 
-def pem(t, y):
+def pem(t, y, data):
     # Instantiate the model
     given = dict(
         g0=9.81, quat_renorm_gain=4,
@@ -185,10 +185,13 @@ def pem(t, y):
     model = GeneratedDTModel(params, sampled)
 
     # Build the initial state and covariance
+    att = data['ATT']
+    ang = interpolate.interp1d(att[:, 0]*1e-3, att[:, [2,4,6]], axis=0)
+    phi, theta, psi = ang(t[0]) * np.pi / 180
     x0 = np.zeros(GeneratedDTModel.nx)
     x0[-4] = 1
     Px0 = np.diag(np.repeat([1, 1e-3, 0.1], (3,3,4)) ** 2)
-
+    
     def merit(q, new=None):
         mq = model.parametrize(q=q)
         kf = kalman.DTUnscentedKalmanFilter(mq, x0, Px0)
@@ -219,6 +222,6 @@ def pem(t, y):
 
 
 if __name__ == '__main__':
-    [t, y] = load_data()
+    [t, y, data] = load_data()
     
     
