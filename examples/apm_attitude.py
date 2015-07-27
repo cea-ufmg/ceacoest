@@ -9,7 +9,6 @@ import numpy as np
 import sympy
 import sym2num
 from numpy import ma
-from scipy import io
 
 from ceacoest import kalman, sde, utils
 
@@ -34,7 +33,7 @@ class SymbolicModel(sde.SymbolicModel):
     """Measurement vector."""
     
     q = ['acc_png', 'omega_png', 'acc_mng', 'omega_mng', 'mag_mng',
-         'magex', 'magez']
+         'magex', 'magez', 'maghx', 'maghy', 'maghz']
     """Parameter vector."""
     
     c = ['quat_renorm_gain', 'g0']
@@ -74,13 +73,13 @@ class SymbolicModel(sde.SymbolicModel):
              [2*(q1*q3 + q0*q2), 2*(q2*q3 - q0*q1), q0**2-q1**2-q2**2+q3**2]],
             dtype=object
         )
-        magb = np.dot(e2b, [s.magex, 0, s.magez])
+        mag = np.dot(e2b, [s.magex, 0, s.magez]) + [s.maghx, s.maghy, s.maghz]
         gb = np.dot(e2b, [0, 0, s.g0])
         meas = dict(
             p_meas=s.p, q_meas=s.q, r_meas=s.r,
-            magx_meas=magb[0], magy_meas=magb[1], magz_meas=magb[2],
-            ax_meas=s.ax - gb[0], 
-            ay_meas=s.ay - gb[1], 
+            magx_meas=mag[0], magy_meas=mag[1], magz_meas=mag[2],
+            ax_meas=s.ax - gb[0],
+            ay_meas=s.ay - gb[1],
             az_meas=s.az - gb[2],
         )
         return self.pack('y', meas)
@@ -163,7 +162,7 @@ def load_data():
                 az_meas=float(fields[6]),
             )
             y.append(GeneratedDTModel.pack('y', ydict, fill=np.nan))
-    range_ = np.s_[900:1000]#np.s_[900:1800]
+    range_ = np.s_[900:1200]#np.s_[900:1800]
     t = np.asarray(t)[range_]
     y = ma.masked_invalid(y)[range_]
     assert np.unique(t).size == t.size
@@ -176,7 +175,7 @@ def pem(t, y):
         g0=9.81, quat_renorm_gain=4,
         acc_png=0.01, omega_png=0.0001,
         acc_mng=0.03, omega_mng=8e-3, mag_mng=1.6,
-        magex=117, magez=0,
+        magex=117, magez=0, maghx=0, maghy=0, maghz=0,
     )
     dt = np.diff(t)
     q0 = GeneratedDTModel.pack('q', given)
