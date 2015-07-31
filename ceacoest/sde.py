@@ -137,10 +137,10 @@ class SymbolicDiscretizedModel(SymbolicModel):
         # Switch the time argument with the sample index
         arg_items = list(args.items())
         t_index = list(args).index('t')
-        t_item = arg_items[t_index]
+        arg_items.append(arg_items[t_index])
         arg_items[t_index] = ('k', k)
         if not extra:
-            arg_items.extend([t_item, ('dt', dt)])
+            arg_items.append(('dt', dt))
         return collections.OrderedDict(arg_items)
 
 
