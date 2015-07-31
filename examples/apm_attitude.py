@@ -26,7 +26,7 @@ class SymbolicModel(sde.SymbolicModel):
     t = 't'
     """Time variable."""
     
-    x = ['ax', 'ay', 'az', 'p', 'q', 'r', 'q0', 'q1', 'q2', 'q3']
+    x = ['ax', 'ay', 'az', 'p', 'q', 'r', 'phi', 'theta', 'psi']
     """State vector."""
     
     y = ['ax_meas', 'ay_meas', 'az_meas', 'p_meas', 'q_meas', 'r_meas',
@@ -37,19 +37,22 @@ class SymbolicModel(sde.SymbolicModel):
          'magex', 'magez', 'maghx', 'maghy', 'maghz']
     """Parameter vector."""
     
-    c = ['quat_renorm_gain', 'g0']
+    c = ['g0']
     """Constants vector."""
     
     def f(self, t, x, q, c):
         """Drift function."""
         s = self.symbols(t=t, x=x, q=q, c=c)
-        renorm = s.quat_renorm_gain*(1 - s.q0**2 - s.q1**2 - s.q2**2 - s.q3**2)
+        cphi = sympy.cos(s.phi)
+        sphi = sympy.sin(s.phi)
+        cth = sympy.cos(s.theta)
+        sth = sympy.sin(s.theta)
+        tth = sympy.tan(s.theta)
         derivs = dict(
             p=0, q=0, r=0, ax=0, ay=0, az=0,
-            q0=-0.5*(s.q1*s.p + s.q2*s.q + s.q3*s.r) + renorm*s.q0,
-            q1=-0.5*(-s.q0*s.p - s.q2*s.r + s.q3*s.q) + renorm*s.q1,
-            q2=-0.5*(-s.q0*s.q + s.q1*s.r - s.q3*s.p) + renorm*s.q2,
-            q3=-0.5*(-s.q0*s.r - s.q1*s.q + s.q2*s.p) + renorm*s.q3,
+            phi=s.p + tth*(sphi*s.q + cphi*s.r),
+            theta=cphi*s.q -sphi*s.r,
+            psi=sphi/cth*s.q + cphi/cth*s.r,
         )
         return self.pack('x', derivs)
     
@@ -64,14 +67,16 @@ class SymbolicModel(sde.SymbolicModel):
     def h(self, t, x, q, c):
         """Measurement function."""
         s = self.symbols(t=t, x=x, q=q, c=c)
-        q0 = s.q0
-        q1 = s.q1
-        q2 = s.q2
-        q3 = s.q3
+        cphi = sympy.cos(s.phi)
+        sphi = sympy.sin(s.phi)
+        cth = sympy.cos(s.theta)
+        sth = sympy.sin(s.theta)
+        cpsi = sympy.cos(s.psi)
+        spsi = sympy.sin(s.psi)
         e2b = np.array(
-            [[q0**2+q1**2-q2**2-q3**2, 2*(q1*q2 + q0*q3), 2*(q1*q3 - q0*q2)],
-             [2*(q1*q2 - q0*q3), q0**2-q1**2+q2**2-q3**2, 2*(q2*q3 + q0*q1)],
-             [2*(q1*q3 + q0*q2), 2*(q2*q3 - q0*q1), q0**2-q1**2-q2**2+q3**2]],
+            [[cth*cpsi, cth*spsi, -sth],
+             [-cphi*spsi + sphi*sth*cpsi, cphi*cpsi + sphi*sth*spsi, sphi*cth],
+             [sphi*spsi + cphi*sth*cpsi, -sphi*cpsi + cphi*sth*spsi, cphi*cth]],
             dtype=object
         )
         mag = np.dot(e2b, [s.magex, 0, s.magez]) + [s.maghx, s.maghy, s.maghz]
@@ -151,7 +156,6 @@ def load_data():
     imu = data['IMU']
     mag = data['MAG']
     
-    
     # Build the output array
     t = np.sort(np.hstack((imu[:, 0], mag[:, 0])))
     imu_inds = np.array([tk in imu[:, 0] for tk in t])
@@ -172,8 +176,8 @@ def load_data():
 def pem(t, y, data):
     # Instantiate the model
     given = dict(
-        g0=9.81, quat_renorm_gain=4,
-        acc_png=0.01, omega_png=0.0001,
+        g0=9.81,
+        acc_png=0.01, omega_png=0.01,
         acc_mng=0.03, omega_mng=8e-3, mag_mng=1.6,
         magex=117, magez=0, maghx=0, maghy=0, maghz=0,
     )
@@ -185,12 +189,14 @@ def pem(t, y, data):
     model = GeneratedDTModel(params, sampled)
 
     # Build the initial state and covariance
+    imu = data['IMU']
     att = data['ATT']
-    ang = interpolate.interp1d(att[:, 0]*1e-3, att[:, [2,4,6]], axis=0)
-    phi, theta, psi = ang(t[0]) * np.pi / 180
+    omega = interpolate.interp1d(imu[:, 0]*1e-3, imu[:, [1, 2, 3]], axis=0)
+    ang = interpolate.interp1d(att[:, 0]*1e-3, att[:, [2, 4, 6]], axis=0)
     x0 = np.zeros(GeneratedDTModel.nx)
-    x0[-4] = 1
-    Px0 = np.diag(np.repeat([1, 1e-3, 0.1], (3,3,4)) ** 2)
+    x0[3:6] = omega(t[0])
+    x0[-3:] = ang(t[0]) * np.pi / 180
+    Px0 = np.diag(np.repeat([1, 1e-3, 0.1], 3) ** 2)
     
     def merit(q, new=None):
         mq = model.parametrize(q=q)
@@ -208,13 +214,14 @@ def pem(t, y, data):
         kf = kalman.DTUnscentedKalmanFilter(mq, x0, Px0)
         return obj_factor * kf.pem_hessian(y)[hess_inds]
     
-    q_lb = dict(ang_meas_std=0, angvel_png=0)
+    q_lb = dict(acc_png=0, omega_png=0,
+                acc_mng=0, omega_mng=0, mag_mng=0)
     q_ub = dict()
-    q_fix = dict(acc_mng=0.03, omega_mng=8e-3, mag_mng=1.6)
+    q_fix = dict()
     q_bounds = [model.pack('q', dict(q_lb, **q_fix), fill=-np.inf),
                 model.pack('q', dict(q_ub, **q_fix), fill=np.inf)]
     problem = yaipopt.Problem(q_bounds, merit, grad,
-                            hess=hess, hess_inds=hess_inds)
+                              hess=hess, hess_inds=hess_inds)
     problem.num_option(b'obj_scaling_factor', -1)
     (qopt, solinfo) = problem.solve(q0)
     
@@ -223,5 +230,4 @@ def pem(t, y, data):
 
 if __name__ == '__main__':
     [t, y, data] = load_data()
-    
     
