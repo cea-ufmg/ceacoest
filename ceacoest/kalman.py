@@ -26,7 +26,7 @@ from . import utils
 class DTKalmanFilterBase(metaclass=abc.ABCMeta):
     """Discrete-time Kalman filter/smoother abstract base class."""
     
-    def __init__(self, model, x, Px, **options):
+    def __init__(self, model, x=None, Px=None, **options):
         """Create a discrete-time Kalman filter.
         
         Parameters
@@ -38,10 +38,10 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         self.model = model
         """The underlying system model."""
         
-        self.x = np.asarray(x)
+        self.x = model.x0() if x is None else np.asarray(x)
         """State vector mean."""
         
-        self.Px = np.asarray(Px)
+        self.Px = model.Px0() if Px is None else np.asarray(Px)
         """State vector covariance."""
         
         self.k = options.get('k', 0)
@@ -55,24 +55,34 @@ class DTKalmanFilterBase(metaclass=abc.ABCMeta):
         base_shape = self.x.shape[:-1]
         self.base_shape = base_shape
         """Base shape of broadcasting."""
-        
+
         self.dL_dq = options.get('dL_dq', np.zeros(base_shape + (nq,)))
         """Measurement log-likelihood derivative."""
 
         self.d2L_dq2 = options.get('dL_dq', np.zeros(base_shape + (nq, nq)))
         """Measurement log-likelihood derivative."""
-
-        self.dx_dq = options.get('dx_dq', np.zeros(base_shape + (nq, nx)))
+        
+        self.dx_dq = self._get_initial('dx_dq', options, (nq, nx))
         """State vector derivative."""
         
-        self.dPx_dq = options.get('dPx_dq', np.zeros(base_shape + (nq, nx, nx)))
+        self.dPx_dq = self._get_initial('dPx_dq', options, (nq, nx, nx))
         """State vector covariance derivative."""
 
-        self.d2x_dq2 = options.get('dx_dq', np.zeros(base_shape + (nq, nq, nx)))
+        self.d2x_dq2 = self._get_initial('d2x_dq2', options, (nq, nq, nx))
         """State vector derivative."""
         
-        self.d2Px_dq2 = options.get('dPx_dq',np.zeros(base_shape+(nq,nq,nx,nx)))
+        self.d2Px_dq2 = self._get_initial('d2Px_dq2', options, (nq, nq, nx, nx))
         """State vector covariance derivative."""
+    
+    def _get_initial(self, key, options, shape):
+        try:
+            return np.asarray(options[key])
+        except KeyError:
+            try:
+                attr = key.replace('x', 'x0')
+                return getattr(self.model, attr)()
+            except AttributeError:
+                return np.zeros(self.base_shape + shape)
     
     @abc.abstractmethod
     def predict(self):
@@ -466,7 +476,7 @@ def choose_ut_transform_class(options):
 
 class DTUnscentedPredictor(DTKalmanFilterBase):
     
-    def __init__(self, model, x, Px, **options):
+    def __init__(self, model, x=None, Px=None, **options):
         # Initialize base
         super().__init__(model, x, Px, **options)
         
@@ -545,7 +555,7 @@ class DTUnscentedPredictor(DTKalmanFilterBase):
 
 class DTUnscentedCorrector(DTKalmanFilterBase):
     
-    def __init__(self, model, x, Px, **options):
+    def __init__(self, model, x=None, Px=None, **options):
         # Initialize base
         super().__init__(model, x, Px, **options)
         

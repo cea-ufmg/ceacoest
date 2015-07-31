@@ -17,7 +17,7 @@ class SymbolicDuffing(sde.SymbolicModel):
     var_names = {'t', 'x', 'y', 'q', 'c'}
     """Name of model variables."""
     
-    function_names = {'f', 'g', 'h', 'R'}
+    function_names = {'f', 'g', 'h', 'R', 'x0', 'Px0'}
     """Name of the model functions."""
 
     t = 't'
@@ -29,10 +29,11 @@ class SymbolicDuffing(sde.SymbolicModel):
     y = ['x_meas']
     """Measurement vector."""
     
-    q = ['alpha', 'beta', 'delta', 'g2', 'x_meas_std']
+    q = ['alpha', 'beta', 'delta', 'g2', 'x_meas_std', 
+         'x0', 'v0']
     """Unknown parameter vector."""
     
-    c = ['gamma', 'omega']
+    c = ['gamma', 'omega', 'x0_std', 'v0_std']
     """Constants vector."""
     
     def f(self, t, x, q, c):
@@ -57,6 +58,16 @@ class SymbolicDuffing(sde.SymbolicModel):
         """Measurement function."""
         s = self.symbols(q=q, c=c)
         return [[s.x_meas_std ** 2]]
+    
+    def x0(self, q, c):
+        """Initial state."""
+        s = self.symbols(q=q, c=c)
+        return self.pack('x', dict(x=s.x0, v=s.v0))
+
+    def Px0(self, q, c):
+        """Initial state covariance."""
+        s = self.symbols(q=q, c=c)
+        return np.diag(self.pack('x', dict(x=s.x0_std, v=s.v0_std))**2)
 
 
 class SymbolicDTDuffing(SymbolicDuffing, sde.ItoTaylorAS15DiscretizedModel):
@@ -72,7 +83,9 @@ class SymbolicDTDuffing(SymbolicDuffing, sde.ItoTaylorAS15DiscretizedModel):
                    ('d2h_dx2', 'dh_dx',  'x'), 
                    ('d2h_dx_dq', 'dh_dx', 'q'),
                    ('d2h_dq2', 'dh_dq',  'q'),
-                   ('dR_dq', 'R', 'q'), ('d2R_dq2', 'dR_dq', 'q')]
+                   ('dR_dq', 'R', 'q'), ('d2R_dq2', 'dR_dq', 'q'),
+                   ('dx0_dq', 'x0', 'q'), ('d2x0_dq2', 'dx0_dq', 'q'),
+                   ('dPx0_dq', 'Px0', 'q'), ('d2Px0_dq2', 'dPx0_dq', 'q')]
     """List of the model function derivatives to calculate / generate."""
     
     dt = 'dt'
@@ -110,7 +123,8 @@ def sim():
     # Instantiate the model
     given = dict(
         alpha=1, beta=-1, delta=0.2, gamma=0.3, omega=1,
-        g1=0, g2=0.1, x_meas_std=0.1
+        g1=0, g2=0.1, x_meas_std=0.1,
+        x0=1, v0=1, x0_std=0.1, v0_std=0.1
     )
     q = GeneratedDTDuffing.pack('q', given)
     c = GeneratedDTDuffing.pack('c', given)
@@ -121,10 +135,10 @@ def sim():
     # Simulate the system
     w = np.random.randn(N - 1, model.nw)
     x = np.zeros((N, model.nx))
-    x[0] = [1, 0]
+    x[0] = stats.multivariate_normal.rvs(model.x0(), model.Px0())
     for k in range(N - 1):
         x[k + 1] = model.f(k, x[k])  + model.g(k, x[k]).dot(w[k])
-
+    
     # Sample the outputs
     R = model.R()
     v = np.random.multivariate_normal(np.zeros(model.ny), R, N)
@@ -134,34 +148,35 @@ def sim():
 
 
 def pem(model, t, x, y, q):
-    x0 = [1.2, 0.2]
-    Px0 = np.diag([0.1, 0.1])
-    
     def merit(q, new=None):
         mq = model.parametrize(q=q)
-        kf = kalman.DTUnscentedKalmanFilter(mq, x0, Px0)
+        kf = kalman.DTUnscentedKalmanFilter(mq)
         return kf.pem_merit(y)
     
     def grad(q, new=None):
         mq = model.parametrize(q=q)
-        kf = kalman.DTUnscentedKalmanFilter(mq, x0, Px0)
+        kf = kalman.DTUnscentedKalmanFilter(mq)
         return kf.pem_gradient(y)
     
     hess_inds = np.tril_indices(model.nq)
     def hess(q, new_q=1, obj_factor=1, lmult=1, new_lmult=1):
         mq = model.parametrize(q=q)
-        kf = kalman.DTUnscentedKalmanFilter(mq, x0, Px0)
+        kf = kalman.DTUnscentedKalmanFilter(mq)
         return obj_factor * kf.pem_hessian(y)[hess_inds]
     
-    q_bounds = np.tile([[-np.inf], [np.inf]], model.nq)
-    problem = yaipopt.Problem(q_bounds, merit, grad, 
+    q_lb = dict(g2=0, x_meas_std=0, x0_std=0, v0_std=0)
+    q_ub = dict()
+    q_fix = dict()
+    q_bounds = [model.pack('q', dict(q_lb, **q_fix), fill=-np.inf),
+                model.pack('q', dict(q_ub, **q_fix), fill=np.inf)]
+    problem = yaipopt.Problem(q_bounds, merit, grad,
                               hess=hess, hess_inds=hess_inds)
     problem.num_option(b'obj_scaling_factor', -1)
     (qopt, solinfo) = problem.solve(q)
-
-    return problem, qopt, solinfo, x0, Px0
+    
+    return problem, qopt, solinfo
 
 
 if __name__ == '__main__':
     [model, t, x, y, q] = sim()
-    [problem, qopt, solinfo, x0, Px0] = pem(model, t, x, y, q)
+    [problem, qopt, solinfo] = pem(model, t, x, y, q)
