@@ -124,7 +124,7 @@ def sim():
     given = dict(
         alpha=1, beta=-1, delta=0.2, gamma=0.3, omega=1,
         g1=0, g2=0.1, x_meas_std=0.1,
-        x0=1, v0=1, x0_std=0.1, v0_std=0.1
+        x0=1, v0=0, x0_std=0.1, v0_std=0.1
     )
     q = GeneratedDTDuffing.pack('q', given)
     c = GeneratedDTDuffing.pack('c', given)

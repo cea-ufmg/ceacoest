@@ -20,7 +20,7 @@ class SymbolicModel(sde.SymbolicModel):
     var_names = {'t', 'x', 'y', 'q', 'c'}
     """Name of model variables."""
     
-    function_names = {'f', 'g', 'h', 'R'}
+    function_names = {'f', 'g', 'h', 'R', 'x0'}
     """Name of the model functions."""
     
     t = 't'
@@ -34,7 +34,8 @@ class SymbolicModel(sde.SymbolicModel):
     """Measurement vector."""
     
     q = ['acc_png', 'omega_png', 'acc_mng', 'omega_mng', 'mag_mng',
-         'magex', 'magez', 'maghx', 'maghy', 'maghz']
+         'magex', 'magez', 'maghx', 'maghy', 'maghz',
+         'ax0', 'ay0', 'az0', 'p0', 'q0', 'r0', 'phi0', 'theta0', 'psi0']
     """Parameter vector."""
     
     c = ['g0']
@@ -99,6 +100,16 @@ class SymbolicModel(sde.SymbolicModel):
             magx_meas=s.mag_mng, magy_meas=s.mag_mng, magz_meas=s.mag_mng,
         )
         return np.diag(self.pack('y', std) ** 2)
+    
+    def x0(self, q, c):
+        """Initial state."""
+        s = self.symbols(q=q, c=c)
+        x0 = {
+            'ax': s.ax0, 'ay': s.ay0, 'az': s.az0,
+            'p': s.p0, 'q': s.q0, 'r': s.r0,
+            'phi': s.phi0, 'theta': s.theta0, 'psi': s.psi0,
+        }
+        return self.pack('x', x0)
 
 
 class SymbolicDTModel(SymbolicModel, sde.ItoTaylorAS15DiscretizedModel):
@@ -114,7 +125,8 @@ class SymbolicDTModel(SymbolicModel, sde.ItoTaylorAS15DiscretizedModel):
                    ('d2h_dx2', 'dh_dx',  'x'), 
                    ('d2h_dx_dq', 'dh_dx', 'q'),
                    ('d2h_dq2', 'dh_dq',  'q'),
-                   ('dR_dq', 'R', 'q'), ('d2R_dq2', 'dR_dq', 'q')]
+                   ('dR_dq', 'R', 'q'), ('d2R_dq2', 'dR_dq', 'q'),
+                   ('dx0_dq', 'x0', 'q'), ('d2x0_dq2', 'dx0_dq', 'q')]
     """List of the model function derivatives to calculate / generate."""
     
     dt = 'dt'
@@ -145,7 +157,7 @@ def load_data():
     module_dir = os.path.dirname(__file__)
     filepath = os.path.join(module_dir, 'data', 'apm.log')
     lines = open(filepath).read().splitlines()
-
+    
     # Parse the data
     data = dict(MAG=[], IMU=[], ATT=[])
     for line in lines:
@@ -166,7 +178,7 @@ def load_data():
     t *= 1e-3
     
     # Select the experiment interval
-    range_ = np.s_[900:1200]#np.s_[900:1800]
+    range_ = np.s_[905:1200]#np.s_[900:1800]
     t = t[range_]
     y = y[range_]
     assert np.unique(t).size == t.size
@@ -174,12 +186,22 @@ def load_data():
 
 
 def pem(t, y, data):
+    # Build the initial state and covariance
+    imu = data['IMU']
+    att = data['ATT']
+    d2r = np.pi / 180
+    omega0 = interpolate.interp1d(imu[:, 0]*1e-3, imu[:,[1,2,3]],axis=0)(t[0])
+    ang0 = interpolate.interp1d(att[:, 0]*1e-3, att[:,[2,4,6]]*d2r,axis=0)(t[0])
+    Px0 = np.diag(np.repeat(1e-3 ** 2, GeneratedDTModel.nx))
+    
     # Instantiate the model
     given = dict(
         g0=9.81,
-        acc_png=0.01, omega_png=0.01,
-        acc_mng=0.03, omega_mng=8e-3, mag_mng=1.6,
-        magex=117, magez=0, maghx=0, maghy=0, maghz=0,
+        acc_png=0.05, omega_png=0.05,
+        acc_mng=0.03, omega_mng=8e-3, mag_mng=2,
+        magex=206, magez=147, maghx=-50, maghy=-50, maghz=-190,
+        p0=omega0[0], q0=omega0[1], r0=omega0[2],
+        phi0=ang0[0], theta0=ang0[1], psi0=ang0[2]+0.3941,
     )
     dt = np.diff(t)
     q0 = GeneratedDTModel.pack('q', given)
@@ -187,37 +209,31 @@ def pem(t, y, data):
     params = dict(q=q0, c=c)
     sampled = dict(dt=dt, t=t)
     model = GeneratedDTModel(params, sampled)
-
-    # Build the initial state and covariance
-    imu = data['IMU']
-    att = data['ATT']
-    omega = interpolate.interp1d(imu[:, 0]*1e-3, imu[:, [1, 2, 3]], axis=0)
-    ang = interpolate.interp1d(att[:, 0]*1e-3, att[:, [2, 4, 6]], axis=0)
-    x0 = np.zeros(GeneratedDTModel.nx)
-    x0[3:6] = omega(t[0])
-    x0[-3:] = ang(t[0]) * np.pi / 180
-    Px0 = np.diag(np.repeat([1, 1e-3, 0.1], 3) ** 2)
     
     def merit(q, new=None):
         mq = model.parametrize(q=q)
-        kf = kalman.DTUnscentedKalmanFilter(mq, x0, Px0)
+        kf = kalman.DTUnscentedKalmanFilter(mq, Px=Px0)
         return kf.pem_merit(y)
     
     def grad(q, new=None):
         mq = model.parametrize(q=q)
-        kf = kalman.DTUnscentedKalmanFilter(mq, x0, Px0)
+        kf = kalman.DTUnscentedKalmanFilter(mq, Px=Px0)
         return kf.pem_gradient(y)
     
     hess_inds = np.tril_indices(model.nq)
     def hess(q, new_q=1, obj_factor=1, lmult=1, new_lmult=1):
         mq = model.parametrize(q=q)
-        kf = kalman.DTUnscentedKalmanFilter(mq, x0, Px0)
+        kf = kalman.DTUnscentedKalmanFilter(mq, Px=Px0)
         return obj_factor * kf.pem_hessian(y)[hess_inds]
     
     q_lb = dict(acc_png=0, omega_png=0,
-                acc_mng=0, omega_mng=0, mag_mng=0)
-    q_ub = dict()
-    q_fix = dict()
+                acc_mng=0, omega_mng=0, mag_mng=0,
+                ax0=-5, ay0=-5, az0=-5,
+                phi0=-np.pi, psi0=0, theta0=-np.pi/2)
+    q_ub = dict(ax0=5, ay0=5, az0=5,
+                phi0=np.pi, psi0=2*np.pi, theta0=np.pi/2)
+    q_fix = dict(acc_png=0.05, omega_png=0.05,
+                 acc_mng=0.03, omega_mng=8e-3, mag_mng=2)
     q_bounds = [model.pack('q', dict(q_lb, **q_fix), fill=-np.inf),
                 model.pack('q', dict(q_ub, **q_fix), fill=np.inf)]
     problem = yaipopt.Problem(q_bounds, merit, grad,
@@ -225,7 +241,7 @@ def pem(t, y, data):
     problem.num_option(b'obj_scaling_factor', -1)
     (qopt, solinfo) = problem.solve(q0)
     
-    return problem, qopt, solinfo, model, q0, x0, Px0
+    return problem, qopt, solinfo, model, q0, Px0
 
 
 if __name__ == '__main__':
