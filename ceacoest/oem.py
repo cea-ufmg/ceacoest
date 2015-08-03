@@ -133,9 +133,7 @@ class CTEstimator:
         d2L_dx2 = self.model.d2L_dx2_val(self.ym, self.tm, xm, q, self.um)
         d2L_dq2 = self.model.d2L_dq2_val(self.ym, self.tm, xm, q, self.um)
         d2L_dx_dq = self.model.d2L_dx_dq_val(self.ym, self.tm, xm, q, self.um)
-        return np.concatenate(
-            (d2L_dx2.ravel(), d2L_dq2.ravel(), d2L_dx_dq.ravel())
-        )
+        return utils.flat_cat(d2L_dx2, d2L_dq2, d2L_dx_dq)
     
     @property
     @utils.cached
@@ -152,6 +150,16 @@ class CTEstimator:
                            self.expand_q_ind(d2L_dq2[1], km),
                            self.expand_x_ind(d2L_dx_dq[1], km))
         return (i, j)
+
+    def merit_hessian(self, d):
+        """Merit function Hessian as a dense matrix."""
+        i, j = self.merit_hessian_ind
+        val = self.merit_hessian_val(d)
+        offdiag = i != j
+        hessian = np.zeros((self.nd, self.nd))
+        hessian[i, j] = val
+        hessian[j, i] += offdiag * val[offdiag]
+        return hessian
     
     def defects(self, d):
         """ODE equality constraints."""
@@ -271,7 +279,7 @@ class CTEstimator:
         return (i, j, k)
 
     def defects_hessian(self, d):
-        """ODE equality constraints Hessian."""
+        """ODE equality constraints Hessian as a dense matrix."""
         val = self.defects_hessian_val(d)
         hessian = np.zeros((self.nd, self.nd, self.ndefects))
         for v, i, j, k in zip(val, *self.defects_hessian_ind):

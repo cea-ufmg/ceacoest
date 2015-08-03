@@ -21,7 +21,7 @@ class Problem:
         """Collocation method."""
         
         self.tc = self.collocation.grid(t)
-        """Collocation time grid."""
+        """Normalized collocation time grid."""
         assert self.tc[0] == 0 and self.tc[-1] == 1
         
         self.npieces = len(t) - 1
@@ -36,10 +36,17 @@ class Problem:
         self.nconstr = (self.npieces * self.collocation.ninterv * model.nx +
                         self.tc.size * model.ng)
         """Number of NLP constraints."""
-
+        
         self.u_offset = self.tc.size * model.nx
+        """Offset of the controls `u` in the decision variable vector."""
+        
         self.tf_offset = self.nd - 1
-    
+        """Offset of the final time `tf` in the decision variable vector."""
+        
+        tr = self.unravel_pieces(self.tc)
+        self.dt = tr[:, 1:] - tr[:, :-1]
+        """Normalized length of each collocation interval."""
+        
     def unpack_decision(self, d):
         """Unpack the decision vector into the states and parameters."""
         assert d.shape == (self.nd,)
@@ -75,6 +82,14 @@ class Problem:
         k = np.arange(self.tc.size) if k is None else np.asarray(k, dtype=int)
         di = k[:, None] * self.model.nu + ui + self.u_offset
         return di
+
+    def expand_tf_ind(self, inds):
+        return np.repeat(self.tf_offset, len(inds[0]))
+
+    def expand_xe_ind(self, xi):
+        xi = np.asarray(xi, dtype=int)
+        offset = (self.tc.size - 2) * self.model.nx
+        return xi + (xi >= self.model.nx) * offset
     
     def unravel_pieces(self, v):
         v = np.asarray(v)
@@ -90,111 +105,123 @@ class Problem:
     def merit(self, d):
         """Merit function."""
         x, u, tf = self.unpack_decision(d)
-        xe = x[[0, -1]]
+        xe = x[[0, -1]].flatten()
         return self.model.M(xe, tf)
         
     def merit_gradient(self, d):
         """Gradient of merit function."""
         x, u, tf = self.unpack_decision(d)
-        xe = x[[0, -1]]
+        xe = x[[0, -1]].flatten()
         dM_dx = np.zeros_like(x)
         dM_du = np.zeros_like(u)
-        dM_dx[[0, -1]] = self.model.dM_dx(xe, tf)
+        dM_dx[[0, -1]] = self.model.dM_dx(xe, tf).reshape((2, -1))
         dM_dt = self.model.dM_dt(xe, tf)
         return self.pack_decision(dM_dx, dM_du, dM_dt)
     
     def merit_hessian_val(self, d):
         """Values of nonzero elements of merit function Hessian."""
-        x, q = self.unpack_decision(d)
-        xm = x[self.km]
-        d2L_dx2 = self.model.d2L_dx2_val(self.ym, self.tm, xm, q, self.um)
-        d2L_dq2 = self.model.d2L_dq2_val(self.ym, self.tm, xm, q, self.um)
-        d2L_dx_dq = self.model.d2L_dx_dq_val(self.ym, self.tm, xm, q, self.um)
-        return np.concatenate(
-            (d2L_dx2.ravel(), d2L_dq2.ravel(), d2L_dx_dq.ravel())
-        )
+        x, u, tf = self.unpack_decision(d)
+        xe = x[[0, -1]].flatten()
+        d2M_dx2 = self.model.d2M_dx2_val(xe, tf)
+        d2M_dx_dt = self.model.d2M_dx_dt_val(xe, tf)
+        d2M_dt2 = self.model.d2M_dt2(xe, tf)
+        return utils.flat_cat(d2M_dx2, d2M_dx_dt, d2M_dt2)
     
     @property
     @utils.cached
     def merit_hessian_ind(self):
         """Indices of nonzero elements of merit function Hessian."""
-        km = self.km
-        d2L_dx2 = self.model.d2L_dx2_ind
-        d2L_dq2 = self.model.d2L_dq2_ind
-        d2L_dx_dq = self.model.d2L_dx_dq_ind
-        i = utils.flat_cat(self.expand_x_ind(d2L_dx2[0], km),
-                           self.expand_q_ind(d2L_dq2[0], km),
-                           self.expand_q_ind(d2L_dx_dq[0], km))
-        j = utils.flat_cat(self.expand_x_ind(d2L_dx2[1], km),
-                           self.expand_q_ind(d2L_dq2[1], km),
-                           self.expand_x_ind(d2L_dx_dq[1], km))
+        d2M_dx2 = self.model.d2M_dx2_ind
+        d2M_dx_dt = self.model.d2M_dx_dt_ind
+        i = utils.flat_cat(self.expand_xe_ind(d2M_dx2[0]),
+                           self.expand_tf_ind(d2M_dx_dt), self.tf_offset)
+        j = utils.flat_cat(self.expand_xe_ind(d2M_dx2[1]),
+                           self.expand_xe_ind(d2M_dx_dt[0]), self.tf_offset)
         return (i, j)
     
+    def merit_hessian(self, d):
+        """Merit function Hessian as a dense matrix."""
+        i, j = self.merit_hessian_ind
+        val = self.merit_hessian_val(d)
+        offdiag = i != j
+        hessian = np.zeros((self.nd, self.nd))
+        hessian[i, j] = val
+        hessian[j, i] += offdiag * val[offdiag]
+        return hessian
+    
     def constr(self, d):
-        """ODE equality constraints."""
-        x, q = self.unpack_decision(d)
-        f = self.model.f(self.tc, x, q, self.uc)
+        """NLP constraints."""
+        x, u, tf = self.unpack_decision(d)
+        f = self.model.f(x, u)
         J = self.collocation.J
         dt = self.dt
         
         xr = self.unravel_pieces(x)
         fr = self.unravel_pieces(f)
         delta = xr[:, 1:] - xr[:, :-1]
-        finc = np.einsum('ijk,lj,il->ilk', fr, J, dt)
+        finc = np.einsum('ijk,lj,il->ilk', fr, J, dt*tf)
         constr = delta - finc
         return np.ravel(constr)
-
+    
     def constr_jacobian_val(self, d):
-        """Values of nonzero elements of ODE equality constraints Jacobian."""
-        x, q = self.unpack_decision(d)
-        df_dx = self.model.df_dx_val(self.tc, x, q, self.uc)
-        df_dq = self.model.df_dq_val(self.tc, x, q, self.uc)
+        """Values of nonzero elements of NLP constraints Jacobian."""
+        x, u, tf = self.unpack_decision(d)
+        f = self.model.f(x, u)
+        df_dx = self.model.df_dx_val(x, u)
+        df_du = self.model.df_du_val(x, u)
         J = self.collocation.J
         dt = self.dt
         
+        fr = self.unravel_pieces(f)
         dfr_dx = self.unravel_pieces(df_dx)
-        dfr_dq = self.unravel_pieces(df_dq)
+        dfr_du = self.unravel_pieces(df_du)
         return utils.flat_cat(
             np.ones((self.npieces, self.collocation.ninterv, self.model.nx)),
             -np.ones((self.npieces, self.collocation.ninterv, self.model.nx)),
-            -np.einsum('ijk,lj,il->ijkl', dfr_dx, J, dt),
-            -np.einsum('ijk,lj,il->ijkl', dfr_dq, J, dt)
+            -np.einsum('ijk,lj,il->ijkl', dfr_dx, J, dt*tf),
+            -np.einsum('ijk,lj,il->ijkl', dfr_du, J, dt*tf),
+            -np.einsum('ijk,lj,il->ilk', fr, J, dt)
         )
     
     @property
     @utils.cached
     def constr_jacobian_ind(self):
-        """Indices of nonzero elements of ODE equality constraints Jacobian."""
+        """Indices of nonzero elements of NLP constraints Jacobian."""
         x_ind = np.arange(self.model.nx)
         df_dx_i, df_dx_j = self.model.df_dx_ind
-        df_dq_i, df_dq_j = self.model.df_dq_ind
+        df_du_i, df_du_j = self.model.df_du_ind
 
+        nfinc = self.npieces * self.collocation.ninterv * self.model.nx
         offsets = np.arange(self.npieces * self.collocation.ninterv)
         offsets = offsets.reshape((self.npieces, self.collocation.ninterv, 1))
         offsets *= self.model.nx
         dxr_dx_i = self.unravel_pieces(self.expand_x_ind(x_ind))
         dfr_dx_i = self.unravel_pieces(self.expand_x_ind(df_dx_i))
-        dfr_dq_i = self.unravel_pieces(self.expand_q_ind(df_dq_i))
+        dfr_du_i = self.unravel_pieces(self.expand_u_ind(df_du_i))
+        dfinc_dt_i = np.repeat(self.tf_offset, nfinc)
         dxr_dx_j = offsets + x_ind
         dfr_dx_j = np.swapaxes(offsets + df_dx_j, 1, 2)
-        dfr_dq_j = np.swapaxes(offsets + df_dq_j, 1, 2)
+        dfr_du_j = np.swapaxes(offsets + df_du_j, 1, 2)
+        dfinc_dt_j = offsets + x_ind
         i = utils.flat_cat(dxr_dx_i[:, 1:], dxr_dx_i[:, :-1],
                            np.repeat(dfr_dx_i, self.collocation.ninterv),
-                           np.repeat(dfr_dq_i, self.collocation.ninterv))
+                           np.repeat(dfr_du_i, self.collocation.ninterv),
+                           dfinc_dt_i)
         j = utils.flat_cat(dxr_dx_j, dxr_dx_j,
                            np.repeat(dfr_dx_j, self.collocation.n, axis=0),
-                           np.repeat(dfr_dq_j, self.collocation.n, axis=0))
+                           np.repeat(dfr_du_j, self.collocation.n, axis=0),
+                           dfinc_dt_j)
         return (i, j)
         
     def constr_jacobian(self, d):
-        """ODE equality constraints Jacobian."""
+        """NLP constraints Jacobian."""
         val = self.constr_jacobian_val(d)
         ind = self.constr_jacobian_ind
         shape = (self.nd, self.nconstr)
         return sparse.coo_matrix((val, ind), shape=shape).todense()
     
     def constr_hessian_val(self, d):
-        """Values of nonzero elements of ODE equality constraints Hessian."""
+        """Values of nonzero elements of NLP constraints Hessian."""
         x, q = self.unpack_decision(d)
         d2f_dx2 = self.model.d2f_dx2_val(self.tc, x, q, self.uc)
         d2f_dq2 = self.model.d2f_dq2_val(self.tc, x, q, self.uc)
@@ -214,7 +241,7 @@ class Problem:
     @property
     @utils.cached
     def constr_hessian_ind(self):
-        """Indices of nonzero elements of ODE equality constraints Hessian."""
+        """Indices of nonzero elements of NLP constraints Hessian."""
         ncolpt = self.collocation.n
         ncolinterv = self.collocation.ninterv
         d2f_dx2_i, d2f_dx2_j, d2f_dx2_k = self.model.d2f_dx2_ind
@@ -248,7 +275,7 @@ class Problem:
         return (i, j, k)
 
     def constr_hessian(self, d):
-        """ODE equality constraints Hessian."""
+        """NLP constraints Hessian."""
         val = self.constr_hessian_val(d)
         hessian = np.zeros((self.nd, self.nd, self.nconstr))
         for v, i, j, k in zip(val, *self.constr_hessian_ind):

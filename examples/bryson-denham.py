@@ -33,7 +33,12 @@ class SymbolicModel(sym2num.SymbolicModel):
                    ('d2M_dx_dt', 'dM_dx', 'tf'),
                    ('d2M_dt2', 'dM_dt',  'tf')]
     """List of the model function derivatives to calculate / generate."""
-    
+
+    sparse = ['df_dx', 'df_du', 'd2f_dx_du',
+              ('d2f_dx2', lambda i,j,k: i<=j), ('d2f_du2', lambda i,j,k: i<=j),
+              'd2M_dx_dt', ('d2M_dx2', lambda i,j: i<=j)]
+    """List of the model functions to generate in a sparse format."""
+
     tf = 'tf'
     """Final time."""
     
@@ -43,7 +48,7 @@ class SymbolicModel(sym2num.SymbolicModel):
     u = ['u']
     """Control vector."""
     
-    xe = [[xi + '_start' for xi in x], [xi + '_end' for xi in x]]
+    xe = [xi + '_start' for xi in x] + [xi + '_end' for xi in x]
     """State vector at endpoints."""
     
     def f(self, x, u):
@@ -59,7 +64,7 @@ class SymbolicModel(sym2num.SymbolicModel):
     def h(self, xe, tf):
         """Endpoint constraints."""
         s = self.symbols(xe=xe, tf=tf)
-        return [s.x1_start, s.x2_start - 1, s.x3_start, s.x1_end, s.x2_end - 1]
+        return [s.x1_start**3 + s.x1_start, s.x1_end**3 + s.x1_end]
     
     def M(self, xe, tf):
         """Mayer (endpoint) cost."""
