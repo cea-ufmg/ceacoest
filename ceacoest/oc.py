@@ -1,4 +1,4 @@
-"""Output Error Method estimation."""
+"""Optimal control."""
 
 
 import numpy as np
@@ -8,96 +8,73 @@ from scipy import sparse
 from . import rk, utils
 
 
-class CTEstimator:
-    """Continuous-time output error method estimator using LGL collocation."""
+class Problem:
+    """Optimal control problem with LGL direct collocation."""
     
-    def __init__(self, model, y, t, u, **options):
+    def __init__(self, model, t, **options):
         order = options.get('order', 2)
         
         self.model = model
-        """Underlying dynamical system model."""
-        
-        self.y = np.asanyarray(y)
-        """Measurements."""
-        assert y.ndim == 2 and y.shape[1] == model.ny
-        
-        t = np.asarray(t) #Piece boundary times
-        assert t.shape == y.shape[:1]
+        """Underlying cost, constraint and dynamical system model."""
         
         self.collocation = rk.LGLCollocation(order)
         """Collocation method."""
         
         self.tc = self.collocation.grid(t)
         """Collocation time grid."""
-        
-        ymask = ma.getmaskarray(y)
-        kmp, = np.nonzero(np.any(~ymask, axis=1))
-        self.km = kmp * self.collocation.ninterv
-        """Collocation time indices with active measurements."""
-        
-        self.tm = t[kmp]
-        """Times of active measurements."""        
-        
-        self.ym = y[kmp]
-        """Measurements at the time indices with active measurements."""
-        
-        self.uc = u(self.tc)
-        """Inputs at the colocation grid."""
-
-        self.um = self.uc[self.km]
-        """Inputs at the times of active measuments."""
+        assert self.tc[0] == 0 and self.tc[-1] == 1
         
         self.npieces = len(t) - 1
         """Number of collocation pieces."""
-
+        
         self.ncol = self.collocation.n
         """Number of collocation points per piece."""
         
-        self.nd = self.tc.size * model.nx + model.nq
+        self.nd = 1 + self.tc.size * (model.nx + model.nu)
         """Length of the decision vector."""
+        
+        self.nconstr = (self.npieces * self.collocation.ninterv * model.nx +
+                        self.tc.size * model.ng)
+        """Number of NLP constraints."""
 
-        self.ndefects = self.npieces * self.collocation.ninterv * model.nx
-
-        tr = self.unravel_pieces(self.tc)
-        self.dt = tr[:, 1:] - tr[:, :-1]
-        """Length of each collocation interval."""
+        self.u_offset = self.tc.size * model.nx
+        self.tf_offset = self.nd - 1
     
     def unpack_decision(self, d):
         """Unpack the decision vector into the states and parameters."""
         assert d.shape == (self.nd,)
         
-        q = d[:self.model.nq]
-        x = np.reshape(d[self.model.nq:], (-1, self.model.nx))
-        return x, q
-        
-    def pack_decision(self, x, q):
+        x = d[:self.u_offset].reshape((-1, self.model.nx))
+        u = d[self.u_offset:-1].reshape((-1, self.model.nu))
+        tf = d[-1]
+        return x, u, tf
+    
+    def pack_decision(self, x, u, tf):
         """Pack the states and parameters into the decision vector."""
         assert np.shape(x) == (self.tc.size, self.model.nx)
-        assert np.shape(q) == (self.model.nq,)
+        assert np.shape(u) == (self.tc.size, self.model.nu)
+        assert np.shape(tf) == ()
         d = np.empty(self.nd)
-        d[:self.model.nq] = q
-        d[self.model.nq:] = np.ravel(x)
+        d[:self.u_offset] = x.flatten()
+        d[self.u_offset:-1] = u.flatten()
+        d[-1] = tf
         return d
-
-    def pack_bounds(self, q_lb={}, q_ub={}, q_fix={}):
+    
+    def pack_bounds(self, x,u, tf):
         """Pack the decision variable bounds."""
-        x_lb = np.tile(-np.inf, (self.tc.size, self.model.nx))
-        x_ub = np.tile(np.inf, (self.tc.size, self.model.nx))
-        q_lb_vec = self.model.pack('q', dict(q_lb, **q_fix), fill=-np.inf)
-        q_ub_vec = self.model.pack('q', dict(q_ub, **q_fix), fill=np.inf)
-        return (self.pack_decision(x_lb, q_lb_vec),
-                self.pack_decision(x_ub, q_ub_vec))
+        pass
         
     def expand_x_ind(self, xi, k=None):
         xi = np.asarray(xi, dtype=int)
         k = np.arange(self.tc.size) if k is None else np.asarray(k, dtype=int)
-        di = self.model.nq + k[:, None] * self.model.nx + xi
+        di = k[:, None] * self.model.nx + xi
         return di
     
-    def expand_q_ind(self, qi, k=None):
-        nk = self.tc.size if k is None else len(k)
-        qi = np.asarray(qi, dtype=int)
-        return np.tile(qi, (nk, 1))
+    def expand_u_ind(self, ui, k=None):
+        ui = np.asarray(ui, dtype=int)
+        k = np.arange(self.tc.size) if k is None else np.asarray(k, dtype=int)
+        di = k[:, None] * self.model.nu + ui + self.u_offset
+        return di
     
     def unravel_pieces(self, v):
         v = np.asarray(v)
@@ -112,19 +89,19 @@ class CTEstimator:
     
     def merit(self, d):
         """Merit function."""
-        x, q = self.unpack_decision(d)
-        xm = x[self.km]
-        L = self.model.L(self.ym, self.tm, xm, q, self.um)
-        return L.sum()
-
+        x, u, tf = self.unpack_decision(d)
+        xe = x[[0, -1]]
+        return self.model.M(xe, tf)
+        
     def merit_gradient(self, d):
         """Gradient of merit function."""
-        x, q = self.unpack_decision(d)
-        xm = x[self.km]
+        x, u, tf = self.unpack_decision(d)
+        xe = x[[0, -1]]
         dM_dx = np.zeros_like(x)
-        dM_dx[self.km] = self.model.dL_dx(self.ym, self.tm, xm, q, self.um)
-        dM_dq = self.model.dL_dq(self.ym, self.tm, xm, q, self.um).sum(axis=0)
-        return self.pack_decision(dM_dx, dM_dq)
+        dM_du = np.zeros_like(u)
+        dM_dx[[0, -1]] = self.model.dM_dx(xe, tf)
+        dM_dt = self.model.dM_dt(xe, tf)
+        return self.pack_decision(dM_dx, dM_du, dM_dt)
     
     def merit_hessian_val(self, d):
         """Values of nonzero elements of merit function Hessian."""
@@ -153,7 +130,7 @@ class CTEstimator:
                            self.expand_x_ind(d2L_dx_dq[1], km))
         return (i, j)
     
-    def defects(self, d):
+    def constr(self, d):
         """ODE equality constraints."""
         x, q = self.unpack_decision(d)
         f = self.model.f(self.tc, x, q, self.uc)
@@ -164,10 +141,10 @@ class CTEstimator:
         fr = self.unravel_pieces(f)
         delta = xr[:, 1:] - xr[:, :-1]
         finc = np.einsum('ijk,lj,il->ilk', fr, J, dt)
-        defects = delta - finc
-        return np.ravel(defects)
+        constr = delta - finc
+        return np.ravel(constr)
 
-    def defects_jacobian_val(self, d):
+    def constr_jacobian_val(self, d):
         """Values of nonzero elements of ODE equality constraints Jacobian."""
         x, q = self.unpack_decision(d)
         df_dx = self.model.df_dx_val(self.tc, x, q, self.uc)
@@ -186,7 +163,7 @@ class CTEstimator:
     
     @property
     @utils.cached
-    def defects_jacobian_ind(self):
+    def constr_jacobian_ind(self):
         """Indices of nonzero elements of ODE equality constraints Jacobian."""
         x_ind = np.arange(self.model.nx)
         df_dx_i, df_dx_j = self.model.df_dx_ind
@@ -209,14 +186,14 @@ class CTEstimator:
                            np.repeat(dfr_dq_j, self.collocation.n, axis=0))
         return (i, j)
         
-    def defects_jacobian(self, d):
+    def constr_jacobian(self, d):
         """ODE equality constraints Jacobian."""
-        val = self.defects_jacobian_val(d)
-        ind = self.defects_jacobian_ind
-        shape = (self.nd, self.ndefects)
+        val = self.constr_jacobian_val(d)
+        ind = self.constr_jacobian_ind
+        shape = (self.nd, self.nconstr)
         return sparse.coo_matrix((val, ind), shape=shape).todense()
     
-    def defects_hessian_val(self, d):
+    def constr_hessian_val(self, d):
         """Values of nonzero elements of ODE equality constraints Hessian."""
         x, q = self.unpack_decision(d)
         d2f_dx2 = self.model.d2f_dx2_val(self.tc, x, q, self.uc)
@@ -236,7 +213,7 @@ class CTEstimator:
     
     @property
     @utils.cached
-    def defects_hessian_ind(self):
+    def constr_hessian_ind(self):
         """Indices of nonzero elements of ODE equality constraints Hessian."""
         ncolpt = self.collocation.n
         ncolinterv = self.collocation.ninterv
@@ -270,11 +247,11 @@ class CTEstimator:
                            np.repeat(d2fr_dx_dq_k, ncolpt, 0))
         return (i, j, k)
 
-    def defects_hessian(self, d):
+    def constr_hessian(self, d):
         """ODE equality constraints Hessian."""
-        val = self.defects_hessian_val(d)
-        hessian = np.zeros((self.nd, self.nd, self.ndefects))
-        for v, i, j, k in zip(val, *self.defects_hessian_ind):
+        val = self.constr_hessian_val(d)
+        hessian = np.zeros((self.nd, self.nd, self.nconstr))
+        for v, i, j, k in zip(val, *self.constr_hessian_ind):
             hessian[i, j, k] += v
             if i != j:
                 hessian[j, i, k] += v
@@ -286,10 +263,10 @@ class CTEstimator:
         if d_bounds is None:
             d_bounds = np.tile([[-np.inf], [np.inf]], self.nd)
         
-        constr_bounds = np.zeros((2, self.ndefects))
-        constr_jac_ind = self.defects_jacobian_ind[::-1]
+        constr_bounds = np.zeros((2, self.nconstr))
+        constr_jac_ind = self.constr_jacobian_ind[::-1]
         merit_hess_ind = self.merit_hessian_ind
-        def_hess_ind = self.defects_hessian_ind
+        def_hess_ind = self.constr_hessian_ind
         hess_inds = np.hstack((merit_hess_ind[::-1], def_hess_ind[1::-1]))
         
         def merit(d, new_d=True):
@@ -297,11 +274,11 @@ class CTEstimator:
         def grad(d, new_d=True):
             return self.merit_gradient(d)
         def constr(d, new_d=True):
-            return self.defects(d)
+            return self.constr(d)
         def constr_jac(d, new_d=True):
-            return self.defects_jacobian_val(d)
+            return self.constr_jacobian_val(d)
         def lag_hess(d, new_d, obj_factor, lmult, new_lmult):
-            def_hess = self.defects_hessian_val(d) * lmult[def_hess_ind[2]]
+            def_hess = self.constr_hessian_val(d) * lmult[def_hess_ind[2]]
             merit_hess = self.merit_hessian_val(d) * obj_factor
             return utils.flat_cat(merit_hess, def_hess)        
         
