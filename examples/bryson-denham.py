@@ -10,6 +10,8 @@ from ceacoest import oc
 class SymbolicModel(sym2num.SymbolicModel):
     """Symbolic Bryson--Denham optimal control model."""
     
+    generated_name = 'GeneratedModel'
+    
     var_names = {'x', 'u', 'tf', 'xe'}
     """Name of model variables."""
     
@@ -39,7 +41,7 @@ class SymbolicModel(sym2num.SymbolicModel):
               'dg_dx', 'dg_du', 'd2g_dx_du',
               ('d2g_dx2', lambda i,j,k: i<=j), ('d2g_du2', lambda i,j,k: i<=j),
               'd2M_dx_dt', ('d2M_dx2', lambda i,j: i<=j),
-              'd2h_dx_dt', ('d2h_dx2', lambda i,j,k: i<=j)]
+              'dh_dx', 'd2h_dx_dt', ('d2h_dx2', lambda i,j,k: i<=j)]
     """List of the model functions to generate in a sparse format."""
 
     tf = 'tf'
@@ -62,7 +64,7 @@ class SymbolicModel(sym2num.SymbolicModel):
     def g(self, x, u):
         """Path constraints."""
         s = self.symbols(x=x, u=u)
-        return []
+        return [s.x1 ** 2 * s.u ** 3, s.x2**2 * s.x1]
     
     def h(self, xe, tf):
         """Endpoint constraints."""

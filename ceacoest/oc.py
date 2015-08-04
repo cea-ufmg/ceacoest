@@ -34,7 +34,7 @@ class Problem:
         """Length of the decision vector."""
         
         self.nconstr = (self.npieces * self.collocation.ninterv * model.nx +
-                        self.tc.size * model.ng)
+                        self.tc.size * model.ng + model.nh)
         """Number of NLP constraints."""
         
         self.u_offset = self.tc.size * model.nx
@@ -45,7 +45,10 @@ class Problem:
  
         self.g_offset = self.npieces * self.collocation.ninterv * model.nx
         """Offset of the path constraints `g` in the constraint vector."""
-       
+
+        self.h_offset = self.g_offset + self.tc.size * model.ng
+        """Offset of the endpoint constraints `h` in the constraint vector."""
+        
         tr = self.unravel_pieces(self.tc)
         self.dt = tr[:, 1:] - tr[:, :-1]
         """Normalized length of each collocation interval."""
@@ -104,8 +107,14 @@ class Problem:
     def expand_g_ind(self, gi):
         """Expand path constraint indices."""
         gi = np.asarray(gi, dtype=int)
-        return np.arange(self.tc.size)*self.model.ng + gi + self.g_offset
-        
+        deltas = self.model.ng * np.arange(self.tc.size)[:, None]
+        return deltas + gi + self.g_offset
+
+    def expand_h_ind(self, hi):
+        """Expand endpoint constraint indices."""
+        hi = np.asarray(hi, dtype=int)
+        return hi + self.h_offset
+
     def unravel_pieces(self, v):
         v = np.asarray(v)
         assert len(v) == self.tc.size
@@ -167,8 +176,10 @@ class Problem:
     def constr(self, d):
         """NLP constraints."""
         x, u, tf = self.unpack_decision(d)
+        xe = x[[0, -1]].flatten()
         f = self.model.f(x, u)
         g = self.model.g(x, u)
+        h = self.model.h(xe, tf)
         J = self.collocation.J
         dt = self.dt
         
@@ -177,16 +188,19 @@ class Problem:
         delta = xr[:, 1:] - xr[:, :-1]
         finc = np.einsum('ijk,lj,il->ilk', fr, J, dt*tf)
         defects = delta - finc
-        return utils.flat_cat(defects, g)
+        return utils.flat_cat(defects, g, h)
     
     def constr_jacobian_val(self, d):
         """Values of nonzero elements of NLP constraints Jacobian."""
         x, u, tf = self.unpack_decision(d)
+        xe = x[[0, -1]].flatten()
         f = self.model.f(x, u)
         df_dx = self.model.df_dx_val(x, u)
         df_du = self.model.df_du_val(x, u)
         dg_dx = self.model.dg_dx_val(x, u)
         dg_du = self.model.dg_du_val(x, u)
+        dh_dx = self.model.dh_dx_val(xe, tf)
+        dh_dt = self.model.dh_dt(xe, tf)
         J = self.collocation.J
         dt = self.dt
         
@@ -199,7 +213,7 @@ class Problem:
             -np.einsum('ijk,lj,il->ijkl', dfr_dx, J, dt*tf),
             -np.einsum('ijk,lj,il->ijkl', dfr_du, J, dt*tf),
             -np.einsum('ijk,lj,il->ilk', fr, J, dt),
-            dg_dx, dg_du
+            dg_dx, dg_du, dh_dx, dh_dt
         )
     
     @property
@@ -211,7 +225,9 @@ class Problem:
         df_du_i, df_du_j = self.model.df_du_ind
         dg_dx_i, dg_dx_j = self.model.dg_dx_ind
         dg_du_i, dg_du_j = self.model.dg_du_ind
-
+        dh_dx_i, dh_dx_j = self.model.dh_dx_ind
+        dh_dt_j = np.arange(self.model.nh)
+        
         nfinc = self.npieces * self.collocation.ninterv * self.model.nx
         dxr_dx_i = self.unravel_pieces(self.expand_x_ind(x_ind))
         dfr_dx_i = self.unravel_pieces(self.expand_x_ind(df_dx_i))
@@ -226,13 +242,18 @@ class Problem:
                            np.repeat(dfr_du_i, self.collocation.ninterv),
                            dfinc_dt_i, 
                            self.expand_x_ind(dg_dx_i), 
-                           self.expand_u_ind(dg_du_i))
+                           self.expand_u_ind(dg_du_i),
+                           self.expand_xe_ind(dh_dx_i),
+                           np.repeat(self.tf_offset, self.model.nh))
         j = utils.flat_cat(dxr_dx_j, dxr_dx_j,
                            np.repeat(dfr_dx_j, self.collocation.n, axis=0),
                            np.repeat(dfr_du_j, self.collocation.n, axis=0),
                            dfinc_dt_j, 
                            self.expand_g_ind(dg_dx_j),
-                           self.expand_g_ind(dg_du_j))
+                           self.expand_g_ind(dg_du_j),
+                           self.expand_h_ind(dh_dx_j),
+                           self.expand_h_ind(dh_dt_j))
+        assert i.size == j.size
         return (i, j)
         
     def constr_jacobian(self, d):
@@ -240,6 +261,7 @@ class Problem:
         val = self.constr_jacobian_val(d)
         ind = self.constr_jacobian_ind
         shape = (self.nd, self.nconstr)
+        assert ind[0].size == ind[1].size
         return sparse.coo_matrix((val, ind), shape=shape).todense()
     
     def constr_hessian_val(self, d):
@@ -255,7 +277,7 @@ class Problem:
         d2g_dx_du = self.model.d2g_dx_du_val(x, u)
         J = self.collocation.J
         dt = self.dt
-
+        
         dfr_dx = self.unravel_pieces(df_dx)
         dfr_du = self.unravel_pieces(df_du)
         d2fr_dx2 = self.unravel_pieces(d2f_dx2)
@@ -301,8 +323,8 @@ class Problem:
         i = utils.flat_cat(np.repeat(d2fr_dx2_i, ncolinterv),
                            np.repeat(d2fr_du2_i, ncolinterv),
                            np.repeat(d2fr_dx_du_i, ncolinterv),
-                           np.repeat(self.tf_offset, dfr_dx_i.size * ncolpt),
-                           np.repeat(self.tf_offset, dfr_du_i.size * ncolpt),
+                           np.repeat(self.tf_offset, dfr_dx_j.size * ncolpt),
+                           np.repeat(self.tf_offset, dfr_du_j.size * ncolpt),
                            self.expand_x_ind(d2g_dx2_i),
                            self.expand_u_ind(d2g_du2_i),
                            self.expand_u_ind(d2g_dx_du_i))
@@ -322,13 +344,15 @@ class Problem:
                            self.expand_g_ind(d2g_dx2_k),
                            self.expand_g_ind(d2g_du2_k),
                            self.expand_g_ind(d2g_dx_du_k))
+        assert i.size == j.size == k.size
         return (i, j, k)
     
     def constr_hessian(self, d):
         """NLP constraints Hessian."""
         val = self.constr_hessian_val(d)
         hessian = np.zeros((self.nd, self.nd, self.nconstr))
-        for v, i, j, k in zip(val, *self.constr_hessian_ind):
+        ind = self.constr_hessian_ind
+        for v, i, j, k in zip(val, *ind):
             hessian[i, j, k] += v
             if i != j:
                 hessian[j, i, k] += v
