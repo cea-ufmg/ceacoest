@@ -36,7 +36,10 @@ class SymbolicModel(sym2num.SymbolicModel):
 
     sparse = ['df_dx', 'df_du', 'd2f_dx_du',
               ('d2f_dx2', lambda i,j,k: i<=j), ('d2f_du2', lambda i,j,k: i<=j),
-              'd2M_dx_dt', ('d2M_dx2', lambda i,j: i<=j)]
+              'dg_dx', 'dg_du', 'd2g_dx_du',
+              ('d2g_dx2', lambda i,j,k: i<=j), ('d2g_du2', lambda i,j,k: i<=j),
+              'd2M_dx_dt', ('d2M_dx2', lambda i,j: i<=j),
+              'd2h_dx_dt', ('d2h_dx2', lambda i,j,k: i<=j)]
     """List of the model functions to generate in a sparse format."""
 
     tf = 'tf'

@@ -42,7 +42,10 @@ class Problem:
         
         self.tf_offset = self.nd - 1
         """Offset of the final time `tf` in the decision variable vector."""
-        
+ 
+        self.g_offset = self.npieces * self.collocation.ninterv * model.nx
+        """Offset of the path constraints `g` in the constraint vector."""
+       
         tr = self.unravel_pieces(self.tc)
         self.dt = tr[:, 1:] - tr[:, :-1]
         """Normalized length of each collocation interval."""
@@ -93,16 +96,16 @@ class Problem:
 
     def expand_defects_ind(self, fi):
         """Expand ODE equality constraint indices."""
-        return self.defects_deltas + fi
-    
-    @property
-    @utils.cached
-    def defects_deltas(self):
         deltas = np.arange(self.npieces * self.collocation.ninterv)
         deltas = deltas.reshape((self.npieces, self.collocation.ninterv, 1))
         deltas *= self.model.nx
-        return deltas
+        return deltas + np.asarray(fi, dtype=int)
     
+    def expand_g_ind(self, gi):
+        """Expand path constraint indices."""
+        gi = np.asarray(gi, dtype=int)
+        return np.arange(self.tc.size)*self.model.ng + gi + self.g_offset
+        
     def unravel_pieces(self, v):
         v = np.asarray(v)
         assert len(v) == self.tc.size
@@ -165,6 +168,7 @@ class Problem:
         """NLP constraints."""
         x, u, tf = self.unpack_decision(d)
         f = self.model.f(x, u)
+        g = self.model.g(x, u)
         J = self.collocation.J
         dt = self.dt
         
@@ -172,8 +176,8 @@ class Problem:
         fr = self.unravel_pieces(f)
         delta = xr[:, 1:] - xr[:, :-1]
         finc = np.einsum('ijk,lj,il->ilk', fr, J, dt*tf)
-        constr = delta - finc
-        return np.ravel(constr)
+        defects = delta - finc
+        return utils.flat_cat(defects, g)
     
     def constr_jacobian_val(self, d):
         """Values of nonzero elements of NLP constraints Jacobian."""
@@ -181,6 +185,8 @@ class Problem:
         f = self.model.f(x, u)
         df_dx = self.model.df_dx_val(x, u)
         df_du = self.model.df_du_val(x, u)
+        dg_dx = self.model.dg_dx_val(x, u)
+        dg_du = self.model.dg_du_val(x, u)
         J = self.collocation.J
         dt = self.dt
         
@@ -192,7 +198,8 @@ class Problem:
             -np.ones((self.npieces, self.collocation.ninterv, self.model.nx)),
             -np.einsum('ijk,lj,il->ijkl', dfr_dx, J, dt*tf),
             -np.einsum('ijk,lj,il->ijkl', dfr_du, J, dt*tf),
-            -np.einsum('ijk,lj,il->ilk', fr, J, dt)
+            -np.einsum('ijk,lj,il->ilk', fr, J, dt),
+            dg_dx, dg_du
         )
     
     @property
@@ -202,6 +209,8 @@ class Problem:
         x_ind = np.arange(self.model.nx)
         df_dx_i, df_dx_j = self.model.df_dx_ind
         df_du_i, df_du_j = self.model.df_du_ind
+        dg_dx_i, dg_dx_j = self.model.dg_dx_ind
+        dg_du_i, dg_du_j = self.model.dg_du_ind
 
         nfinc = self.npieces * self.collocation.ninterv * self.model.nx
         dxr_dx_i = self.unravel_pieces(self.expand_x_ind(x_ind))
@@ -215,11 +224,15 @@ class Problem:
         i = utils.flat_cat(dxr_dx_i[:, 1:], dxr_dx_i[:, :-1],
                            np.repeat(dfr_dx_i, self.collocation.ninterv),
                            np.repeat(dfr_du_i, self.collocation.ninterv),
-                           dfinc_dt_i)
+                           dfinc_dt_i, 
+                           self.expand_x_ind(dg_dx_i), 
+                           self.expand_u_ind(dg_du_i))
         j = utils.flat_cat(dxr_dx_j, dxr_dx_j,
                            np.repeat(dfr_dx_j, self.collocation.n, axis=0),
                            np.repeat(dfr_du_j, self.collocation.n, axis=0),
-                           dfinc_dt_j)
+                           dfinc_dt_j, 
+                           self.expand_g_ind(dg_dx_j),
+                           self.expand_g_ind(dg_du_j))
         return (i, j)
         
     def constr_jacobian(self, d):
@@ -237,6 +250,9 @@ class Problem:
         d2f_dx2 = self.model.d2f_dx2_val(x, u)
         d2f_du2 = self.model.d2f_du2_val(x, u)
         d2f_dx_du = self.model.d2f_dx_du_val(x, u)
+        d2g_dx2 = self.model.d2g_dx2_val(x, u)
+        d2g_du2 = self.model.d2g_du2_val(x, u)
+        d2g_dx_du = self.model.d2g_dx_du_val(x, u)
         J = self.collocation.J
         dt = self.dt
 
@@ -251,6 +267,7 @@ class Problem:
             -np.einsum('ijk,lj,il->ijkl', d2fr_dx_du, J, dt*tf),
             -np.einsum('ijk,lj,il->ijkl', dfr_dx, J, dt),
             -np.einsum('ijk,lj,il->ijkl', dfr_du, J, dt),
+            d2g_dx2, d2g_du2, d2g_dx_du
         )
     
     @property
@@ -264,9 +281,9 @@ class Problem:
         d2f_dx2_i, d2f_dx2_j, d2f_dx2_k = self.model.d2f_dx2_ind
         d2f_du2_i, d2f_du2_j, d2f_du2_k = self.model.d2f_du2_ind
         d2f_dx_du_i, d2f_dx_du_j, d2f_dx_du_k = self.model.d2f_dx_du_ind
-        d2f_dx2_k = np.asarray(d2f_dx2_k, dtype=int)
-        d2f_du2_k = np.asarray(d2f_du2_k, dtype=int)
-        d2f_dx_du_k = np.asarray(d2f_dx_du_k, dtype=int)
+        d2g_dx2_i, d2g_dx2_j, d2g_dx2_k = self.model.d2g_dx2_ind
+        d2g_du2_i, d2g_du2_j, d2g_du2_k = self.model.d2g_du2_ind
+        d2g_dx_du_i, d2g_dx_du_j, d2g_dx_du_k = self.model.d2g_dx_du_ind
         
         dfr_dx_i = self.unravel_pieces(self.expand_x_ind(df_dx_i))
         dfr_du_i = self.unravel_pieces(self.expand_u_ind(df_du_i))
@@ -285,17 +302,26 @@ class Problem:
                            np.repeat(d2fr_du2_i, ncolinterv),
                            np.repeat(d2fr_dx_du_i, ncolinterv),
                            np.repeat(self.tf_offset, dfr_dx_i.size * ncolpt),
-                           np.repeat(self.tf_offset, dfr_du_i.size * ncolpt))
+                           np.repeat(self.tf_offset, dfr_du_i.size * ncolpt),
+                           self.expand_x_ind(d2g_dx2_i),
+                           self.expand_u_ind(d2g_du2_i),
+                           self.expand_u_ind(d2g_dx_du_i))
         j = utils.flat_cat(np.repeat(d2fr_dx2_j, ncolinterv),
                            np.repeat(d2fr_du2_j, ncolinterv),
                            np.repeat(d2fr_dx_du_j, ncolinterv),
                            np.repeat(dfr_dx_i, ncolinterv),
-                           np.repeat(dfr_du_i, ncolinterv))
+                           np.repeat(dfr_du_i, ncolinterv),
+                           self.expand_x_ind(d2g_dx2_j),
+                           self.expand_u_ind(d2g_du2_j),
+                           self.expand_x_ind(d2g_dx_du_j))
         k = utils.flat_cat(np.repeat(d2fr_dx2_k, ncolpt, 0),
                            np.repeat(d2fr_du2_k, ncolpt, 0),
                            np.repeat(d2fr_dx_du_k, ncolpt, 0),
                            np.repeat(dfr_dx_j, ncolpt, axis=0),
-                           np.repeat(dfr_du_j, ncolpt, axis=0))
+                           np.repeat(dfr_du_j, ncolpt, axis=0),
+                           self.expand_g_ind(d2g_dx2_k),
+                           self.expand_g_ind(d2g_du2_k),
+                           self.expand_g_ind(d2g_dx_du_k))
         return (i, j, k)
     
     def constr_hessian(self, d):
