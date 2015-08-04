@@ -90,6 +90,18 @@ class Problem:
         xi = np.asarray(xi, dtype=int)
         offset = (self.tc.size - 2) * self.model.nx
         return xi + (xi >= self.model.nx) * offset
+
+    def expand_defects_ind(self, fi):
+        """Expand ODE equality constraint indices."""
+        return self.defects_deltas + fi
+    
+    @property
+    @utils.cached
+    def defects_deltas(self):
+        deltas = np.arange(self.npieces * self.collocation.ninterv)
+        deltas = deltas.reshape((self.npieces, self.collocation.ninterv, 1))
+        deltas *= self.model.nx
+        return deltas
     
     def unravel_pieces(self, v):
         v = np.asarray(v)
@@ -192,17 +204,14 @@ class Problem:
         df_du_i, df_du_j = self.model.df_du_ind
 
         nfinc = self.npieces * self.collocation.ninterv * self.model.nx
-        offsets = np.arange(self.npieces * self.collocation.ninterv)
-        offsets = offsets.reshape((self.npieces, self.collocation.ninterv, 1))
-        offsets *= self.model.nx
         dxr_dx_i = self.unravel_pieces(self.expand_x_ind(x_ind))
         dfr_dx_i = self.unravel_pieces(self.expand_x_ind(df_dx_i))
         dfr_du_i = self.unravel_pieces(self.expand_u_ind(df_du_i))
         dfinc_dt_i = np.repeat(self.tf_offset, nfinc)
-        dxr_dx_j = offsets + x_ind
-        dfr_dx_j = np.swapaxes(offsets + df_dx_j, 1, 2)
-        dfr_du_j = np.swapaxes(offsets + df_du_j, 1, 2)
-        dfinc_dt_j = offsets + x_ind
+        dxr_dx_j = self.expand_defects_ind(x_ind)
+        dfr_dx_j = np.swapaxes(self.expand_defects_ind(df_dx_j), 1, 2)
+        dfr_du_j = np.swapaxes(self.expand_defects_ind(df_du_j), 1, 2)
+        dfinc_dt_j = dxr_dx_j
         i = utils.flat_cat(dxr_dx_i[:, 1:], dxr_dx_i[:, :-1],
                            np.repeat(dfr_dx_i, self.collocation.ninterv),
                            np.repeat(dfr_du_i, self.collocation.ninterv),
@@ -222,20 +231,26 @@ class Problem:
     
     def constr_hessian_val(self, d):
         """Values of nonzero elements of NLP constraints Hessian."""
-        x, q = self.unpack_decision(d)
-        d2f_dx2 = self.model.d2f_dx2_val(self.tc, x, q, self.uc)
-        d2f_dq2 = self.model.d2f_dq2_val(self.tc, x, q, self.uc)
-        d2f_dx_dq = self.model.d2f_dx_dq_val(self.tc, x, q, self.uc)
+        x, u, tf = self.unpack_decision(d)
+        df_dx = self.model.df_dx_val(x, u)
+        df_du = self.model.df_du_val(x, u)
+        d2f_dx2 = self.model.d2f_dx2_val(x, u)
+        d2f_du2 = self.model.d2f_du2_val(x, u)
+        d2f_dx_du = self.model.d2f_dx_du_val(x, u)
         J = self.collocation.J
         dt = self.dt
-        
+
+        dfr_dx = self.unravel_pieces(df_dx)
+        dfr_du = self.unravel_pieces(df_du)
         d2fr_dx2 = self.unravel_pieces(d2f_dx2)
-        d2fr_dq2 = self.unravel_pieces(d2f_dq2)
-        d2fr_dx_dq = self.unravel_pieces(d2f_dx_dq)
+        d2fr_du2 = self.unravel_pieces(d2f_du2)
+        d2fr_dx_du = self.unravel_pieces(d2f_dx_du)
         return utils.flat_cat(
-            -np.einsum('ijk,lj,il->ijkl', d2fr_dx2, J, dt),
-            -np.einsum('ijk,lj,il->ijkl', d2fr_dq2, J, dt),
-            -np.einsum('ijk,lj,il->ijkl', d2fr_dx_dq, J, dt)
+            -np.einsum('ijk,lj,il->ijkl', d2fr_dx2, J, dt*tf),
+            -np.einsum('ijk,lj,il->ijkl', d2fr_du2, J, dt*tf),
+            -np.einsum('ijk,lj,il->ijkl', d2fr_dx_du, J, dt*tf),
+            -np.einsum('ijk,lj,il->ijkl', dfr_dx, J, dt),
+            -np.einsum('ijk,lj,il->ijkl', dfr_du, J, dt),
         )
     
     @property
@@ -244,36 +259,45 @@ class Problem:
         """Indices of nonzero elements of NLP constraints Hessian."""
         ncolpt = self.collocation.n
         ncolinterv = self.collocation.ninterv
+        df_dx_i, df_dx_j = self.model.df_dx_ind
+        df_du_i, df_du_j = self.model.df_du_ind
         d2f_dx2_i, d2f_dx2_j, d2f_dx2_k = self.model.d2f_dx2_ind
-        d2f_dq2_i, d2f_dq2_j, d2f_dq2_k = self.model.d2f_dq2_ind
-        d2f_dx_dq_i, d2f_dx_dq_j, d2f_dx_dq_k = self.model.d2f_dx_dq_ind
+        d2f_du2_i, d2f_du2_j, d2f_du2_k = self.model.d2f_du2_ind
+        d2f_dx_du_i, d2f_dx_du_j, d2f_dx_du_k = self.model.d2f_dx_du_ind
         d2f_dx2_k = np.asarray(d2f_dx2_k, dtype=int)
-        d2f_dq2_k = np.asarray(d2f_dq2_k, dtype=int)
-        d2f_dx_dq_k = np.asarray(d2f_dx_dq_k, dtype=int)
+        d2f_du2_k = np.asarray(d2f_du2_k, dtype=int)
+        d2f_dx_du_k = np.asarray(d2f_dx_du_k, dtype=int)
         
-        offsets = np.arange(self.npieces * self.collocation.ninterv)
-        offsets = offsets.reshape((self.npieces, self.collocation.ninterv, 1))
-        offsets *= self.model.nx
+        dfr_dx_i = self.unravel_pieces(self.expand_x_ind(df_dx_i))
+        dfr_du_i = self.unravel_pieces(self.expand_u_ind(df_du_i))
         d2fr_dx2_i = self.unravel_pieces(self.expand_x_ind(d2f_dx2_i))
-        d2fr_dq2_i = self.unravel_pieces(self.expand_q_ind(d2f_dq2_i))
-        d2fr_dx_dq_i = self.unravel_pieces(self.expand_q_ind(d2f_dx_dq_i))
+        d2fr_du2_i = self.unravel_pieces(self.expand_u_ind(d2f_du2_i))
+        d2fr_dx_du_i = self.unravel_pieces(self.expand_u_ind(d2f_dx_du_i))
+        dfr_dx_j = np.swapaxes(self.expand_defects_ind(df_dx_j), 1, 2)
+        dfr_du_j = np.swapaxes(self.expand_defects_ind(df_du_j), 1, 2)
         d2fr_dx2_j = self.unravel_pieces(self.expand_x_ind(d2f_dx2_j))
-        d2fr_dq2_j = self.unravel_pieces(self.expand_q_ind(d2f_dq2_j))
-        d2fr_dx_dq_j = self.unravel_pieces(self.expand_x_ind(d2f_dx_dq_j))
-        d2fr_dx2_k = np.swapaxes(offsets + d2f_dx2_k, 1, 2)
-        d2fr_dq2_k = np.swapaxes(offsets + d2f_dq2_k, 1, 2)
-        d2fr_dx_dq_k = np.swapaxes(offsets + d2f_dx_dq_k, 1, 2)
+        d2fr_du2_j = self.unravel_pieces(self.expand_u_ind(d2f_du2_j))
+        d2fr_dx_du_j = self.unravel_pieces(self.expand_x_ind(d2f_dx_du_j))
+        d2fr_dx2_k = np.swapaxes(self.expand_defects_ind(d2f_dx2_k), 1, 2)
+        d2fr_du2_k = np.swapaxes(self.expand_defects_ind(d2f_du2_k), 1, 2)
+        d2fr_dx_du_k = np.swapaxes(self.expand_defects_ind(d2f_dx_du_k), 1, 2)
         i = utils.flat_cat(np.repeat(d2fr_dx2_i, ncolinterv),
-                           np.repeat(d2fr_dq2_i, ncolinterv),
-                           np.repeat(d2fr_dx_dq_i, ncolinterv))
+                           np.repeat(d2fr_du2_i, ncolinterv),
+                           np.repeat(d2fr_dx_du_i, ncolinterv),
+                           np.repeat(self.tf_offset, dfr_dx_i.size * ncolpt),
+                           np.repeat(self.tf_offset, dfr_du_i.size * ncolpt))
         j = utils.flat_cat(np.repeat(d2fr_dx2_j, ncolinterv),
-                           np.repeat(d2fr_dq2_j, ncolinterv),
-                           np.repeat(d2fr_dx_dq_j, ncolinterv))
+                           np.repeat(d2fr_du2_j, ncolinterv),
+                           np.repeat(d2fr_dx_du_j, ncolinterv),
+                           np.repeat(dfr_dx_i, ncolinterv),
+                           np.repeat(dfr_du_i, ncolinterv))
         k = utils.flat_cat(np.repeat(d2fr_dx2_k, ncolpt, 0),
-                           np.repeat(d2fr_dq2_k, ncolpt, 0),
-                           np.repeat(d2fr_dx_dq_k, ncolpt, 0))
+                           np.repeat(d2fr_du2_k, ncolpt, 0),
+                           np.repeat(d2fr_dx_du_k, ncolpt, 0),
+                           np.repeat(dfr_dx_j, ncolpt, axis=0),
+                           np.repeat(dfr_du_j, ncolpt, axis=0))
         return (i, j, k)
-
+    
     def constr_hessian(self, d):
         """NLP constraints Hessian."""
         val = self.constr_hessian_val(d)
