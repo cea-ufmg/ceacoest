@@ -41,7 +41,8 @@ class SymbolicModel(sym2num.SymbolicModel):
               'dg_dx', 'dg_du', 'd2g_dx_du',
               ('d2g_dx2', lambda i,j,k: i<=j), ('d2g_du2', lambda i,j,k: i<=j),
               'd2M_dx_dt', ('d2M_dx2', lambda i,j: i<=j),
-              'dh_dx', 'd2h_dx_dt', ('d2h_dx2', lambda i,j,k: i<=j)]
+              'dh_dx', 'dh_dt', 'd2h_dt2', 'd2h_dx_dt', 
+              ('d2h_dx2', lambda i,j,k: i<=j)]
     """List of the model functions to generate in a sparse format."""
 
     tf = 'tf'
@@ -64,12 +65,12 @@ class SymbolicModel(sym2num.SymbolicModel):
     def g(self, x, u):
         """Path constraints."""
         s = self.symbols(x=x, u=u)
-        return [s.x1 ** 2 * s.u ** 3, s.x2**2 * s.x1]
+        return []
     
     def h(self, xe, tf):
         """Endpoint constraints."""
         s = self.symbols(xe=xe, tf=tf)
-        return [s.x1_start**3 + s.x1_start, s.x1_end**3 + s.x1_end]
+        return []
     
     def M(self, xe, tf):
         """Mayer (endpoint) cost."""

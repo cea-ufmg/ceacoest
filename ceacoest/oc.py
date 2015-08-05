@@ -200,7 +200,7 @@ class Problem:
         dg_dx = self.model.dg_dx_val(x, u)
         dg_du = self.model.dg_du_val(x, u)
         dh_dx = self.model.dh_dx_val(xe, tf)
-        dh_dt = self.model.dh_dt(xe, tf)
+        dh_dt = self.model.dh_dt_val(xe, tf)
         J = self.collocation.J
         dt = self.dt
         
@@ -226,7 +226,7 @@ class Problem:
         dg_dx_i, dg_dx_j = self.model.dg_dx_ind
         dg_du_i, dg_du_j = self.model.dg_du_ind
         dh_dx_i, dh_dx_j = self.model.dh_dx_ind
-        dh_dt_j = np.arange(self.model.nh)
+        dh_dt_j = self.model.dh_dt_ind
         
         nfinc = self.npieces * self.collocation.ninterv * self.model.nx
         dxr_dx_i = self.unravel_pieces(self.expand_x_ind(x_ind))
@@ -244,7 +244,7 @@ class Problem:
                            self.expand_x_ind(dg_dx_i), 
                            self.expand_u_ind(dg_du_i),
                            self.expand_xe_ind(dh_dx_i),
-                           np.repeat(self.tf_offset, self.model.nh))
+                           np.repeat(self.tf_offset, len(dh_dt_j)))
         j = utils.flat_cat(dxr_dx_j, dxr_dx_j,
                            np.repeat(dfr_dx_j, self.collocation.n, axis=0),
                            np.repeat(dfr_du_j, self.collocation.n, axis=0),
@@ -267,6 +267,7 @@ class Problem:
     def constr_hessian_val(self, d):
         """Values of nonzero elements of NLP constraints Hessian."""
         x, u, tf = self.unpack_decision(d)
+        xe = x[[0, -1]].flatten()
         df_dx = self.model.df_dx_val(x, u)
         df_du = self.model.df_du_val(x, u)
         d2f_dx2 = self.model.d2f_dx2_val(x, u)
@@ -275,6 +276,9 @@ class Problem:
         d2g_dx2 = self.model.d2g_dx2_val(x, u)
         d2g_du2 = self.model.d2g_du2_val(x, u)
         d2g_dx_du = self.model.d2g_dx_du_val(x, u)
+        d2h_dx2 = self.model.d2h_dx2_val(xe, tf)
+        d2h_dt2 = self.model.d2h_dt2_val(xe, tf)
+        d2h_dx_dt = self.model.d2h_dx_dt_val(xe, tf)
         J = self.collocation.J
         dt = self.dt
         
@@ -289,7 +293,7 @@ class Problem:
             -np.einsum('ijk,lj,il->ijkl', d2fr_dx_du, J, dt*tf),
             -np.einsum('ijk,lj,il->ijkl', dfr_dx, J, dt),
             -np.einsum('ijk,lj,il->ijkl', dfr_du, J, dt),
-            d2g_dx2, d2g_du2, d2g_dx_du
+            d2g_dx2, d2g_du2, d2g_dx_du, d2h_dx2, d2h_dt2, d2h_dx_dt,
         )
     
     @property
@@ -306,6 +310,9 @@ class Problem:
         d2g_dx2_i, d2g_dx2_j, d2g_dx2_k = self.model.d2g_dx2_ind
         d2g_du2_i, d2g_du2_j, d2g_du2_k = self.model.d2g_du2_ind
         d2g_dx_du_i, d2g_dx_du_j, d2g_dx_du_k = self.model.d2g_dx_du_ind
+        d2h_dx2_i, d2h_dx2_j, d2h_dx2_k = self.model.d2h_dx2_ind
+        d2h_dt2_k = self.model.d2h_dt2_ind
+        d2h_dx_dt_j, d2h_dx_dt_k = self.model.d2h_dx_dt_ind
         
         dfr_dx_i = self.unravel_pieces(self.expand_x_ind(df_dx_i))
         dfr_du_i = self.unravel_pieces(self.expand_u_ind(df_du_i))
@@ -327,7 +334,10 @@ class Problem:
                            np.repeat(self.tf_offset, dfr_du_j.size * ncolpt),
                            self.expand_x_ind(d2g_dx2_i),
                            self.expand_u_ind(d2g_du2_i),
-                           self.expand_u_ind(d2g_dx_du_i))
+                           self.expand_u_ind(d2g_dx_du_i),
+                           self.expand_xe_ind(d2h_dx2_i),
+                           np.repeat(self.tf_offset, len(d2h_dt2_k)),
+                           np.repeat(self.tf_offset, len(d2h_dx_dt_k)))
         j = utils.flat_cat(np.repeat(d2fr_dx2_j, ncolinterv),
                            np.repeat(d2fr_du2_j, ncolinterv),
                            np.repeat(d2fr_dx_du_j, ncolinterv),
@@ -335,7 +345,10 @@ class Problem:
                            np.repeat(dfr_du_i, ncolinterv),
                            self.expand_x_ind(d2g_dx2_j),
                            self.expand_u_ind(d2g_du2_j),
-                           self.expand_x_ind(d2g_dx_du_j))
+                           self.expand_x_ind(d2g_dx_du_j),
+                           self.expand_xe_ind(d2h_dx2_j),
+                           np.repeat(self.tf_offset, len(d2h_dt2_k)),
+                           self.expand_xe_ind(d2h_dx_dt_j))
         k = utils.flat_cat(np.repeat(d2fr_dx2_k, ncolpt, 0),
                            np.repeat(d2fr_du2_k, ncolpt, 0),
                            np.repeat(d2fr_dx_du_k, ncolpt, 0),
@@ -343,7 +356,10 @@ class Problem:
                            np.repeat(dfr_du_j, ncolpt, axis=0),
                            self.expand_g_ind(d2g_dx2_k),
                            self.expand_g_ind(d2g_du2_k),
-                           self.expand_g_ind(d2g_dx_du_k))
+                           self.expand_g_ind(d2g_dx_du_k),
+                           self.expand_h_ind(d2h_dx2_k),
+                           self.expand_h_ind(d2h_dt2_k),
+                           self.expand_h_ind(d2h_dx_dt_k))
         assert i.size == j.size == k.size
         return (i, j, k)
     
