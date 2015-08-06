@@ -1,6 +1,8 @@
 """Optimal control."""
 
 
+import collections.abc
+
 import numpy as np
 from numpy import ma
 from scipy import sparse
@@ -12,11 +14,10 @@ class Problem:
     """Optimal control problem with LGL direct collocation."""
     
     def __init__(self, model, t, **options):
-        order = options.get('order', 2)
-        
         self.model = model
         """Underlying cost, constraint and dynamical system model."""
         
+        order = options.get('order', 2)
         self.collocation = rk.LGLCollocation(order)
         """Collocation method."""
         
@@ -27,32 +28,47 @@ class Problem:
         self.npieces = len(t) - 1
         """Number of collocation pieces."""
         
-        self.ncol = self.collocation.n
-        """Number of collocation points per piece."""
-        
-        self.nd = 1 + self.tc.size * (model.nx + model.nu)
-        """Length of the decision vector."""
-        
-        self.nconstr = (self.npieces * self.collocation.ninterv * model.nx +
-                        self.tc.size * model.ng + model.nh)
-        """Number of NLP constraints."""
-        
         self.u_offset = self.tc.size * model.nx
         """Offset of the controls `u` in the decision variable vector."""
         
-        self.tf_offset = self.nd - 1
+        self.tf_offset = self.u_offset + self.tc.size * model.nu
         """Offset of the final time `tf` in the decision variable vector."""
- 
+        
+        self.nd = self.tf_offset + 1
+        """Length of the decision vector."""
+        
+        self.d_bounds = np.repeat([[-np.inf], [np.inf]], self.nd)
+        """The decision variable bounds."""
+        
         self.g_offset = self.npieces * self.collocation.ninterv * model.nx
         """Offset of the path constraints `g` in the constraint vector."""
 
         self.h_offset = self.g_offset + self.tc.size * model.ng
         """Offset of the endpoint constraints `h` in the constraint vector."""
         
+        self.nconstr = self.h_offset + model.nh
+        """Number of NLP constraints."""
+
+        constr_bounds = np.zeros((2, self.nconstr))
+        constr_bounds[:, g_offset:] = [[-np.inf], [np.inf]]
+        self.constr_bounds = constr_bounds
+        """The constraint bounds."""
+        
         tr = self.unravel_pieces(self.tc)
         self.dt = tr[:, 1:] - tr[:, :-1]
         """Normalized length of each collocation interval."""
-        
+    
+    def set_g_bounds(self, *args):
+        if len(args) == 1:
+            bounds = np.asarray([args[0], args[0]], dtype=float)
+        elif len(args) == 2:
+            bounds = np.asarray(args, dtype=float)
+        else:
+            raise TypeError("One or two positional arguments required.")
+        assert bounds.shape == (2, self.model.ng)
+        rep_bounds = np.repeat(bounds[:, None], self.tc.size, axis=1)
+        self.constr_bounds[:, g_offset:h_offset] = rep_bounds.reshape((2, -1))
+    
     def unpack_decision(self, d):
         """Unpack the decision vector into the states and parameters."""
         assert d.shape == (self.nd,)
@@ -226,7 +242,7 @@ class Problem:
         dg_dx_i, dg_dx_j = self.model.dg_dx_ind
         dg_du_i, dg_du_j = self.model.dg_du_ind
         dh_dx_i, dh_dx_j = self.model.dh_dx_ind
-        dh_dt_j = self.model.dh_dt_ind
+        dh_dt_j, = self.model.dh_dt_ind
         
         nfinc = self.npieces * self.collocation.ninterv * self.model.nx
         dxr_dx_i = self.unravel_pieces(self.expand_x_ind(x_ind))
@@ -311,7 +327,7 @@ class Problem:
         d2g_du2_i, d2g_du2_j, d2g_du2_k = self.model.d2g_du2_ind
         d2g_dx_du_i, d2g_dx_du_j, d2g_dx_du_k = self.model.d2g_dx_du_ind
         d2h_dx2_i, d2h_dx2_j, d2h_dx2_k = self.model.d2h_dx2_ind
-        d2h_dt2_k = self.model.d2h_dt2_ind
+        d2h_dt2_k, = self.model.d2h_dt2_ind
         d2h_dx_dt_j, d2h_dx_dt_k = self.model.d2h_dx_dt_ind
         
         dfr_dx_i = self.unravel_pieces(self.expand_x_ind(df_dx_i))
@@ -374,17 +390,13 @@ class Problem:
                 hessian[j, i, k] += v
         return hessian
     
-    def nlp_yaipopt(self, d_bounds=None):
+    def nlp_yaipopt(self):
         import yaipopt
         
-        if d_bounds is None:
-            d_bounds = np.tile([[-np.inf], [np.inf]], self.nd)
-        
-        constr_bounds = np.zeros((2, self.nconstr))
         constr_jac_ind = self.constr_jacobian_ind[::-1]
         merit_hess_ind = self.merit_hessian_ind
-        def_hess_ind = self.constr_hessian_ind
-        hess_inds = np.hstack((merit_hess_ind[::-1], def_hess_ind[1::-1]))
+        constr_hess_ind = self.constr_hessian_ind
+        lag_hess_ind = np.hstack((merit_hess_ind[::-1], constr_hess_ind[1::-1]))
         
         def merit(d, new_d=True):
             return self.merit(d)
@@ -397,12 +409,12 @@ class Problem:
         def lag_hess(d, new_d, obj_factor, lmult, new_lmult):
             def_hess = self.constr_hessian_val(d) * lmult[def_hess_ind[2]]
             merit_hess = self.merit_hessian_val(d) * obj_factor
-            return utils.flat_cat(merit_hess, def_hess)        
+            return utils.flat_cat(merit_hess, def_hess)
         
-        nlp = yaipopt.Problem(d_bounds, merit, grad,
-                              constr_bounds=constr_bounds,
+        nlp = yaipopt.Problem(self.d_bounds, merit, grad,
+                              constr_bounds=self.constr_bounds,
                               constr=constr, constr_jac=constr_jac,
                               constr_jac_inds=constr_jac_ind,
-                              hess=lag_hess, hess_inds=hess_inds)
+                              hess=lag_hess, hess_inds=lag_hess_ind)
         nlp.num_option('obj_scaling_factor', -1)
         return nlp
