@@ -77,6 +77,12 @@ class SymbolicModel(sym2num.SymbolicModel):
         s = self.symbols(xe=xe, tf=tf)
         return s.x3_end
 
+    meta = 'sym2num.model.ParametrizedModel.meta'
+    
+    @property
+    def imports(self):
+        return super().imports + ('import sym2num.model',)
+
 
 sym_model = SymbolicModel()
 printer = sym2num.ScipyPrinter()
@@ -88,7 +94,15 @@ GeneratedModel.nh = len(sym_model.functions['h'].out)
 
 
 if __name__ == '__main__':
-    t = np.linspace(0, 1, 3)
+    t = np.linspace(0, 1, 50)
     model = GeneratedModel()
+    xe_fix = dict(x1_start=0, x2_start=1, x3_start=0, x1_end=0, x2_end=-1)
     problem = oc.Problem(model, t)
-    
+    problem.set_x_bounds({'x1': 0}, {'x1': 1/9})
+    problem.set_xe_bounds(xe_fix)
+    d0 = np.zeros(problem.nd)
+    d0[-1] = 1
+    nlp = problem.nlp_yaipopt()
+    dopt, solinfo = nlp.solve(d0)
+    xopt, uopt, tfopt = problem.unpack_decision(dopt)
+    topt = problem.tc * tfopt

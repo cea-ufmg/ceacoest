@@ -37,7 +37,7 @@ class Problem:
         self.nd = self.tf_offset + 1
         """Length of the decision vector."""
         
-        self.d_bounds = np.repeat([[-np.inf], [np.inf]], self.nd)
+        self.d_bounds = np.tile([[-np.inf], [np.inf]], self.nd)
         """The decision variable bounds."""
         
         self.g_offset = self.npieces * self.collocation.ninterv * model.nx
@@ -50,7 +50,7 @@ class Problem:
         """Number of NLP constraints."""
 
         constr_bounds = np.zeros((2, self.nconstr))
-        constr_bounds[:, g_offset:] = [[-np.inf], [np.inf]]
+        constr_bounds[:, self.g_offset:] = [[-np.inf], [np.inf]]
         self.constr_bounds = constr_bounds
         """The constraint bounds."""
         
@@ -68,6 +68,60 @@ class Problem:
         assert bounds.shape == (2, self.model.ng)
         rep_bounds = np.repeat(bounds[:, None], self.tc.size, axis=1)
         self.constr_bounds[:, g_offset:h_offset] = rep_bounds.reshape((2, -1))
+    
+    def set_h_bounds(self, *args):
+        if len(args) == 1:
+            bounds = np.asarray([args[0], args[0]], dtype=float)
+        elif len(args) == 2:
+            bounds = np.asarray(args, dtype=float)
+        else:
+            raise TypeError("One or two positional arguments required.")
+        assert bounds.shape == (2, self.model.nh)
+        self.constr_bounds[:, h_offset:] = bounds
+    
+    def set_xe_bounds(self, *args):
+        # Unpack the arguments    
+        if len(args) == 1:
+            lower = args[0]
+            upper = args[0]
+        elif len(args) == 2:
+            lower, upper = args
+        else:
+            raise TypeError("One or two positional arguments required.")
+        
+        # Convert to array if needed
+        if isinstance(lower, collections.abc.Mapping):
+            lower = self.model.pack('xe', lower, -np.inf)
+        if isinstance(upper, collections.abc.Mapping):
+            upper = self.model.pack('xe', upper, np.inf)
+        bounds = np.asarray([lower, upper], dtype=float)
+        assert bounds.shape == (2, self.model.nx * 2)
+        
+        # Assign to bounds
+        ind = self.expand_xe_ind(range(2 * self.model.nx))
+        self.d_bounds[:, ind] = bounds
+    
+    def set_x_bounds(self, *args):
+        # Unpack the arguments    
+        if len(args) == 1:
+            lower = args[0]
+            upper = args[0]
+        elif len(args) == 2:
+            lower, upper = args
+        else:
+            raise TypeError("One or two positional arguments required.")
+        
+        # Convert to array if needed
+        if isinstance(lower, collections.abc.Mapping):
+            lower = self.model.pack('x', lower, -np.inf)
+        if isinstance(upper, collections.abc.Mapping):
+            upper = self.model.pack('x', upper, np.inf)
+        bounds = np.asarray([lower, upper], dtype=float)
+        assert bounds.shape == (2, self.model.nx)
+
+        # Tile and assign to bounds array
+        rep_bounds = np.tile(bounds[:, None], self.tc.size)
+        self.d_bounds[:, :self.u_offset] = rep_bounds.reshape((2, -1))
     
     def unpack_decision(self, d):
         """Unpack the decision vector into the states and parameters."""
@@ -407,14 +461,13 @@ class Problem:
         def constr_jac(d, new_d=True):
             return self.constr_jacobian_val(d)
         def lag_hess(d, new_d, obj_factor, lmult, new_lmult):
-            def_hess = self.constr_hessian_val(d) * lmult[def_hess_ind[2]]
+            constr_hess = self.constr_hessian_val(d) * lmult[constr_hess_ind[2]]
             merit_hess = self.merit_hessian_val(d) * obj_factor
-            return utils.flat_cat(merit_hess, def_hess)
+            return utils.flat_cat(merit_hess, constr_hess)
         
         nlp = yaipopt.Problem(self.d_bounds, merit, grad,
                               constr_bounds=self.constr_bounds,
                               constr=constr, constr_jac=constr_jac,
                               constr_jac_inds=constr_jac_ind,
                               hess=lag_hess, hess_inds=lag_hess_ind)
-        nlp.num_option('obj_scaling_factor', -1)
         return nlp
