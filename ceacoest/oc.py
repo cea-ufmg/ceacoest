@@ -50,9 +50,9 @@ class Problem:
         """Number of NLP constraints."""
 
         constr_bounds = np.zeros((2, self.nconstr))
-        constr_bounds[:, self.g_offset:] = [[-np.inf], [np.inf]]
+        constr_bounds[:, self.g_offset:self.h_offset] = [[0], [np.inf]]
         self.constr_bounds = constr_bounds
-        """The constraint bounds."""
+        """NLP constraint bounds."""
         
         tr = self.unravel_pieces(self.tc)
         self.dt = tr[:, 1:] - tr[:, :-1]
