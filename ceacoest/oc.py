@@ -471,3 +471,57 @@ class Problem:
                               constr_jac_inds=constr_jac_ind,
                               hess=lag_hess, hess_inds=lag_hess_ind)
         return nlp
+
+
+class MultiplePhaseProblem:
+    """Multiple phase optimal control problem."""
+
+    def __init__(self, phases):
+        self.phases = phases
+        """Problem phases."""
+
+        self.nphases = len(phases)
+        """Number of phases."""
+        
+        ndsum = np.cumsum([phase.nd for phase in phases])
+        self.nd = ndsum[-1]
+        """Number of decision variables."""
+        
+        self.d_offset = np.r_[0, ndsum[:-1]]
+        """Offset of each phases' decision variables in the global vector."""
+
+        start = self.d_offset
+        end = ndsum
+        self.d_slices = [slice(start[i], end[i]) for i in range(self.nphases)]
+        """Slice of each phases' decision variable in the global vector."""
+        
+        nconstrsum = np.cumsum([phase.nconstr for phase in phases])
+        self.nconstr = nconstrsum[-1]
+        """Number of NLP constraints."""
+        
+        self.constr_offset = np.r_[0, nconstrsum[:-1]]
+        """Offset of each phases' constraint vector in the global vector."""
+
+    def unpack_decision(self, d):
+        assert np.shape(d) == (self.nd,)
+        d = np.asarray(d)
+        return [d[slice_] for slice_ in self.d_slices]
+    
+    def pack_decision(self, dp):
+        assert len(dp) == self.nphases
+        d = np.empty(self.nd)
+        for slice_, dpi in zip(self.d_slices, dp):
+            d[slice_] = dpi
+        return d
+    
+    def merit(self, d):
+        """Merit function."""
+        dp = self.unpack_decision(d)
+        return sum(phase.merit(dpi) for phase, dpi in zip(self.phases, dp))
+    
+    def merit_gradient(self, d):
+        """Merit function gradient."""
+        dp = self.unpack_decision(d)
+        gradp = [phase.merit_gradient(dpi) for phase,dpi in zip(self.phases,dp)]
+        return self.pack_decision(gradp)
+

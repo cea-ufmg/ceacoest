@@ -10,7 +10,7 @@ import sym2num
 from numpy import ma
 from scipy import interpolate
 
-from ceacoest import kalman, oem, symstats, utils
+from ceacoest import kalman, oem, sym, utils
 
 
 class SymbolicModel(sym2num.SymbolicModel):
@@ -75,8 +75,8 @@ class SymbolicModel(sym2num.SymbolicModel):
         """Measurement log likelihood."""
         s = self.symbols(y=y, t=t, x=x, q=q, u=u, c=c)
         return (
-            symstats.normal_logpdf1(s.alpha_meas, s.alpha, s.alpha_meas_std) +
-            symstats.normal_logpdf1(s.q_meas, s.q, s.q_meas_std)
+            sym.stats.normal_logpdf1(s.alpha_meas, s.alpha, s.alpha_meas_std) +
+            sym.stats.normal_logpdf1(s.q_meas, s.q, s.q_meas_std)
         )
 
 
