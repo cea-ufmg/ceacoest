@@ -37,7 +37,9 @@ class Problem:
         self.nd = self.tf_offset + 1
         """Length of the decision vector."""
         
-        self.d_bounds = np.tile([[-np.inf], [np.inf]], self.nd)
+        d_bounds = np.tile([[-np.inf], [np.inf]], self.nd)
+        d_bounds[0, self.tf_offset] = 0
+        self.d_bounds = d_bounds
         """The decision variable bounds."""
         
         self.g_offset = self.npieces * self.collocation.ninterv * model.nx
