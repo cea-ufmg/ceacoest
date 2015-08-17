@@ -69,7 +69,8 @@ class Problem:
             raise TypeError("One or two positional arguments required.")
         assert bounds.shape == (2, self.model.ng)
         rep_bounds = np.repeat(bounds[:, None], self.tc.size, axis=1)
-        self.constr_bounds[:, g_offset:h_offset] = rep_bounds.reshape((2, -1))
+        rep_bounds = rep_bounds.reshape((2, -1))
+        self.constr_bounds[:, self.g_offset:self.h_offset] = rep_bounds
     
     def set_h_bounds(self, *args):
         if len(args) == 1:
@@ -79,7 +80,7 @@ class Problem:
         else:
             raise TypeError("One or two positional arguments required.")
         assert bounds.shape == (2, self.model.nh)
-        self.constr_bounds[:, h_offset:] = bounds
+        self.constr_bounds[:, self.h_offset:] = bounds
     
     def set_xe_bounds(self, *args):
         # Unpack the arguments    
