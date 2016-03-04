@@ -180,3 +180,7 @@ def pem(model, t, x, y, q):
 if __name__ == '__main__':
     [model, t, x, y, q] = sim()
     [problem, qopt, solinfo] = pem(model, t, x, y, q)
+    mopt = model.parametrize(q=qopt)
+    kfopt = kalman.DTUnscentedKalmanFilter(mopt)
+    [xs, Pxs] = kfopt.smooth(y)
+    
