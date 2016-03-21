@@ -34,10 +34,10 @@ class SymbolicModel(sde.SymbolicModel):
          'pbias', 'qbias', 'rbias']
     """Parameter vector."""
     
-    c = ['accel_png', 'omega_png', 'accel_mng', 'omega_mng', 'mag_mng',
-         'g0', 'ax0', 'ay0', 'az0', 'p0', 'q0', 'r0', 'phi0', 'theta0', 'psi0',
+    c = ['g0', 'ax0', 'ay0', 'az0', 'p0', 'q0', 'r0', 'phi0', 'theta0', 'psi0',
          'ax0_std', 'ay0_std', 'az0_std', 'p0_std', 'q0_std', 'r0_std',
-         'phi0_std', 'theta0_std', 'psi0_std']
+         'phi0_std', 'theta0_std', 'psi0_std',
+         'accel_png', 'omega_png', 'accel_mng', 'omega_mng', 'mag_mng']
     """Constants vector."""
     
     def f(self, t, x, q, c):
@@ -238,7 +238,7 @@ def pem(model, q0):
         kf = kalman.DTUnscentedKalmanFilter(mq)
         return obj_factor * kf.pem_hessian(y)[hess_inds]
     
-    q_lb = dict(accel_png=0, omega_png=0,
+    q_lb = dict(accel_png=1e-4, omega_png=1e-4,
                 accel_mng=0, omega_mng=0, mag_mng=0)
     q_ub = dict()
     q_fix = dict()
@@ -253,7 +253,9 @@ def pem(model, q0):
 
 
 if __name__ == '__main__':
-    guess = dict(magex=18.982e-6, magez=-13.6305e-6)
+    guess = dict(magex=18.982e-6, magez=-13.6305e-6,
+                 accel_png=0.1, omega_png=0.01,
+                 accel_mng=0.5, omega_mng=0.01, mag_mng=1e-6)
     q0 = GeneratedDTModel.pack('q', guess)
     
     model, t, x, y, q = sim()
