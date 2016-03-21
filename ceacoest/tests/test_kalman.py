@@ -214,7 +214,7 @@ def model(model_class, x, q, cov):
 def parametrized_ukf(model, ut_kappa, ut_sqrt):
     def factory(q):
         mq = model.parametrize(q=q)
-        ukf = kalman.DTUnscentedKalmanFilter(
+        ukf = kalman.DTUnscentedFilter(
             mq, mq.v(), mq.Pv(), kappa=ut_kappa, sqrt=ut_sqrt
         )
         ukf.dx_dq = model.dv_dq()

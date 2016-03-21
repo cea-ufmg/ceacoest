@@ -224,18 +224,18 @@ def sim():
 def pem(model, q0):
     def merit(q, new=None):
         mq = model.parametrize(q=q)
-        kf = kalman.DTUnscentedKalmanFilter(mq)
+        kf = kalman.DTUnscentedFilter(mq)
         return kf.pem_merit(y)
     
     def grad(q, new=None):
         mq = model.parametrize(q=q)
-        kf = kalman.DTUnscentedKalmanFilter(mq)
+        kf = kalman.DTUnscentedFilter(mq)
         return kf.pem_gradient(y)
     
     hess_inds = np.tril_indices(model.nq)
     def hess(q, new_q=1, obj_factor=1, lmult=1, new_lmult=1):
         mq = model.parametrize(q=q)
-        kf = kalman.DTUnscentedKalmanFilter(mq)
+        kf = kalman.DTUnscentedFilter(mq)
         return obj_factor * kf.pem_hessian(y)[hess_inds]
     
     q_lb = dict(accel_png=1e-4, omega_png=1e-4,
@@ -262,5 +262,5 @@ if __name__ == '__main__':
     problem, qopt, solinfo = pem(model, q0)
     
     mopt = model.parametrize(q=qopt)
-    kfopt = kalman.DTUnscentedKalmanFilter(mopt)
+    kfopt = kalman.DTUnscentedFilter(mopt)
     [xs, Pxs] = kfopt.smooth(y)

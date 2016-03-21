@@ -5,4 +5,4 @@ from . import unscented
 from . import extended
 
 
-DTUnscentedKalmanFilter = unscented.DTKalmanFilter
+DTUnscentedFilter = unscented.DTFilter

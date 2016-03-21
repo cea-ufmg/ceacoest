@@ -12,7 +12,7 @@ import numpy.linalg
 from .. import utils
 
 
-class DTKalmanFilter(metaclass=abc.ABCMeta):
+class DTFilter(metaclass=abc.ABCMeta):
     """Discrete-time Kalman filter/smoother abstract base class."""
     
     def __init__(self, model, x=None, Px=None, **options):

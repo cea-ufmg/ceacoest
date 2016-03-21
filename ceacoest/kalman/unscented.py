@@ -311,7 +311,7 @@ def choose_ut_transform_class(options):
         raise ValueError("Invalid value for `sqrt` option.")
 
 
-class DTPredictor(base.DTKalmanFilter):
+class DTPredictor(base.DTFilter):
     
     def __init__(self, model, x=None, Px=None, **options):
         # Initialize base
@@ -390,7 +390,7 @@ class DTPredictor(base.DTKalmanFilter):
         return self.__ut.crosscov()
 
 
-class DTCorrector(base.DTKalmanFilter):
+class DTCorrector(base.DTFilter):
     
     def __init__(self, model, x=None, Px=None, **options):
         # Initialize base
@@ -594,5 +594,5 @@ class DTCorrector(base.DTKalmanFilter):
         self.d2L_dq2 -= np.swapaxes(de_dq__dPyI_dq__e, -1, -2)
 
 
-class DTKalmanFilter(DTPredictor, DTCorrector):
+class DTFilter(DTPredictor, DTCorrector):
     pass
