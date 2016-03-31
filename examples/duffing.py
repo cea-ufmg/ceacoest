@@ -75,6 +75,8 @@ class SymbolicDTDuffing(SymbolicDuffing, sde.ItoTaylorAS15DiscretizedModel):
                    ('d2f_dx2', 'df_dx',  'x'), 
                    ('d2f_dx_dq', 'df_dx', 'q'),
                    ('d2f_dq2', 'df_dq',  'q'),
+                   ('d3f_dx_dq2', 'd2f_dx_dq', 'q'),
+                   ('d3f_dx2_dq', 'd2f_dx2',  'q'), 
                    ('dQ_dx', 'Q', 'x'), ('dQ_dq', 'Q', 'q'),
                    ('d2Q_dx2', 'dQ_dx',  'x'), 
                    ('d2Q_dx_dq', 'dQ_dx', 'q'),
