@@ -179,9 +179,11 @@ def sim():
     [b, a] = signal.butter(2, 0.05)
     omega_png = 0.01
     accel_png = 0.1
-    omega = signal.lfilter(b, a, omega_png*np.cumsum(np.random.randn(3, N), -1))
-    accel = signal.lfilter(b, a, accel_png*np.cumsum(np.random.randn(3, N), -1))
-
+    omega_seed = np.cumsum(np.random.randn(3, N), -1)
+    accel_seed = np.cumsum(np.random.randn(3, N), -1)
+    omega = signal.lfilter(b, a, np.sqrt(dt) * omega_png * omega_seed)
+    accel = signal.lfilter(b, a, np.sqrt(dt) * accel_png * accel_seed)
+    
     # Integrate the angular velocities to obtain the attitude
     omega_int = interpolate.interp1d(t, omega, fill_value='extrapolate')
     def odefun(angles, t):
