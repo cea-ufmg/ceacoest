@@ -31,13 +31,14 @@ class SymbolicModel(sde.SymbolicModel):
     """Measurement vector."""
     
     q = ['magex', 'magez', 'maghx', 'maghy', 'maghz',
-         'pbias', 'qbias', 'rbias']
+         'pbias', 'qbias', 'rbias',
+         'accel_png', 'omega_png']
     """Parameter vector."""
     
     c = ['g0', 'ax0', 'ay0', 'az0', 'p0', 'q0', 'r0', 'phi0', 'theta0', 'psi0',
          'ax0_std', 'ay0_std', 'az0_std', 'p0_std', 'q0_std', 'r0_std',
          'phi0_std', 'theta0_std', 'psi0_std',
-         'accel_png', 'omega_png', 'accel_mng', 'omega_mng', 'mag_mng']
+         'omega_mng', 'mag_mng', 'accel_mng']
     """Constants vector."""
     
     def f(self, t, x, q, c):
