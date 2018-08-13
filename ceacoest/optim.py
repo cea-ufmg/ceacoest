@@ -62,8 +62,11 @@ class DecisionComponent:
 
     def pack_into(self, dvec, value):
         """Pack component into decicion variable vector."""
-        assert np.shape(value) == self.shape
+        if np.shape(value) != self.shape:
+            try:
+                value = np.broadcast_to(value, self.shape)
+            except ValueError:
+                value_shape = np.shape(value)
+                msg = "value with shape {} could not be broadcast to {}"
+                raise ValueError(msg.format(value_shape, self.shape))
         dvec[self.slice] = np.ravel(value)
-
-
-Decision = collections.namedtuple('Decision', ['shape', 'offset', 'size'])
