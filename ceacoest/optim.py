@@ -17,8 +17,8 @@ class Problem:
         self.nd = 0
         """Total number of problem decision variable elements."""
     
-    def register_decision_variable(self, name, shape):
-        component = DecisionComponent(shape, self.nd)
+    def register_decision_variable(self, name, shape, broadcast_dims=0):
+        component = DecisionComponent(shape, self.nd, broadcast_dims)
         self.decision_components[name] = component
         self.nd += component.size
 
@@ -39,11 +39,14 @@ class Problem:
             spec.pack_into(dvec, components[name])
         return dvec
 
+    def register_constraint(self, name, shape, broadcast_dims=0):
+        pass
+
 
 class DecisionComponent:
     """Specificiation of a problem's decision variable component."""
     
-    def __init__(self, shape, offset):
+    def __init__(self, shape, offset, broadcast_dims=0):
         self.shape = shape
         """The component's ndarray shape."""
         
@@ -55,6 +58,17 @@ class DecisionComponent:
         
         self.slice = slice(offset, offset + self.size)
         """This component's slice in the decision variables vector."""
+
+        base_shape = shape[broadcast_dims:]
+        expansion_shape = shape[:broadcast_dims]
+        base_size = np.prod(base_shape, dtype=int)
+        expansion_size = np.prod(expansion_shape, dtype=int)
+        self.expansion_inds = (np.arange(expansion_size)[:, None]*base_size
+                               + offset)
+        """The offsets for index expansion."""
+
+        self.base_shape = base_shape
+        """Shape of the underlying variable, before broadcasting."""
     
     def unpack_from(self, dvec):
         """Extract component from decicion variable vector."""
@@ -70,3 +84,11 @@ class DecisionComponent:
                 msg = "value with shape {} could not be broadcast to {}"
                 raise ValueError(msg.format(value_shape, self.shape))
         dvec[self.slice] = np.ravel(value)
+
+    def expand_index(self, indices):
+        indices = np.asarray(indices, dtype=int)
+        return self.expansion_inds + indices
+
+    def expand_multi_index(self, multi_index):
+        indices = np.ravel_multi_index(multi_index, self.base_shape)
+        return self.expand_index(indices)
