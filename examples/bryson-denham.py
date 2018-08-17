@@ -100,6 +100,8 @@ if __name__ == '__main__':
     problem = oc.Problem(model, t)
     problem.set_x_bounds({'x1': 0}, {'x1': 1/9})
     problem.set_xe_bounds(xe_fix)
+    problem.d_bounds[:, -1] = 1
+    
     d0 = np.zeros(problem.nd)
     d0[-1] = 1
     nlp = problem.nlp_yaipopt()
