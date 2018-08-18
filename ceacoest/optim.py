@@ -140,14 +140,14 @@ class Constraint(Component):
     def register_jacobian(self, valfun, ind, wrt):
         shape = self.bshape + (len(ind),)
         comp = self.jac_valfuns[valfun] = Component(shape, self.nnzjac)
-        comp.nnz_ind = ind
+        comp.ind = ind
         comp.deriv_wrt = wrt
         self.nnzjac += comp.size
 
     def register_jacobian(self, valfun, ind, wrt):
         shape = self.bshape + (len(ind),)
         comp = self.hess_valfuns[valfun] = Component(shape, self.nnzhess)
-        comp.nnz_ind = ind
+        comp.ind = ind
         comp.deriv_wrt = wrt
         self.nnzhess += comp.size
         
@@ -178,4 +178,4 @@ class Constraint(Component):
             comp.pack_into(value, out)
         
         return out
-        
+
