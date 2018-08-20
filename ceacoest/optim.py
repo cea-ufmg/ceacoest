@@ -8,7 +8,7 @@ class Problem:
     """Sparse optimization problem."""
     
     def __init__(self):
-        self.decision_components = {}
+        self.decision = {}
         """Decision variable component specifications."""
 
         self.ndec = 0
@@ -22,12 +22,8 @@ class Problem:
 
     def register_decision(self, name, shape):
         component = Component(shape, self.ndec)
-        self.decision_components[name] = component
+        self.decision[name] = component
         self.ndec += component.size
-    
-    def register_derived(self, name, component):
-        """Register a problem variable derived from the decision variables."""
-        self.decision_components[name] = component
     
     def unpack_decision(self, dvec):
         """Unpack the vector of decision variables into its components."""
@@ -35,7 +31,7 @@ class Problem:
         assert d.shape == (self.ndec,)
 
         components = {}
-        for name, spec in self.decision_components.items():
+        for name, spec in self.decision.items():
             components[name] = spec.extract_from(dvec)
         return components
     
@@ -43,7 +39,7 @@ class Problem:
         """Pack the decision variable components into the vector."""
         dvec = np.zeros(self.ndec)
         for name, value in components:
-            self.decision_components[name].pack_into(dvec, value)
+            self.decision[name].pack_into(dvec, value)
         return dvec
     
     def register_constraint(self, name, shape, f, argument_names):
@@ -63,7 +59,7 @@ class Problem:
 class Component:
     """Specificiation of a problem's decision or constraint vector component."""
     
-    def __init__(self, shape, offset=None, index=None):
+    def __init__(self, shape, offset):
         self.shape = shape
         """The component's ndarray shape."""
         
@@ -73,16 +69,12 @@ class Component:
         self.size = np.prod(shape, dtype=int)
         """Total number of elements."""
         
-        if offset is not None and index is None:
-            index = slice(offset, offset + self.size)
-        if isinstance(index, np.ndarray):
-            index = np.ravel(index)
-        self.index = index
-        """This component's index in the parent vector."""
+        self.slice = slice(offset, offset + self.size)
+        """This component's slice in the parent vector."""
     
     def unpack_from(self, vec):
         """Extract component from parent vector."""
-        return np.asarray(vec)[self.index].reshape(self.shape)
+        return np.asarray(vec)[self.slice].reshape(self.shape)
     
     def pack_into(self, vec, value):
         """Pack component into parent vector."""
@@ -93,11 +85,11 @@ class Component:
             except ValueError:
                 msg = "value with shape {} could not be broadcast to {}"
                 raise ValueError(msg.format(value.shape, self.shape))
-        vec[self.index] += value.flatten()
+        vec[self.slice] = value.flatten()
 
 
 class Constraint(Component):
-    def __init__(self, shape, offset, f, argument_names, bshape=()):
+    def __init__(self, shape, offset, f, argument_names):
         super.__init__(shape, offset)
         
         self.f = f

@@ -22,4 +22,3 @@ class Problem(optim.Problem):
         
         self.npieces = len(t) - 1
         """Number of collocation pieces."""
-        

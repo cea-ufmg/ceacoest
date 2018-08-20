@@ -108,8 +108,22 @@ def flat_cat(*args, order='C'):
     return np.concatenate([np.ravel(arg, order=order) for arg in args])
 
 
+try:
+    from cached_property import cached_property
+except ModuleNotFoundError:
+    def cached_property(f):
+        """On-demand property which is calculated only once and memorized."""
+        return property(functools.lru_cache()(f))
+
+
 def cached(f):
     """Caches a method with no arguments after first call."""
+    
+    #############
+    import warnings
+    warnings.warn("deprecated", DeprecationWarning)
+    #############
+    
     cached_name = '_' + f.__name__
     @functools.wraps(f)
     def wrapper(self):
