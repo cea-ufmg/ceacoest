@@ -24,6 +24,7 @@ class Problem:
         component = Component(shape, self.ndec)
         self.decision[name] = component
         self.ndec += component.size
+        return component
     
     def unpack_decision(self, dvec):
         """Unpack the vector of decision variables into its components."""
@@ -42,6 +43,10 @@ class Problem:
             self.decision[name].pack_into(dvec, value)
         return dvec
     
+    def variables(self, dvec):
+        """Get all variables needed to evaluate problem functions."""
+        return self.unpack_decision(dvec)
+    
     def register_constraint(self, name, shape, f, argument_names):
         cons = Constraint(shape, self.ncons, f, argument_names)
         self.constraints[name] = cons
@@ -49,10 +54,10 @@ class Problem:
         return cons
     
     def constraint(self, dvec):
-        dcomp = self.unpack_decision(dvec)
+        var = self.variables(dvec)
         cvec = np.zeros(self.ncons)
         for name, cons in self.constraints:
-            cons(dcomp, pack_into=cvec)
+            cons(var, pack_into=cvec)
         return cvec
 
 
@@ -60,7 +65,7 @@ class Component:
     """Specificiation of a problem's decision or constraint vector component."""
     
     def __init__(self, shape, offset):
-        self.shape = shape
+        self.shape = (shape,) if isinstance(shape, int) else shape
         """The component's ndarray shape."""
         
         self.offset = offset
@@ -90,32 +95,15 @@ class Component:
 
 class Constraint(Component):
     def __init__(self, shape, offset, f, argument_names):
-        super.__init__(shape, offset)
+        super().__init__(shape, offset)
+        assert 1 <= len(self.shape) <= 2
         
         self.f = f
         """Constraint function."""
         
         self.argument_names = argument_names
         """Constraint function argument names."""
-        
-        self.bshape = bshape
-        """Broadcasted part of the output shape."""
-        
-        self.index_expansion = {}
-        """Argument derivatives index expansion matrices."""
-        
-        self.nnzjac = 0
-        """Number of nonzero jacobian matrix elements."""
-        
-        self.jac_valfuns = {}
-        """Component specifications of the jacobian value functions."""
-        
-        self.nnzhess = 0
-        """Number of nonzero hessian tensor elements."""
-        
-        self.hess_valfuns = {}
-        """Component specifications of the hessian value functions."""
-        
+    
     def __call__(self, arg_dict, pack_into=None):
         args = tuple(arg_dict[n] for n in self.argument_names)
         ret = self.f(*args)
@@ -126,48 +114,38 @@ class Constraint(Component):
         
         return ret
 
-    def set_index_expansion(self, name, expansion):
-        self.index_expansion[name] = expansion
-    
-    def register_jacobian(self, valfun, ind, wrt):
-        shape = self.bshape + (len(ind),)
-        comp = self.jac_valfuns[valfun] = Component(shape, self.nnzjac)
-        comp.ind = ind
-        comp.deriv_wrt = wrt
-        self.nnzjac += comp.size
-
-    def register_jacobian(self, valfun, ind, wrt):
-        shape = self.bshape + (len(ind),)
-        comp = self.hess_valfuns[valfun] = Component(shape, self.nnzhess)
-        comp.ind = ind
-        comp.deriv_wrt = wrt
-        self.nnzhess += comp.size
-        
-    def jac_val(self, arg_dict, out=None):
-        if out is not None:
-            assert out.shape == (self.nnzjac,)
+    @property
+    def index_offsets(self):
+        """Constraint index offsets for derivatives"""
+        if len(self.shape) == 1:
+            return self.offset
         else:
-            out = np.zeros(self.nnzjac)
-        
-        args = tuple(arg_dict[n] for n in self.argument_names)
-        for valfun, comp in self.jac_valfuns.items():
-            value = valfun(*args)
-            assert np.shape(value) == comp.shape
-            comp.pack_into(value, out)
-        
-        return out
-    
-    def hess_val(self, arg_dict, out=None):
-        if out is not None:
-            assert out.shape == (self.nnzhess,)
-        else:
-            out = np.zeros(self.nnzhess)
-        
-        args = tuple(arg_dict[n] for n in self.argument_names)
-        for valfun, comp in self.hess_valfuns.items():
-            value = valfun(*args)
-            assert np.shape(value) == comp.shape
-            comp.pack_into(value, out)
-        
-        return out
+            n, m = self.shape
+            return m * np.arange(n)[:, None] + self.offset
 
+
+class ConstraintJacobian(Constraint):
+    def __init__(self, val, ind, offset, constraint):
+        nnz = np.size(ind, 1)
+        broadcast = len(constraint.shape) == 2
+        shape = (constraint.shape[0], nnz) if broadcast else (nnz,)
+        super.__init__(shape, offset, val, constraint.argument_names)
+
+        assert np.ndim(ind) == 2
+        assert np.size(ind, 0) == 2
+        self.ind = np.asarray(ind, dtype=int)
+        """Nonzero Jacobian element indices."""
+
+        self.constraint = constraint
+        """Specification of the parent constraint."""
+    
+    def ind(self, row_offsets, pack_into=None):
+        ret = np.zeros((2,) + self.shape, dtype=int)
+        ret[0] = self.ind[0] + self.constraint.index_offsets
+        ret[1] = self.ind[1] + self.col_offsets
+        
+        if pack_into is not None:
+            self.pack_into(pack_into[0], ret[0])
+            self.pack_into(pack_into[1], ret[1])
+        
+        return ret
