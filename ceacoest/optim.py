@@ -79,18 +79,35 @@ class Problem:
         self.ncons += cons.size
         return cons
     
-    def constraint(self, dvec):
+    def constraint(self, dvec, out=None):
         var = self.variables(dvec)
-        cvec = np.zeros(self.ncons)
+        if out is None:
+            out = np.zeros(self.ncons)
         for name, cons in self.constraints.items():
-            cons(var, pack_into=cvec)
-        return cvec
-
+            cons(var, pack_into=out)
+        return out
+    
     def register_constraint_jacobian(self, constraint_name, wrt, val, ind):
         cons = self.constraints[constraint_name]
         wrt_offsets = self.get_index_offsets(wrt)
         jac = ConstraintJacobian(val, ind, self.nnzjac, wrt_offsets, cons)
+        self.nnzjac += jac.size
         self.jacobian.append(jac)
+
+    def constraint_jacobian_val(self, dvec, out=None):
+        var = self.variables(dvec)
+        if out is None:
+            out = np.zeros(self.nnzjac)
+        for jac in self.jacobian:
+            jac(var, pack_into=out)
+        return out
+    
+    def constraint_jacobian_ind(self, out=None):
+        if out is None:
+            out = np.zeros((2, self.nnzjac), dtype=int)
+        for jac in self.jacobian:
+            jac.ind(pack_into=out)
+        return out
 
 
 class Component:
@@ -166,11 +183,14 @@ class ConstraintJacobian(CallableComponent):
     def __init__(self, val, ind, offset, wrt_offsets, constraint):
         assert np.ndim(ind) == 2
         assert np.size(ind, 0) == 2
-        self.ind = np.asarray(ind, dtype=int)
-        """Nonzero Jacobian element indices."""
+        self.template_ind = np.asarray(ind, dtype=int)
+        """Nonzero Jacobian element indices template."""
         
         self.constraint = constraint
         """Specification of the parent constraint."""
+        
+        self.wrt_offsets = wrt_offsets
+        """Offsets of the jacobian row indices."""
         
         nnz = np.size(ind, 1)
         broadcast = len(constraint.shape) == 2
@@ -178,12 +198,13 @@ class ConstraintJacobian(CallableComponent):
         super().__init__(shape, offset, val, constraint.argument_names)
     
     def ind(self, pack_into=None):
+        ind = self.template_ind
         ret = np.zeros((2,) + self.shape, dtype=int)
-        ret[1] = self.ind[1] + self.constraint.index_offsets
+        ret[1] = ind[1] + self.constraint.index_offsets
         if callable(self.wrt_offsets):
-            ret[0] = self.ind[0] + self.wrt_offsets(ind[0])
+            ret[0] = ind[0] + self.wrt_offsets(ind[0])
         else:
-            ret[0] = self.ind[0] + self.wrt_offsets
+            ret[0] = ind[0] + self.wrt_offsets
         
         if pack_into is not None:
             self.pack_into(pack_into[0], ret[0])
