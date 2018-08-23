@@ -26,13 +26,13 @@ class Problem:
         self.nnzjac = 0
         """Number of nonzero constraint Jacobian elements."""
 
-        self.jacobian = {}
+        self.jacobian = []
         """Constraint Jacobian components."""
 
         self.nnzchess = 0
         """Number of nonzero constraint Hessian elements."""
 
-        self.constraint_hessian = {}
+        self.constraint_hessian = []
         """Constraint Jacobian components."""
     
     def register_decision(self, name, shape):
@@ -44,11 +44,11 @@ class Problem:
     def unpack_decision(self, dvec):
         """Unpack the vector of decision variables into its components."""
         dvec = np.asarray(dvec)
-        assert d.shape == (self.ndec,)
+        assert dvec.shape == (self.ndec,)
 
         components = {}
         for name, spec in self.decision.items():
-            components[name] = spec.extract_from(dvec)
+            components[name] = spec.unpack_from(dvec)
         return components
     
     def pack_decision(self, **components):
@@ -62,9 +62,11 @@ class Problem:
         """Get all variables needed to evaluate problem functions."""
         return self.unpack_decision(dvec)
     
-    def register_index_offsets(self, var_name, offsets):
+    def set_index_offsets(self, var_name, offsets):
+        if isinstance(offsets, np.ndarray) and offsets.ndim == 1:
+            offsets = offsets[:, None]
         self.known_index_offsets[var_name] = offsets
-
+    
     def get_index_offsets(self, var_name):
         try:
             return self.known_index_offsets[var_name]
@@ -80,16 +82,16 @@ class Problem:
     def constraint(self, dvec):
         var = self.variables(dvec)
         cvec = np.zeros(self.ncons)
-        for name, cons in self.constraints:
+        for name, cons in self.constraints.items():
             cons(var, pack_into=cvec)
         return cvec
 
     def register_constraint_jacobian(self, constraint_name, wrt, val, ind):
         cons = self.constraints[constraint_name]
-        jac = ConstraintJacobian(val, ind, wrt_offsets, self.nnzjac, cons)
-        self.jacobians.append[]
-        raise NotImplementedError
-    
+        wrt_offsets = self.get_index_offsets(wrt)
+        jac = ConstraintJacobian(val, ind, self.nnzjac, wrt_offsets, cons)
+        self.jacobian.append(jac)
+
 
 class Component:
     """Specificiation of a problem's decision or constraint vector component."""
@@ -173,12 +175,15 @@ class ConstraintJacobian(CallableComponent):
         nnz = np.size(ind, 1)
         broadcast = len(constraint.shape) == 2
         shape = (constraint.shape[0], nnz) if broadcast else (nnz,)
-        super.__init__(shape, offset, val, constraint.argument_names)
+        super().__init__(shape, offset, val, constraint.argument_names)
     
     def ind(self, pack_into=None):
         ret = np.zeros((2,) + self.shape, dtype=int)
-        ret[0] = self.ind[0] + self.constraint.index_offsets
-        ret[1] = self.ind[1] + self.wrt_offsets
+        ret[1] = self.ind[1] + self.constraint.index_offsets
+        if callable(self.wrt_offsets):
+            ret[0] = self.ind[0] + self.wrt_offsets(ind[0])
+        else:
+            ret[0] = self.ind[0] + self.wrt_offsets
         
         if pack_into is not None:
             self.pack_into(pack_into[0], ret[0])

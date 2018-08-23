@@ -27,8 +27,8 @@ class CollocatedModel(sym2num.model.Base):
                         ('d2g_dx2', 'dg_dx',  'x'), 
                         ('d2g_dx_du', 'dg_dx', 'u'),
                         ('d2g_du2', 'dg_du',  'u'),
-                        ('dh_dxe', 'h', 'xe_flat'), 
-                        ('dh_dT', 'h', 'T'),
+                        ('dh_dxe', 'h', 'xe_flat'),
+                        ('dh_dT', 'h', 'T_flat'),
                         ('d2h_dxe2', 'dh_dxe',  'xe_flat'), 
                         ('d2h_dxe_dT', 'dh_dxe', 'T'),
                         ('d2h_dT2', 'dh_dT',  'T'),
@@ -65,6 +65,7 @@ class CollocatedModel(sym2num.model.Base):
         gen = dict(nx=len(self.variables['x']),
                    nu=len(self.variables['u']),
                    np=len(self.variables['p']),
+                   ne=len(self.default_function_output('e')),
                    ng=len(self.default_function_output('g')),
                    nh=len(self.default_function_output('h')),
                    collocation_order=self.collocation.n,
@@ -101,7 +102,8 @@ class CollocatedModel(sym2num.model.Base):
              sym2num.var.SymbolArray('xe', xe),
              sym2num.var.SymbolArray('xp_flat', sympy.flatten(xp)),
              sym2num.var.SymbolArray('up_flat', sympy.flatten(up)),
-             sym2num.var.SymbolArray('xe_flat', sympy.flatten(xe))]
+             sym2num.var.SymbolArray('xe_flat', sympy.flatten(xe)),
+             sym2num.var.SymbolArray('T_flat', ['T'])]
         )
         return dict(**v, **additional_variables)
     

@@ -35,7 +35,7 @@ class BrysonDenham:
     @sym2num.model.symbols_from('xe, p, T')
     def h(self, s):
         """Endpoint constraints."""
-        return sympy.Array([], 0)
+        return sympy.Array([s.x1_start, s.x1_end, s.x2_start, s.x2_end + 1])
     
     @sym2num.model.symbols_from('xe, p, T')
     def M(self, s):
