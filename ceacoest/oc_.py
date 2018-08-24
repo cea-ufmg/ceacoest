@@ -28,9 +28,9 @@ class Problem(optim.Problem):
         
         super().__init__()
         npoints = self.tc.size #Total number of collocation points
-        x = self.register_decision('x', (npoints, model.nx))
-        u = self.register_decision('u', (npoints, model.nu))
-        p = self.register_decision('p', model.np) 
+        x = self.register_decision('x', model.nx, npoints)
+        u = self.register_decision('u', model.nu, npoints)
+        p = self.register_decision('p', model.np)
         T = self.register_decision('T', ())
         
         self.set_index_offsets('x', np.arange(npoints) * model.nx + x.offset)
@@ -43,14 +43,10 @@ class Problem(optim.Problem):
         )
         self.set_index_offsets('xe', self.xe_offsets)
         
+        self.register_constraint('g', model.g, ('x','u','p'), model.ng, npoints)
+        self.register_constraint('h', model.h, ('xe', 'p', 'T'), model.nh)
         self.register_constraint(
-            'g', (npoints, model.ng), model.g, ('x', 'u', 'p')
-        )
-        self.register_constraint(
-            'h', model.nh, model.h, ('xe', 'p', 'T')
-        )
-        self.register_constraint(
-            'e', (npieces, model.ne), model.e, ('xp','up','p','T','piece_len')
+            'e', model.e, ('xp','up','p','T','piece_len'), model.ne, npieces
         )
         
         self.register_constraint_jacobian(

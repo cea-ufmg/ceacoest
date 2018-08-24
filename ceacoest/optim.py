@@ -1,6 +1,8 @@
 """General sparse optimization problem modeling."""
 
 
+import numbers
+
 import numpy as np
 
 
@@ -35,8 +37,8 @@ class Problem:
         self.constraint_hessian = []
         """Constraint Jacobian components."""
     
-    def register_decision(self, name, shape):
-        component = Component(shape, self.ndec)
+    def register_decision(self, name, shape, tiling=None):
+        component = Decision(self.ndec, shape, tiling)
         self.decision[name] = component
         self.ndec += component.size
         return component
@@ -73,8 +75,8 @@ class Problem:
         except KeyError:
             return self.decision[var_name].offset
     
-    def register_constraint(self, name, shape, f, argument_names):
-        cons = Constraint(shape, self.ncons, f, argument_names)
+    def register_constraint(self, name, f, argument_names, shape, tiling=None):
+        cons = Constraint(self.ncons, f, argument_names, shape, tiling)
         self.constraints[name] = cons
         self.ncons += cons.size
         return cons
@@ -89,7 +91,9 @@ class Problem:
     
     def register_constraint_jacobian(self, constraint_name, wrt, val, ind):
         cons = self.constraints[constraint_name]
-        wrt_offsets = self.get_index_offsets(wrt)
+        ##### fix #####
+        raise NotImplementedError
+        wrt_expansion = self.get_index_offsets(wrt)
         jac = ConstraintJacobian(val, ind, self.nnzjac, wrt_offsets, cons)
         self.nnzjac += jac.size
         self.jacobian.append(jac)
@@ -114,17 +118,24 @@ class Component:
     """Specificiation of a problem's decision or constraint vector component."""
     
     def __init__(self, shape, offset):
-        self.shape = (shape,) if isinstance(shape, int) else shape
+        self.shape = (shape,) if isinstance(shape, numbers.Integral) else shape
         """The component's ndarray shape."""
         
+        if shape == 4 and self.shape == (0,):
+            import ipdb; ipdb.set_trace()
+
         self.offset = offset
         """Offset into the parent vector."""
-        
-        self.size = np.prod(shape, dtype=int)
+    
+    @property
+    def size(self):
         """Total number of elements."""
-        
-        self.slice = slice(offset, offset + self.size)
+        return np.prod(self.shape, dtype=int)
+    
+    @property
+    def slice(self):
         """This component's slice in the parent vector."""
+        return slice(self.offset, self.offset + self.size)
     
     def unpack_from(self, vec):
         """Extract component from parent vector."""
@@ -140,6 +151,37 @@ class Component:
                 msg = "value with shape {} could not be broadcast to {}"
                 raise ValueError(msg.format(value.shape, self.shape))
         vec[self.slice] = value.flatten()
+
+
+class IndexedComponent(Component):
+    def __init__(self, shape, offset):
+        super().__init__(shape, offset)
+        
+        self.tiling = None
+        """Number of repetitions of the template shape."""
+    
+    def set_tiling(self, tiling):
+        """Sets this component's tiling and shape, must be called only once."""
+        if self.tiling is not None:
+            raise RuntimeError("tiling can only be set once")        
+        if not isinstance(tiling, (numbers.Integral, type(None))):
+            raise TypeError("tiling must be integer or None")
+        if tiling is not None:
+            self.tiling = tiling
+            self.shape = (tiling,) + self.shape
+    
+    def expand_indices(self, ind):
+        if self.tiling is None:
+            return np.asarray(ind, dtype=int) + self.offset
+        else:
+            increment = np.prod(self.shape[1:], dtype=int)
+            return np.arange(self.tiling)[:, None]*increment + ind + self.offset
+
+
+class Decision(IndexedComponent):
+    def __init__(self, offset, shape, tiling=None):
+        super().__init__(shape, offset)
+        self.set_tiling(tiling)
 
 
 class CallableComponent(Component):
@@ -163,10 +205,11 @@ class CallableComponent(Component):
         return ret
 
 
-class Constraint(CallableComponent):
+class Constraint(CallableComponent, IndexedComponent):
 
-    def __init__(self, shape, offset, fun, argument_names):
+    def __init__(self, offset, fun, argument_names, shape, tiling=None):
         super().__init__(shape, offset, fun, argument_names)
+        self.set_tiling(tiling)
         assert 1 <= len(self.shape) <= 2
     
     @property
@@ -180,7 +223,7 @@ class Constraint(CallableComponent):
 
 
 class ConstraintJacobian(CallableComponent):
-    def __init__(self, val, ind, offset, wrt_offsets, constraint):
+    def __init__(self, val, ind, offset, wrt_expansion, constraint):
         assert np.ndim(ind) == 2
         assert np.size(ind, 0) == 2
         self.template_ind = np.asarray(ind, dtype=int)
@@ -189,8 +232,8 @@ class ConstraintJacobian(CallableComponent):
         self.constraint = constraint
         """Specification of the parent constraint."""
         
-        self.wrt_offsets = wrt_offsets
-        """Offsets of the jacobian row indices."""
+        self.wrt_expansion = wrt_expansion
+        """Jacobian row index expansion function."""
         
         nnz = np.size(ind, 1)
         broadcast = len(constraint.shape) == 2
@@ -200,11 +243,8 @@ class ConstraintJacobian(CallableComponent):
     def ind(self, pack_into=None):
         ind = self.template_ind
         ret = np.zeros((2,) + self.shape, dtype=int)
-        ret[1] = ind[1] + self.constraint.index_offsets
-        if callable(self.wrt_offsets):
-            ret[0] = ind[0] + self.wrt_offsets(ind[0])
-        else:
-            ret[0] = ind[0] + self.wrt_offsets
+        ret[1] = self.constraint.expand_indices(ind[1])
+        ret[0] = self.wrt_expansion(ind[0])
         
         if pack_into is not None:
             self.pack_into(pack_into[0], ret[0])
