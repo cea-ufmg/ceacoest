@@ -84,42 +84,37 @@ class Problem(optim.Problem):
 
 
 class PieceRavelledVariable:
-    def __init__(self, collocation, npieces, var, var_name):
-        self.collocation = collocation
-        self.npieces = npieces
-        self.var = var
+    def __init__(self, problem, var_name):
+        self.p = problem
         self.var_name = var_name
-        assert len(var.shape) == 2
+    
+    @property
+    def var(self):
+        self.p.variables[var_name]
     
     @property
     def nvar(self):
         return self.var.shape[1]
     
-    def unravel_pieces(self, v):
-        v = np.asarray(v)
+    def build(self, variables):
+        v = variables[self.var_name]
         assert v.shape == self.var.shape
-        vp = np.zeros((self.npieces, self.collocation.n, self.nvar))
+        vp = np.zeros((self.p.npieces, self.p.collocation.n, self.nvar))
         vp[:, :-1].flat = v[:-1, :].flat
         vp[:-1, -1] = vp[1:, 0]
         vp[-1, -1] = v[-1]
         return vp
     
-    def repack_pieces(self, vp):
-        vp = np.asarray(vp)
-        assert vp.shape == (self.npieces, self.collocation.n, self.nvar)
+    def pack_into(self, vec, value):
+        vp = np.asarray(value)
+        assert vp.shape == (self.p.npieces, self.p.collocation.n, self.nvar)
         v = np.zeros(self.var.shape)
         v[:-1, :].flat = vp[:, :-1].flat
         v[-1] = vp[-1, -1]
-        v[self.collocation.n::self.collocation.n] += vp[:, -1]
-        return v
-    
-    def build(self, variables):
-        return self.unravel_pieces(variables[self.var_name])
-    
-    def pack_into(self, vec, value):
-        self.var.pack_into(vec, self.repack_pieces(value))
+        v[self.p.collocation.n::self.p.collocation.n] += vp[:, -1]
+        self.var.pack_into(vec, self.repack_pieces(v))
     
     def expand_indices(self, ind):
-        increments = self.collocation.ninterv * self.nvar
-        offsets = np.arange(self.npieces)[:, None]*increments + self.var.offset
-        return ind + offsets
+        npieces = self.p.npieces
+        increments = self.p.collocation.ninterv * self.nvar
+        return ind + np.arange(npieces)[:, None] * increments + self.var.offset
