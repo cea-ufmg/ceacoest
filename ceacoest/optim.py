@@ -89,12 +89,10 @@ class Problem:
             cons(var, pack_into=out)
         return out
     
-    def register_constraint_jacobian(self, constraint_name, wrt, val, ind):
+    def register_constraint_jacobian(self, constraint_name, wrt_name, val, ind):
         cons = self.constraints[constraint_name]
-        ##### fix #####
-        raise NotImplementedError
-        wrt_expansion = self.get_index_offsets(wrt)
-        jac = ConstraintJacobian(val, ind, self.nnzjac, wrt_offsets, cons)
+        wrt = self.decision.get(wrt_name, None)
+        jac = ConstraintJacobian(val, ind, self.nnzjac, wrt, cons)
         self.nnzjac += jac.size
         self.jacobian.append(jac)
 
@@ -223,7 +221,7 @@ class Constraint(CallableComponent, IndexedComponent):
 
 
 class ConstraintJacobian(CallableComponent):
-    def __init__(self, val, ind, offset, wrt_expansion, constraint):
+    def __init__(self, val, ind, offset, wrt, constraint):
         assert np.ndim(ind) == 2
         assert np.size(ind, 0) == 2
         self.template_ind = np.asarray(ind, dtype=int)
@@ -232,8 +230,8 @@ class ConstraintJacobian(CallableComponent):
         self.constraint = constraint
         """Specification of the parent constraint."""
         
-        self.wrt_expansion = wrt_expansion
-        """Jacobian row index expansion function."""
+        self.wrt = wrt
+        """Decision or derived variable specification."""
         
         nnz = np.size(ind, 1)
         broadcast = len(constraint.shape) == 2
@@ -244,7 +242,7 @@ class ConstraintJacobian(CallableComponent):
         ind = self.template_ind
         ret = np.zeros((2,) + self.shape, dtype=int)
         ret[1] = self.constraint.expand_indices(ind[1])
-        ret[0] = self.wrt_expansion(ind[0])
+        ret[0] = self.wrt.expand_indices(ind[0])
         
         if pack_into is not None:
             self.pack_into(pack_into[0], ret[0])
