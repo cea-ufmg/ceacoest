@@ -1,6 +1,7 @@
 """General sparse optimization problem modeling."""
 
 
+import collections
 import numbers
 
 import numpy as np
@@ -15,6 +16,9 @@ class Problem:
 
         self.ndec = 0
         """Size of the decision vector."""
+
+        self.derived = collections.OrderedDict()
+        """Specifications of variables derived from the decision variables."""
 
         self.constraints = {}
         """Problem constraints."""
@@ -43,6 +47,9 @@ class Problem:
         self.ndec += component.size
         return component
     
+    def register_derived(self, name, spec):
+        self.derived[name] = spec
+    
     def unpack_decision(self, dvec):
         """Unpack the vector of decision variables into its components."""
         dvec = np.asarray(dvec)
@@ -62,7 +69,10 @@ class Problem:
     
     def variables(self, dvec):
         """Get all variables needed to evaluate problem functions."""
-        return self.unpack_decision(dvec)
+        variables = self.unpack_decision(dvec)
+        for name, spec in derived.items():
+            variables[name] = spec.build(variables)
+        return variables
     
     def set_index_offsets(self, var_name, offsets):
         if isinstance(offsets, np.ndarray) and offsets.ndim == 1:
@@ -148,7 +158,7 @@ class Component:
             except ValueError:
                 msg = "value with shape {} could not be broadcast to {}"
                 raise ValueError(msg.format(value.shape, self.shape))
-        vec[self.slice] = value.flatten()
+        vec[self.slice] += value.flat
 
 
 class IndexedComponent(Component):

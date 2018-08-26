@@ -77,22 +77,49 @@ class Problem(optim.Problem):
         x_off = self.decision['x'].offset
         npoints = self.tc.size
         return x_off + (xe_ind >= self.model.nx)*self.model.nx*(npoints - 1)
-        
+            
+    def variables(self, dvec):
+        """Get all variables needed to evaluate problem functions."""
+        return {'piece_len': self.piece_len, **super().variables(dvec)}
+
+
+class PieceRavelledVariable:
+    def __init__(self, collocation, npieces, var, var_name):
+        self.collocation = collocation
+        self.npieces = npieces
+        self.var = var
+        self.var_name = var_name
+        assert len(var.shape) == 2
+    
+    @property
+    def nvar(self):
+        return self.var.shape[1]
+    
     def unravel_pieces(self, v):
         v = np.asarray(v)
-        assert v.ndim > 0 and v.shape[0] == self.tc.size
-        vp = np.zeros((self.npieces, self.collocation.n) + v.shape[1:])
+        assert v.shape == self.var.shape
+        vp = np.zeros((self.npieces, self.collocation.n, self.nvar))
         vp[:, :-1].flat = v[:-1, :].flat
         vp[:-1, -1] = vp[1:, 0]
         vp[-1, -1] = v[-1]
         return vp
     
-    def variables(self, dvec):
-        """Get all variables needed to evaluate problem functions."""
-        var = super().variables(dvec)
-        var.update(xp=self.unravel_pieces(var['x']),
-                   up=self.unravel_pieces(var['u']),
-                   xe=var['x'][[0, -1]],
-                   piece_len=self.piece_len)
-        return var
-
+    def repack_pieces(self, vp):
+        vp = np.asarray(vp)
+        assert vp.shape == (self.npieces, self.collocation.n, self.nvar)
+        v = np.zeros(self.var.shape)
+        v[:-1, :].flat = vp[:, :-1].flat
+        v[-1] = vp[-1, -1]
+        v[self.collocation.n::self.collocation.n] += vp[:, -1]
+        return v
+    
+    def build(self, variables):
+        return self.unravel_pieces(variables[self.var_name])
+    
+    def pack_into(self, vec, value):
+        self.var.pack_into(vec, self.repack_pieces(value))
+    
+    def expand_indices(self, ind):
+        increments = self.collocation.ninterv * self.nvar
+        offsets = np.arange(self.npieces)[:, None]*increments + self.var.offset
+        return ind + offsets
