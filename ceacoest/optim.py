@@ -101,7 +101,7 @@ class Problem:
     
     def register_constraint_jacobian(self, constraint_name, wrt_name, val, ind):
         cons = self.constraints[constraint_name]
-        wrt = self.decision.get(wrt_name, None)
+        wrt = self.decision.get(wrt_name, None) or self.derived[wrt_name]
         jac = ConstraintJacobian(val, ind, self.nnzjac, wrt, cons)
         self.nnzjac += jac.size
         self.jacobian.append(jac)

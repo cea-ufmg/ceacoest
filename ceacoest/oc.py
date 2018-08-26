@@ -30,6 +30,9 @@ class Problem(optim.Problem):
         x = self.register_decision('x', model.nx, npoints)
         u = self.register_decision('u', model.nu, npoints)
         p = self.register_decision('p', model.np)
+        self.register_derived('xp', PieceRavelledVariable(self, 'x'))
+        self.register_derived('up', PieceRavelledVariable(self, 'u'))
+        self.register_derived('xe', XEVariable(self))
         
         self.set_index_offsets('x', np.arange(npoints) * model.nx + x.offset)
         self.set_index_offsets('u', np.arange(npoints) * model.nu + u.offset)
@@ -90,7 +93,7 @@ class PieceRavelledVariable:
     
     @property
     def var(self):
-        self.p.variables[var_name]
+        return self.p.decision[self.var_name]
     
     @property
     def nvar(self):
@@ -112,9 +115,35 @@ class PieceRavelledVariable:
         v[:-1, :].flat = vp[:, :-1].flat
         v[-1] = vp[-1, -1]
         v[self.p.collocation.n::self.p.collocation.n] += vp[:, -1]
-        self.var.pack_into(vec, self.repack_pieces(v))
+        self.var.pack_into(vec, v)
     
     def expand_indices(self, ind):
         npieces = self.p.npieces
         increments = self.p.collocation.ninterv * self.nvar
         return ind + np.arange(npieces)[:, None] * increments + self.var.offset
+
+
+class XEVariable:
+    def __init__(self, problem):
+        self.p = problem
+    
+    def build(self, variables):
+        x = variables['x']
+        return x[[0,-1]]
+    
+    def pack_into(self, vec, value):
+        nx = self.p.model.nx
+        x_offset = self.p.decision['x'].offset
+        npoints = self.p.tc.size
+        xe = np.asarray(value)
+        assert xe.shape == (2, nx)        
+        vec[x_offset:][:nx] = xe[0]
+        vec[x_offset + (npoints - 1)*nx:][:nx] = xe[1]
+    
+    def expand_indices(self, ind):
+        nx = self.p.model.nx
+        npoints = self.p.tc.size
+        x_offset = self.p.decision['x'].offset
+        ind = np.asarray(ind, dtype=int)
+        return ind + x_offset + (ind > nx) * (npoints - 1) * nx
+
