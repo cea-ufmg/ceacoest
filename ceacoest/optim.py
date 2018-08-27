@@ -26,9 +26,6 @@ class Problem:
         self.ncons = 0
         """Size of the constraint vector."""
 
-        self.known_index_offsets = {}
-        """Problem variable index offsets for derivatives."""
-        
         self.nnzjac = 0
         """Number of nonzero constraint Jacobian elements."""
 
@@ -39,7 +36,7 @@ class Problem:
         """Number of nonzero constraint Hessian elements."""
 
         self.constraint_hessian = []
-        """Constraint Jacobian components."""
+        """Constraint Hessian components."""
     
     def register_decision(self, name, shape, tiling=None):
         component = Decision(self.ndec, shape, tiling)
@@ -70,20 +67,9 @@ class Problem:
     def variables(self, dvec):
         """Get all variables needed to evaluate problem functions."""
         variables = self.unpack_decision(dvec)
-        for name, spec in derived.items():
+        for name, spec in self.derived.items():
             variables[name] = spec.build(variables)
         return variables
-    
-    def set_index_offsets(self, var_name, offsets):
-        if isinstance(offsets, np.ndarray) and offsets.ndim == 1:
-            offsets = offsets[:, None]
-        self.known_index_offsets[var_name] = offsets
-    
-    def get_index_offsets(self, var_name):
-        try:
-            return self.known_index_offsets[var_name]
-        except KeyError:
-            return self.decision[var_name].offset
     
     def register_constraint(self, name, f, argument_names, shape, tiling=None):
         cons = Constraint(self.ncons, f, argument_names, shape, tiling)
@@ -119,6 +105,30 @@ class Problem:
             out = np.zeros((2, self.nnzjac), dtype=int)
         for jac in self.jacobian:
             jac.ind(pack_into=out)
+        return out
+
+    def register_constraint_hessian(self, constraint_name, wrt_names, val, ind):
+        def wrt_spec(name):
+            return self.decision.get(name, None) or self.derived[name]
+        wrt = (wrt_spec(wrt_names[0]), wrt_spec(wrt_names[1]))
+        cons = self.constraints[constraint_name]
+        hess = ConstraintHessian(val, ind, self.nnzchess, wrt, cons)
+        self.nnzchess += hess.size
+        self.constraint_hessian.append(hess)
+    
+    def constraint_hessian_val(self, dvec, multipliers=None, out=None):
+        var = self.variables(dvec)
+        if out is None:
+            out = np.zeros(self.nnzchess)
+        for hess in self.constraint_hessian:
+            hess(var, multipliers, pack_into=out)
+        return out
+    
+    def constraint_hessian_ind(self, out=None):
+        if out is None:
+            out = np.zeros((2, self.nnzchess), dtype=int)
+        for hess in self.constraint_hessian:
+            hess.ind(pack_into=out)
         return out
 
 
@@ -204,13 +214,13 @@ class CallableComponent(Component):
     
     def __call__(self, arg_dict, pack_into=None):
         args = tuple(arg_dict[n] for n in self.argument_names)
-        ret = self.fun(*args)
-        assert ret.shape == self.shape
+        out = self.fun(*args)
+        assert out.shape == self.shape
         
         if pack_into is not None:
-            self.pack_into(pack_into, ret)
+            self.pack_into(pack_into, out)
         
-        return ret
+        return out
 
 
 class Constraint(CallableComponent, IndexedComponent):
@@ -232,8 +242,7 @@ class Constraint(CallableComponent, IndexedComponent):
 
 class ConstraintJacobian(CallableComponent):
     def __init__(self, val, ind, offset, wrt, constraint):
-        assert np.ndim(ind) == 2
-        assert np.size(ind, 0) == 2
+        assert np.ndim(ind) == 2 and np.size(ind, 0) == 2
         self.template_ind = np.asarray(ind, dtype=int)
         """Nonzero Jacobian element indices template."""
         
@@ -244,8 +253,8 @@ class ConstraintJacobian(CallableComponent):
         """Decision or derived variable specification."""
         
         nnz = np.size(ind, 1)
-        broadcast = len(constraint.shape) == 2
-        shape = (constraint.shape[0], nnz) if broadcast else (nnz,)
+        tiling = constraint.tiling
+        shape = (nnz,) if tiling is None else (tiling, nnz)
         super().__init__(shape, offset, val, constraint.argument_names)
     
     def ind(self, pack_into=None):
@@ -259,3 +268,43 @@ class ConstraintJacobian(CallableComponent):
             self.pack_into(pack_into[1], ret[1])
         
         return ret
+
+
+class ConstraintHessian(CallableComponent):
+    def __init__(self, val, ind, offset, wrt, constraint):
+        assert np.ndim(ind) == 2 and np.size(ind, 0) == 3
+        self.template_ind = np.asarray(ind, dtype=int)
+        """Nonzero Hessian element indices template."""
+        
+        self.constraint = constraint
+        """Specification of the parent constraint."""
+        
+        assert len(wrt) == 2
+        self.wrt = wrt
+        """Decision or derived variable specification."""
+        
+        nnz = np.size(ind, 1)
+        tiling = constraint.tiling
+        shape = (nnz,) if tiling is None else (tiling, nnz)
+        super().__init__(shape, offset, val, constraint.argument_names)
+    
+    def ind(self, pack_into=None):
+        ind = self.template_ind
+        ret = np.zeros((2,) + self.shape, dtype=int)
+        ret[1] = self.wrt[0].expand_indices(ind[1])
+        ret[0] = self.wrt[1].expand_indices(ind[0])
+        
+        if pack_into is not None:
+            self.pack_into(pack_into[0], ret[0])
+            self.pack_into(pack_into[1], ret[1])
+        
+        return ret
+
+    def __call__(self, arg_dict, multipliers=None, pack_into=None):
+        out = super().__call__(arg_dict)
+        if multipliers is not None:
+            mind = self.template_ind[2]
+            out = out * self.constraint.unpack_from(multipliers)[..., mind]
+        if pack_into is not None:
+            self.pack_into(pack_into, out)
+        return out

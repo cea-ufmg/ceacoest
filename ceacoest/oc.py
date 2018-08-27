@@ -34,16 +34,6 @@ class Problem(optim.Problem):
         self.register_derived('up', PieceRavelledVariable(self, 'u'))
         self.register_derived('xe', XEVariable(self))
         
-        self.set_index_offsets('x', np.arange(npoints) * model.nx + x.offset)
-        self.set_index_offsets('u', np.arange(npoints) * model.nu + u.offset)
-        self.set_index_offsets(
-            'xp', np.arange(npieces) * col.ninterv * model.nx + x.offset
-        )
-        self.set_index_offsets(
-            'up', np.arange(npieces)*col.ninterv*model.nu + u.offset
-        )
-        self.set_index_offsets('xe', self.xe_offsets)
-        
         self.register_constraint('g', model.g, ('x','u','p'), model.ng, npoints)
         self.register_constraint('h', model.h, ('xe', 'p'), model.nh)
         self.register_constraint(
@@ -73,6 +63,43 @@ class Problem(optim.Problem):
         )
         self.register_constraint_jacobian(
             'h', 'p', model.dh_dp_val, model.dh_dp_ind
+        )
+
+        self.register_constraint_hessian(
+            'g', ('x', 'x'), model.d2g_dx2_val, model.d2g_dx2_ind
+        )
+        self.register_constraint_hessian(
+            'g', ('u', 'u'), model.d2g_du2_val, model.d2g_du2_ind
+        )
+        self.register_constraint_hessian(
+            'g', ('p', 'p'), model.d2g_dp2_val, model.d2g_dp2_ind
+        )
+        self.register_constraint_hessian(
+            'g', ('x', 'u'), model.d2g_dx_du_val, model.d2g_dx_du_ind
+        )
+        self.register_constraint_hessian(
+            'g', ('x', 'p'), model.d2g_dx_dp_val, model.d2g_dx_dp_ind
+        )
+        self.register_constraint_hessian(
+            'g', ('u', 'p'), model.d2g_du_dp_val, model.d2g_du_dp_ind
+        )
+        self.register_constraint_hessian(
+            'e', ('xp', 'xp'), model.d2e_dxp2_val, model.d2e_dxp2_ind
+        )
+        self.register_constraint_hessian(
+            'e', ('up', 'up'), model.d2e_dup2_val, model.d2e_dup2_ind
+        )
+        self.register_constraint_hessian(
+            'e', ('p', 'p'), model.d2e_dxp2_val, model.d2e_dp2_ind
+        )
+        self.register_constraint_hessian(
+            'e', ('xp', 'up'), model.d2e_dxp_dup_val, model.d2e_dxp_dup_ind
+        )
+        self.register_constraint_hessian(
+            'e', ('xp', 'p'), model.d2e_dxp_dp_val, model.d2e_dxp_dp_ind
+        )
+        self.register_constraint_hessian(
+            'e', ('up', 'p'), model.d2e_dup_dp_val, model.d2e_dup_dp_ind
         )
     
     def xe_offsets(self, xe_ind):
