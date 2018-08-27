@@ -1,5 +1,8 @@
 """Optimal control."""
 
+
+import itertools
+
 import numpy as np
 
 from . import optim, rk
@@ -39,75 +42,30 @@ class Problem(optim.Problem):
         self.register_constraint(
             'e', model.e, ('xp','up','p', 'piece_len'), model.ne, npieces
         )
-        
-        self.register_constraint_jacobian(
-            'g', 'x', model.dg_dx_val, model.dg_dx_ind
-        )
-        self.register_constraint_jacobian(
-            'g', 'u', model.dg_du_val, model.dg_du_ind
-        )
-        self.register_constraint_jacobian(
-            'g', 'p', model.dg_du_val, model.dg_dp_ind
-        )
-        self.register_constraint_jacobian(
-            'e', 'xp', model.de_dxp_val, model.de_dxp_ind
-        )
-        self.register_constraint_jacobian(
-            'e', 'up', model.de_dup_val, model.de_dup_ind
-        )
-        self.register_constraint_jacobian(
-            'e', 'p', model.de_dp_val, model.de_dp_ind
-        )
-        self.register_constraint_jacobian(
-            'h', 'xe', model.dh_dxe_val, model.dh_dxe_ind
-        )
-        self.register_constraint_jacobian(
-            'h', 'p', model.dh_dp_val, model.dh_dp_ind
-        )
 
-        self.register_constraint_hessian(
-            'g', ('x', 'x'), model.d2g_dx2_val, model.d2g_dx2_ind
-        )
-        self.register_constraint_hessian(
-            'g', ('u', 'u'), model.d2g_du2_val, model.d2g_du2_ind
-        )
-        self.register_constraint_hessian(
-            'g', ('p', 'p'), model.d2g_dp2_val, model.d2g_dp2_ind
-        )
-        self.register_constraint_hessian(
-            'g', ('x', 'u'), model.d2g_dx_du_val, model.d2g_dx_du_ind
-        )
-        self.register_constraint_hessian(
-            'g', ('x', 'p'), model.d2g_dx_dp_val, model.d2g_dx_dp_ind
-        )
-        self.register_constraint_hessian(
-            'g', ('u', 'p'), model.d2g_du_dp_val, model.d2g_du_dp_ind
-        )
-        self.register_constraint_hessian(
-            'e', ('xp', 'xp'), model.d2e_dxp2_val, model.d2e_dxp2_ind
-        )
-        self.register_constraint_hessian(
-            'e', ('up', 'up'), model.d2e_dup2_val, model.d2e_dup2_ind
-        )
-        self.register_constraint_hessian(
-            'e', ('p', 'p'), model.d2e_dxp2_val, model.d2e_dp2_ind
-        )
-        self.register_constraint_hessian(
-            'e', ('xp', 'up'), model.d2e_dxp_dup_val, model.d2e_dxp_dup_ind
-        )
-        self.register_constraint_hessian(
-            'e', ('xp', 'p'), model.d2e_dxp_dp_val, model.d2e_dxp_dp_ind
-        )
-        self.register_constraint_hessian(
-            'e', ('up', 'p'), model.d2e_dup_dp_val, model.d2e_dup_dp_ind
-        )
+        self._register_model_constraint_derivatives('g', ('x', 'u', 'p'))
+        self._register_model_constraint_derivatives('e', ('xp', 'up', 'p'))
     
-    def xe_offsets(self, xe_ind):
-        """Calculate offsets of indices of the endpoint states (xe)."""
-        x_off = self.decision['x'].offset
-        npoints = self.tc.size
-        return x_off + (xe_ind >= self.model.nx)*self.model.nx*(npoints - 1)
-            
+    def _register_model_constraint_jacobian(self, constraint_name, wrt_name):
+        val = getattr(self.model, f'd{constraint_name}_d{wrt_name}_val')
+        ind = getattr(self.model, f'd{constraint_name}_d{wrt_name}_ind')
+        self.register_constraint_jacobian(constraint_name, wrt_name, val, ind)
+
+    def _register_model_constraint_hessian(self, constraint_name, wrt_names):
+        if wrt_names[0] == wrt_names[1]:
+            name = f'd2{constraint_name}_d{wrt_names[0]}2'
+        else:
+            name = f'd2{constraint_name}_d{wrt_names[0]}_d{wrt_names[1]}'
+        val = getattr(self.model, f'{name}_val')
+        ind = getattr(self.model, f'{name}_ind')
+        self.register_constraint_hessian(constraint_name, wrt_names, val, ind)
+    
+    def _register_model_constraint_derivatives(self, cons_name, wrt_names):
+        for wrt_name in wrt_names:
+            self._register_model_constraint_jacobian(cons_name, wrt_name)
+        for comb in itertools.combinations(wrt_names, 2):
+            self._register_model_constraint_hessian(cons_name, comb)
+        
     def variables(self, dvec):
         """Get all variables needed to evaluate problem functions."""
         return {'piece_len': self.piece_len, **super().variables(dvec)}
