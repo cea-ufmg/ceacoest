@@ -5,7 +5,7 @@ import itertools
 
 import numpy as np
 
-from . import optim, rk
+from . import optim, rk, utils
 
 
 class Problem(optim.Problem):
@@ -42,9 +42,27 @@ class Problem(optim.Problem):
         self.register_constraint(
             'e', model.e, ('xp','up','p', 'piece_len'), model.ne, npieces
         )
-
         self._register_model_constraint_derivatives('g', ('x', 'u', 'p'))
         self._register_model_constraint_derivatives('e', ('xp', 'up', 'p'))
+        
+        self.register_merit('M', model.M, ('xe', 'p'))
+        self._register_model_merit_derivatives('M', ('xe', 'p'))
+    
+    def _register_model_merit_gradient(self, merit_name, wrt_name):
+        grad = getattr(self.model, f'd{merit_name}_d{wrt_name}')
+        self.register_merit_gradient(merit_name, wrt_name, grad)
+
+    def _register_model_merit_hessian(self, merit_name, wrt_names):
+        hess_name = utils.double_deriv_name(merit_name, wrt_names)
+        val = getattr(self.model, f'{hess_name}_val')
+        ind = getattr(self.model, f'{hess_name}_ind')
+        self.register_merit_hessian(merit_name, wrt_names, val, ind)
+
+    def _register_model_merit_derivatives(self, merit_name, wrt_names):
+        for wrt_name in wrt_names:
+            self._register_model_merit_gradient(merit_name, wrt_name)
+        for comb in itertools.combinations(wrt_names, 2):
+            self._register_model_merit_hessian(merit_name, comb)
     
     def _register_model_constraint_jacobian(self, constraint_name, wrt_name):
         val = getattr(self.model, f'd{constraint_name}_d{wrt_name}_val')
@@ -52,12 +70,9 @@ class Problem(optim.Problem):
         self.register_constraint_jacobian(constraint_name, wrt_name, val, ind)
 
     def _register_model_constraint_hessian(self, constraint_name, wrt_names):
-        if wrt_names[0] == wrt_names[1]:
-            name = f'd2{constraint_name}_d{wrt_names[0]}2'
-        else:
-            name = f'd2{constraint_name}_d{wrt_names[0]}_d{wrt_names[1]}'
-        val = getattr(self.model, f'{name}_val')
-        ind = getattr(self.model, f'{name}_ind')
+        hess_name = utils.double_deriv_name(constraint_name, wrt_names)
+        val = getattr(self.model, f'{hess_name}_val')
+        ind = getattr(self.model, f'{hess_name}_ind')
         self.register_constraint_hessian(constraint_name, wrt_names, val, ind)
     
     def _register_model_constraint_derivatives(self, cons_name, wrt_names):
@@ -111,6 +126,10 @@ class PieceRavelledVariable:
 class XEVariable:
     def __init__(self, problem):
         self.p = problem
+
+    @property
+    def shape(self):
+        return (2, self.p.model.nx)
     
     def build(self, variables):
         x = variables['x']
@@ -131,4 +150,3 @@ class XEVariable:
         x_offset = self.p.decision['x'].offset
         ind = np.asarray(ind, dtype=int)
         return ind + x_offset + (ind > nx) * (npoints - 1) * nx
-

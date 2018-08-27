@@ -131,3 +131,11 @@ def cached(f):
             setattr(self, cached_name, f(self))
         return getattr(self, cached_name)
     return wrapper
+
+
+def double_deriv_name(fun, wrt):
+    assert len(wrt) == 2
+    if wrt[0] == wrt[1]:
+        return f'd2{fun}_d{wrt[0]}2'
+    else:
+        return f'd2{fun}_d{wrt[0]}_d{wrt[1]}'

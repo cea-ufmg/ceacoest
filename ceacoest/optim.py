@@ -20,6 +20,12 @@ class Problem:
         self.derived = collections.OrderedDict()
         """Specifications of variables derived from the decision variables."""
 
+        self.merits = {}
+        """Merit components."""
+
+        self.merit_gradients = []
+        """Merit gradient components."""
+
         self.constraints = {}
         """Problem constraints."""
 
@@ -37,7 +43,13 @@ class Problem:
 
         self.constraint_hessian = []
         """Constraint Hessian components."""
-    
+
+        self.nnzmhess = 0
+        """Number of nonzero merit Hessian elements."""
+
+        self.merit_hessian = []
+        """Merit Hessian components."""
+
     def register_decision(self, name, shape, tiling=None):
         component = Decision(self.ndec, shape, tiling)
         self.decision[name] = component
@@ -70,6 +82,51 @@ class Problem:
         for name, spec in self.derived.items():
             variables[name] = spec.build(variables)
         return variables
+
+    def wrt_spec(self, name):
+        return self.decision.get(name, None) or self.derived[name]
+    
+    def register_merit(self, name, fun, arg_names, tiling=None):
+        self.merits[name] = Merit(fun, arg_names, tiling)
+        
+    def merit(self, dvec):
+        var = self.variables(dvec)
+        return sum(m(var) for m in self.merits.values())
+    
+    def register_merit_gradient(self, merit_name, wrt_name, fun):
+        merit = self.merits[merit_name]
+        wrt = self.decision.get(wrt_name, None) or self.derived[wrt_name]
+        grad = MeritGradient(fun, wrt, merit)
+        self.merit_gradients.append(grad)
+        
+    def merit_gradient(self, dvec, out=None):
+        var = self.variables(dvec)
+        out = np.zeros(self.ndec) if out is None else out
+        for grad in self.merit_gradients:
+            grad(var, pack_into=out)
+        return out
+    
+    def register_merit_hessian(self, merit_name, wrt_names, val, ind):
+        wrt = (self.wrt_spec(wrt_names[0]), self.wrt_spec(wrt_names[1]))
+        merit = self.merits[merit_name]
+        hess = MeritHessian(val, ind, self.nnzmhess, wrt, merit)
+        self.nnzmhess += hess.size
+        self.merit_hessian.append(hess)
+    
+    def merit_hessian_val(self, dvec, out=None):
+        var = self.variables(dvec)
+        if out is None:
+            out = np.zeros(self.nnzmhess)
+        for hess in self.merit_hessian:
+            hess(var, pack_into=out)
+        return out
+    
+    def merit_hessian_ind(self, out=None):
+        if out is None:
+            out = np.zeros((2, self.nnzmhess), dtype=int)
+        for hess in self.merit_hessian:
+            hess.ind(pack_into=out)
+        return out
     
     def register_constraint(self, name, f, argument_names, shape, tiling=None):
         cons = Constraint(self.ncons, f, argument_names, shape, tiling)
@@ -108,9 +165,7 @@ class Problem:
         return out
 
     def register_constraint_hessian(self, constraint_name, wrt_names, val, ind):
-        def wrt_spec(name):
-            return self.decision.get(name, None) or self.derived[name]
-        wrt = (wrt_spec(wrt_names[0]), wrt_spec(wrt_names[1]))
+        wrt = (self.wrt_spec(wrt_names[0]), self.wrt_spec(wrt_names[1]))
         cons = self.constraints[constraint_name]
         hess = ConstraintHessian(val, ind, self.nnzchess, wrt, cons)
         self.nnzchess += hess.size
@@ -308,3 +363,93 @@ class ConstraintHessian(CallableComponent):
         if pack_into is not None:
             self.pack_into(pack_into, out)
         return out
+        
+
+class Merit:
+    def __init__(self, fun, argument_names, tiling=None):
+        self.fun = fun
+        """Merit function."""
+        
+        self.argument_names = argument_names
+        """Merit function argument names."""
+        
+        assert isinstance(tiling, (numbers.Integral, type(None)))
+        self.tiling = tiling
+        """Number of repetitions of the template shape."""
+    
+    @property
+    def shape(self):
+        return () if self.tiling is None else (self.tiling,)
+    
+    def __call__(self, arg_dict):
+        args = tuple(arg_dict[n] for n in self.argument_names)
+        out = self.fun(*args)
+        assert out.shape == self.shape
+        return out if self.tiling is None else out.sum(0)
+
+
+class MeritGradient:
+    def __init__(self, fun, wrt, merit):
+        self.fun = fun
+        """Gradient function."""
+        
+        self.merit = merit
+        """Underlying merit function."""
+        
+        self.wrt = wrt
+        """Decision or derived variable specification."""
+    
+    @property
+    def shape(self):
+        return self.merit.shape + self.wrt.shape
+    
+    def __call__(self, arg_dict, pack_into=None):
+        args = tuple(arg_dict[n] for n in self.merit.argument_names)
+        grad = self.fun(*args)
+        assert grad.shape == self.shape
+        if self.merit.tiling is not None:
+            grad = grad.sum(0)
+        if pack_into is not None:
+            self.wrt.pack_into(pack_into, grad)
+        return grad
+
+
+class MeritHessian(Component):
+    def __init__(self, val, ind, offset, wrt, merit):
+        self.val = val
+        """Hessian nonzero elements function."""
+        
+        assert np.ndim(ind) == 2 and np.size(ind, 0) == 2
+        self.template_ind = np.asarray(ind, dtype=int)
+        """Nonzero Hessian element indices template."""
+        
+        assert len(wrt) == 2
+        self.wrt = wrt
+        """Decision or derived variable specifications."""
+
+        self.merit = merit
+        """Underlying merit function."""
+        
+        nnz = np.size(ind, 1)
+        shape = (nnz,) if merit.tiling is None else (merit.tiling, nnz)
+        super().__init__(shape, offset)
+    
+    def __call__(self, arg_dict, pack_into=None):
+        args = tuple(arg_dict[n] for n in self.merit.argument_names)
+        out = self.val(*args)
+        assert out.shape == self.shape
+        if pack_into is not None:
+            self.pack_into(pack_into, out)
+        return out
+
+    def ind(self, pack_into=None):
+        ind = self.template_ind
+        ret = np.zeros((2,) + self.shape, dtype=int)
+        ret[1] = self.wrt[0].expand_indices(ind[1])
+        ret[0] = self.wrt[1].expand_indices(ind[0])
+        
+        if pack_into is not None:
+            self.pack_into(pack_into[0], ret[0])
+            self.pack_into(pack_into[1], ret[1])
+        
+        return ret
