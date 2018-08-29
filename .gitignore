@@ -1,5 +1,8 @@
-# qwfilter stuff
+# Example data
 examples/data
+
+# Test cache
+.pytest_cache/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

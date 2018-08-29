@@ -15,9 +15,6 @@ import sympy
 import sym2num
 
 from ceacoest import kalman, utils
-
-
-pytest_plugins = "ceacoest.testsupport.array_cmp"
 from ceacoest.testsupport.array_cmp import ArrayDiff
 
 

@@ -2,9 +2,11 @@
 
 
 import numpy as np
+import pytest
 from scipy import sparse
 
-from .. import utils
+from ceacoest import utils
+from ceacoest.testsupport.array_cmp import ArrayDiff
 
 
 def sparse_fun_to_full(val, ind, shape, fix_sym=False):
@@ -35,31 +37,28 @@ def full_cons_hessian(problem):
     return sparse_fun_to_full(problem.constraint_hessian_val, ind, shape, True)
 
 
-def test_merit_gradient(problem, dec=None):
+def test_merit_gradient(problem, dec):
     dec = np.random.randn(problem.ndec) if dec is None else dec
     grad = problem.merit_gradient(dec)
     merit_diff = utils.central_diff(problem.merit, dec)
-    np.testing.assert_almost_equal(grad, merit_diff, decimal=6)
-    return [grad, merit_diff]
+    assert ArrayDiff(grad, merit_diff) < 1e-7
 
 
-def test_merit_hessian(problem, dec=None):
+def test_merit_hessian(problem, dec):
     dec = np.random.randn(problem.ndec) if dec is None else dec
     hess = full_hessian(problem)(dec)
     grad_diff = utils.central_diff(problem.merit_gradient, dec)
-    np.testing.assert_almost_equal(hess, grad_diff, decimal=6)
-    return [hess, grad_diff]
+    assert ArrayDiff(hess, grad_diff) < 1e-7
 
 
-def test_constraint_jacobian(problem, dec=None):
+def test_constraint_jacobian(problem, dec):
     dec = np.random.randn(problem.ndec) if dec is None else dec
     jac = full_jac(problem)(dec)
     cons_diff = utils.central_diff(problem.constraint, dec)
-    np.testing.assert_almost_equal(jac, cons_diff, decimal=6)
-    return [jac, cons_diff]
+    assert ArrayDiff(jac, cons_diff) < 1e-7
 
 
-def test_constraint_hessian(problem, dec=None):
+def test_constraint_hessian(problem, dec):
     dec = np.random.randn(problem.ndec) if dec is None else dec
     jac_diff = utils.central_diff(full_jac(problem), dec)
     hess = full_cons_hessian(problem)
@@ -67,4 +66,23 @@ def test_constraint_hessian(problem, dec=None):
         mult = np.zeros(problem.ncons)
         mult[i] = 1
         H = hess(dec,mult)
-        np.testing.assert_almost_equal(H, jac_diff[:,:,i], decimal=6)
+        assert ArrayDiff(H, jac_diff[:,:,i]) < 1e-7, f'{i}-th constraint'
+
+
+@pytest.fixture(params=[])
+def problem(request):
+    """Optimization problem."""
+    raise NotImplementedError
+
+
+@pytest.fixture(params=range(4), ids=lambda i: f'seed{i}')
+def seed(request):
+    """Random number generator seed."""
+    np.random.seed(request.param)
+    return request.param
+
+
+@pytest.fixture
+def dec(problem, seed):
+    """Random problem decision variable."""
+    return np.random.randn(problem.ndec)
