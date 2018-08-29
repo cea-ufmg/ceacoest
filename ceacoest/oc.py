@@ -43,6 +43,7 @@ class Problem(optim.Problem):
             'e', model.e, ('xp','up','p', 'piece_len'), model.ne, npieces
         )
         self._register_model_constraint_derivatives('g', ('x', 'u', 'p'))
+        self._register_model_constraint_derivatives('h', ('xe', 'p'))
         self._register_model_constraint_derivatives('e', ('xp', 'up', 'p'))
         
         self.register_merit('M', model.M, ('xe', 'p'))
@@ -61,8 +62,7 @@ class Problem(optim.Problem):
     def _register_model_merit_derivatives(self, merit_name, wrt_names):
         for wrt_name in wrt_names:
             self._register_model_merit_gradient(merit_name, wrt_name)
-            self._register_model_merit_hessian(merit_name, (wrt_name,) * 2)
-        for comb in itertools.combinations(wrt_names, 2):
+        for comb in itertools.combinations_with_replacement(wrt_names, 2):
             self._register_model_merit_hessian(merit_name, comb)
     
     def _register_model_constraint_jacobian(self, constraint_name, wrt_name):
@@ -79,8 +79,7 @@ class Problem(optim.Problem):
     def _register_model_constraint_derivatives(self, cons_name, wrt_names):
         for wrt_name in wrt_names:
             self._register_model_constraint_jacobian(cons_name, wrt_name)
-            self._register_model_constraint_hessian(cons_name, (wrt_name,) * 2)
-        for comb in itertools.combinations(wrt_names, 2):
+        for comb in itertools.combinations_with_replacement(wrt_names, 2):
             self._register_model_constraint_hessian(cons_name, comb)
         
     def variables(self, dvec):
@@ -151,4 +150,4 @@ class XEVariable:
         npoints = self.p.tc.size
         x_offset = self.p.decision['x'].offset
         ind = np.asarray(ind, dtype=int)
-        return ind + x_offset + (ind > nx) * (npoints - 1) * nx
+        return ind + x_offset + (ind >= nx) * (npoints - 2) * nx
