@@ -52,3 +52,11 @@ if __name__ == '__main__':
     
     t = np.linspace(0, 1, 20)
     problem = oc.Problem(mdl, t)
+    
+    dec_bounds = np.empty((2, problem.ndec))
+    dec_bounds[0] = problem.pack_decision(x=-np.inf, u=-np.inf, p=0)
+    dec_bounds[1] = problem.pack_decision(
+        x=[1/9, np.inf, np.inf], u=np.inf, p=np.inf
+    )
+    
+    

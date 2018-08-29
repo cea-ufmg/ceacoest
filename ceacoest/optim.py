@@ -2,10 +2,12 @@
 
 
 import collections
+import itertools
 import numbers
 
 import numpy as np
 
+from . import utils
 
 class Problem:
     """Sparse optimization problem."""
@@ -69,10 +71,10 @@ class Problem:
             components[name] = spec.unpack_from(dvec)
         return components
     
-    def pack_decision(self, **components):
+    def pack_decision(self, comp_dict={}, **comp_kw):
         """Pack the decision variable components into the vector."""
         dvec = np.zeros(self.ndec)
-        for name, value in components:
+        for name, value in utils.chain_items(comp_dict, comp_kw):
             self.decision[name].pack_into(dvec, value)
         return dvec
     

@@ -2,6 +2,7 @@
 
 
 import functools
+import itertools
 import re
 
 import numpy as np
@@ -80,6 +81,11 @@ def forward_diff(f, x, min_step=1e-7, rel_step=1e-7):
         diff[i] = (f(xi) - f0)/hi
     
     return diff
+
+
+def chain_items(*args):
+    """Return a chain of dict items."""
+    return itertools.chain(*(arg.items() for arg in args))
 
 
 def extract_subkeys(d, base):
