@@ -7,7 +7,6 @@ import numbers
 
 import numpy as np
 
-from . import utils
 
 class Problem:
     """Sparse optimization problem."""
@@ -74,9 +73,14 @@ class Problem:
     def pack_decision(self, comp_dict={}, **comp_kw):
         """Pack the decision variable components into the vector."""
         dvec = np.zeros(self.ndec)
-        for name, value in utils.chain_items(comp_dict, comp_kw):
+        for name, value in collections.ChainMap(comp_dict, comp_kw).items():
             self.decision[name].pack_into(dvec, value)
         return dvec
+    
+    def set_decision(self, name, val, out=None):
+        out = np.zeros(self.ndec) if out is None else out
+        self.decision[name].set_into(out, value)
+        return out
     
     def variables(self, dvec):
         """Get all variables needed to evaluate problem functions."""
@@ -142,6 +146,12 @@ class Problem:
             out = np.zeros(self.ncons)
         for name, cons in self.constraints.items():
             cons(var, pack_into=out)
+        return out
+    
+    def set_constraint(self, name, val, out=None):
+        out = np.zeros(self.ncons) if out is None else out
+        cons = self.constraints[name]
+        cons.pack_into(out, value)
         return out
     
     def register_constraint_jacobian(self, constraint_name, wrt_name, val, ind):
@@ -215,6 +225,14 @@ class Component:
     def unpack_from(self, vec):
         """Extract component from parent vector."""
         return np.asarray(vec)[self.slice].reshape(self.shape)
+    
+    def add_into(self, vec, value):
+        assert vec.ndim == 1 and vec.size >= self.offset + self.size
+        vec[self.slice] += np.broadcast_to(value, self.shape).flat
+    
+    def set_into(self, vec, value):
+        assert vec.ndim == 1 and vec.size >= self.offset + self.size
+        vec[self.slice] = np.broadcast_to(value, self.shape).flat
     
     def pack_into(self, vec, value):
         """Pack component into parent vector."""
