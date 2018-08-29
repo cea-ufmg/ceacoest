@@ -7,17 +7,20 @@ from scipy import sparse
 from .. import utils
 
 
-def sparse_fun_to_full(val, ind, shape):
+def sparse_fun_to_full(val, ind, shape, fix_sym=False):
     def wrapper(*args, **kwargs):
         M = sparse.coo_matrix((val(*args, **kwargs), ind), shape=shape)
-        return M.toarray()
+        A = M.toarray()
+        if fix_sym:
+            A += A.T - np.diag(np.diag(A))
+        return A
     return wrapper
 
 
 def full_hessian(problem):
     ind = problem.merit_hessian_ind()
     shape = (problem.ndec,) * 2
-    return sparse_fun_to_full(problem.merit_hessian_val, ind, shape)
+    return sparse_fun_to_full(problem.merit_hessian_val, ind, shape, True)
 
 
 def full_jac(problem):
@@ -29,7 +32,7 @@ def full_jac(problem):
 def full_cons_hessian(problem):
     ind = problem.constraint_hessian_ind()
     shape = (problem.ndec,) * 2
-    return sparse_fun_to_full(problem.constraint_hessian_val, ind, shape)
+    return sparse_fun_to_full(problem.constraint_hessian_val, ind, shape, True)
 
 
 def test_merit_gradient(problem, dec=None):
@@ -63,6 +66,5 @@ def test_constraint_hessian(problem, dec=None):
     for i in range(problem.ncons):
         mult = np.zeros(problem.ncons)
         mult[i] = 1
-        np.testing.assert_almost_equal(
-            hess(dec, mult), jac_diff[..., i], decimal=6
-        )
+        H = hess(dec,mult)
+        np.testing.assert_almost_equal(H, jac_diff[:,:,i], decimal=6)
