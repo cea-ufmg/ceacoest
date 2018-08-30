@@ -11,6 +11,8 @@ from ceacoest.testsupport.array_cmp import ArrayDiff
 
 def sparse_fun_to_full(val, ind, shape, fix_sym=False):
     def wrapper(*args, **kwargs):
+        assert np.max(ind[0]) < shape[0]
+        assert np.max(ind[1]) < shape[1]
         M = sparse.coo_matrix((val(*args, **kwargs), ind), shape=shape)
         A = M.toarray()
         if fix_sym:

@@ -77,7 +77,7 @@ class Problem:
             self.decision[name].pack_into(dvec, value)
         return dvec
     
-    def set_decision(self, name, val, out=None):
+    def set_decision(self, name, value, out=None):
         out = np.zeros(self.ndec) if out is None else out
         self.decision[name].set_into(out, value)
         return out

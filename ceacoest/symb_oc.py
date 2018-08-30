@@ -124,10 +124,10 @@ class CollocatedModel(sym2num.model.Base):
         fp = sympy.Matrix([self.f(xp[i, :], up[i, :], p)
                            for i in range(self.collocation.n)])
         J = sympy.Matrix(self.collocation.J)
-        dt = sympy.Array(np.diff(self.collocation.points)) * piece_len[()]
+        dt = piece_len[()]
         
         xp = xp.tomatrix()
-        defects = xp[1:, :] - xp[:-1, :] - sympy.diag(*dt) * J * fp
+        defects = xp[1:, :] - xp[:-1, :] - dt * J * fp
         return sympy.Array(defects, len(defects))
 
 

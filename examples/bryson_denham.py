@@ -35,7 +35,7 @@ class BrysonDenham:
     @sym2num.model.symbols_from('xe, p')
     def h(self, s):
         """Endpoint constraints."""
-        return sympy.Array([s.x1_start, s.x1_end, s.x2_start, s.x2_end + 1])
+        return sympy.Array([s.x1_start, s.x1_end, s.x2_start - 1, s.x2_end + 1])
     
     @sym2num.model.symbols_from('xe, p')
     def M(self, s):
@@ -50,22 +50,33 @@ if __name__ == '__main__':
     )
     mdl = GeneratedBrysonDenham()
     
-    t = np.linspace(0, 1, 20)
+    t = np.linspace(0, 1, 30)
     problem = oc.Problem(mdl, t)
     
     dec_bounds = np.repeat([[-np.inf], [np.inf]], problem.ndec, axis=-1)
     problem.set_decision('p', 0, dec_bounds[0])
+    problem.set_decision('p', np.inf, dec_bounds[1])
+    problem.set_decision('x', [-np.inf, -np.inf, 0], dec_bounds[0])
     problem.set_decision('x', [1/9, np.inf, np.inf], dec_bounds[1])
     constr_bounds = np.zeros((2, problem.ncons))
     
     obj = lambda dec, new: problem.merit(dec)
     grad = lambda dec, new: problem.merit_gradient(dec)
     constr = lambda dec, new: problem.constraint(dec)
-    jac_ind = problem.constraint_jacobian_ind()
+    jac_ind = problem.constraint_jacobian_ind()[[1,0]]
     jac_val = lambda dec, new: problem.constraint_jacobian_val(dec)
     hess_ind = np.c_[problem.merit_hessian_ind(),
-                     problem.constraint_hessian_ind()]
+                     problem.constraint_hessian_ind()][[1,0]]
     def hess_val(dec, newd, obj_factor, mult, newm):
-        return np.c_[problem.merit_hessian_val(dec) * obj_factor,
+        return np.r_[problem.merit_hessian_val(dec) * obj_factor,
                      problem.constraint_hessian_val(dec, mult)]
+    
+    import yaipopt
+    nlp = yaipopt.Problem(dec_bounds, obj, grad, constr_bounds, constr,
+                          jac_val, jac_ind, hess_val, hess_ind)
+    dec0 = np.zeros(problem.ndec)
+    problem.set_decision('p', 1, dec0)
+    decopt, info = nlp.solve(dec0)
+    opt = problem.variables(decopt)
+    tc = problem.tc * opt['p']
     
