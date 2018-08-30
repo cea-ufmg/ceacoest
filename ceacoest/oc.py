@@ -109,14 +109,14 @@ class PieceRavelledVariable:
         vp[-1, -1] = v[-1]
         return vp
     
-    def pack_into(self, vec, value):
+    def assign_to(self, destination, value):
         vp = np.asarray(value)
         assert vp.shape == (self.p.npieces, self.p.collocation.n, self.nvar)
         v = np.zeros(self.var.shape)
         v[:-1, :].flat = vp[:, :-1].flat
         v[-1] = vp[-1, -1]
         v[self.p.collocation.n::self.p.collocation.n] += vp[:, -1]
-        self.var.pack_into(vec, v)
+        self.var.pack_into(destination, v)
     
     def expand_indices(self, ind):
         npieces = self.p.npieces
@@ -136,14 +136,14 @@ class XEVariable:
         x = variables['x']
         return x[[0,-1]]
     
-    def pack_into(self, vec, value):
+    def add_to(self, destination, value):
         nx = self.p.model.nx
         x_offset = self.p.decision['x'].offset
         npoints = self.p.tc.size
         xe = np.asarray(value)
         assert xe.shape == (2, nx)        
-        vec[x_offset:][:nx] = xe[0]
-        vec[x_offset + (npoints - 1)*nx:][:nx] = xe[1]
+        destination[x_offset:][:nx] += xe[0]
+        destination[x_offset + (npoints - 1)*nx:][:nx] += xe[1]
     
     def expand_indices(self, ind):
         nx = self.p.model.nx

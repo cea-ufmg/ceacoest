@@ -70,16 +70,9 @@ class Problem:
             components[name] = spec.unpack_from(dvec)
         return components
     
-    def pack_decision(self, comp_dict={}, **comp_kw):
-        """Pack the decision variable components into the vector."""
-        dvec = np.zeros(self.ndec)
-        for name, value in collections.ChainMap(comp_dict, comp_kw).items():
-            self.decision[name].pack_into(dvec, value)
-        return dvec
-    
     def set_decision(self, name, value, out=None):
         out = np.zeros(self.ndec) if out is None else out
-        self.decision[name].set_into(out, value)
+        self.decision[name].assign_to(out, value)
         return out
     
     def variables(self, dvec):
@@ -109,7 +102,7 @@ class Problem:
         var = self.variables(dvec)
         out = np.zeros(self.ndec) if out is None else out
         for grad in self.merit_gradients:
-            grad(var, pack_into=out)
+            grad(var, add_to=out)
         return out
     
     def register_merit_hessian(self, merit_name, wrt_names, val, ind):
@@ -124,14 +117,14 @@ class Problem:
         if out is None:
             out = np.zeros(self.nnzmhess)
         for hess in self.merit_hessian:
-            hess(var, pack_into=out)
+            hess(var, assign_to=out)
         return out
     
     def merit_hessian_ind(self, out=None):
         if out is None:
             out = np.zeros((2, self.nnzmhess), dtype=int)
         for hess in self.merit_hessian:
-            hess.ind(pack_into=out)
+            hess.ind(assign_to=out)
         return out
     
     def register_constraint(self, name, f, argument_names, shape, tiling=None):
@@ -145,13 +138,13 @@ class Problem:
         if out is None:
             out = np.zeros(self.ncons)
         for name, cons in self.constraints.items():
-            cons(var, pack_into=out)
+            cons(var, assign_to=out)
         return out
     
     def set_constraint(self, name, val, out=None):
         out = np.zeros(self.ncons) if out is None else out
         cons = self.constraints[name]
-        cons.pack_into(out, value)
+        cons.assign_to(out, value)
         return out
     
     def register_constraint_jacobian(self, constraint_name, wrt_name, val, ind):
@@ -166,14 +159,14 @@ class Problem:
         if out is None:
             out = np.zeros(self.nnzjac)
         for jac in self.jacobian:
-            jac(var, pack_into=out)
+            jac(var, assign_to=out)
         return out
     
     def constraint_jacobian_ind(self, out=None):
         if out is None:
             out = np.zeros((2, self.nnzjac), dtype=int)
         for jac in self.jacobian:
-            jac.ind(pack_into=out)
+            jac.ind(assign_to=out)
         return out
 
     def register_constraint_hessian(self, constraint_name, wrt_names, val, ind):
@@ -188,14 +181,14 @@ class Problem:
         if out is None:
             out = np.zeros(self.nnzchess)
         for hess in self.constraint_hessian:
-            hess(var, multipliers, pack_into=out)
+            hess(var, multipliers, assign_to=out)
         return out
     
     def constraint_hessian_ind(self, out=None):
         if out is None:
             out = np.zeros((2, self.nnzchess), dtype=int)
         for hess in self.constraint_hessian:
-            hess.ind(pack_into=out)
+            hess.ind(assign_to=out)
         return out
 
 
@@ -226,24 +219,15 @@ class Component:
         """Extract component from parent vector."""
         return np.asarray(vec)[self.slice].reshape(self.shape)
     
-    def add_into(self, vec, value):
-        assert vec.ndim == 1 and vec.size >= self.offset + self.size
-        vec[self.slice] += np.broadcast_to(value, self.shape).flat
+    def add_to(self, destination, value):
+        assert destination.ndim == 1
+        assert destination.size >= self.offset + self.size
+        destination[self.slice] += np.broadcast_to(value, self.shape).flat
     
-    def set_into(self, vec, value):
-        assert vec.ndim == 1 and vec.size >= self.offset + self.size
-        vec[self.slice] = np.broadcast_to(value, self.shape).flat
-    
-    def pack_into(self, vec, value):
-        """Pack component into parent vector."""
-        value = np.asarray(value)
-        if value.shape != self.shape:
-            try:
-                value = np.broadcast_to(value, self.shape)
-            except ValueError:
-                msg = "value with shape {} could not be broadcast to {}"
-                raise ValueError(msg.format(value.shape, self.shape))
-        vec[self.slice] += value.flat
+    def assign_to(self, destination, value):
+        assert destination.ndim == 1
+        assert destination.size >= self.offset + self.size
+        destination[self.slice] = np.broadcast_to(value, self.shape).flat
 
 
 class IndexedComponent(Component):
@@ -287,13 +271,13 @@ class CallableComponent(Component):
         self.argument_names = argument_names
         """Underlying function argument names."""
     
-    def __call__(self, arg_dict, pack_into=None):
+    def __call__(self, arg_dict, assign_to=None):
         args = tuple(arg_dict[n] for n in self.argument_names)
         out = self.fun(*args)
         assert out.shape == self.shape
         
-        if pack_into is not None:
-            self.pack_into(pack_into, out)
+        if assign_to is not None:
+            self.assign_to(assign_to, out)
         
         return out
 
@@ -332,15 +316,15 @@ class ConstraintJacobian(CallableComponent):
         shape = (nnz,) if tiling is None else (tiling, nnz)
         super().__init__(shape, offset, val, constraint.argument_names)
     
-    def ind(self, pack_into=None):
+    def ind(self, assign_to=None):
         ind = self.template_ind
         ret = np.zeros((2,) + self.shape, dtype=int)
         ret[1] = self.constraint.expand_indices(ind[1])
         ret[0] = self.wrt.expand_indices(ind[0])
         
-        if pack_into is not None:
-            self.pack_into(pack_into[0], ret[0])
-            self.pack_into(pack_into[1], ret[1])
+        if assign_to is not None:
+            self.assign_to(assign_to[0], ret[0])
+            self.assign_to(assign_to[1], ret[1])
         
         return ret
 
@@ -363,25 +347,25 @@ class ConstraintHessian(CallableComponent):
         shape = (nnz,) if tiling is None else (tiling, nnz)
         super().__init__(shape, offset, val, constraint.argument_names)
     
-    def ind(self, pack_into=None):
+    def ind(self, assign_to=None):
         ind = self.template_ind
         ret = np.zeros((2,) + self.shape, dtype=int)
         ret[1] = self.wrt[0].expand_indices(ind[1])
         ret[0] = self.wrt[1].expand_indices(ind[0])
         
-        if pack_into is not None:
-            self.pack_into(pack_into[0], ret[0])
-            self.pack_into(pack_into[1], ret[1])
+        if assign_to is not None:
+            self.assign_to(assign_to[0], ret[0])
+            self.assign_to(assign_to[1], ret[1])
         
         return ret
 
-    def __call__(self, arg_dict, multipliers=None, pack_into=None):
+    def __call__(self, arg_dict, multipliers=None, assign_to=None):
         out = super().__call__(arg_dict)
         if multipliers is not None:
             mind = self.template_ind[2]
             out = out * self.constraint.unpack_from(multipliers)[..., mind]
-        if pack_into is not None:
-            self.pack_into(pack_into, out)
+        if assign_to is not None:
+            self.assign_to(assign_to, out)
         return out
         
 
@@ -423,14 +407,14 @@ class MeritGradient:
     def shape(self):
         return self.merit.shape + self.wrt.shape
     
-    def __call__(self, arg_dict, pack_into=None):
+    def __call__(self, arg_dict, add_to=None):
         args = tuple(arg_dict[n] for n in self.merit.argument_names)
         grad = self.fun(*args)
         assert grad.shape == self.shape
         if self.merit.tiling is not None:
             grad = grad.sum(0)
-        if pack_into is not None:
-            self.wrt.pack_into(pack_into, grad)
+        if add_to is not None:
+            self.wrt.add_to(add_to, grad)
         return grad
 
 
@@ -454,22 +438,22 @@ class MeritHessian(Component):
         shape = (nnz,) if merit.tiling is None else (merit.tiling, nnz)
         super().__init__(shape, offset)
     
-    def __call__(self, arg_dict, pack_into=None):
+    def __call__(self, arg_dict, assign_to=None):
         args = tuple(arg_dict[n] for n in self.merit.argument_names)
         out = self.val(*args)
         assert out.shape == self.shape
-        if pack_into is not None:
-            self.pack_into(pack_into, out)
+        if assign_to is not None:
+            self.assign_to(assign_to, out)
         return out
 
-    def ind(self, pack_into=None):
+    def ind(self, assign_to=None):
         ind = self.template_ind
         ret = np.zeros((2,) + self.shape, dtype=int)
         ret[1] = self.wrt[0].expand_indices(ind[1])
         ret[0] = self.wrt[1].expand_indices(ind[0])
         
-        if pack_into is not None:
-            self.pack_into(pack_into[0], ret[0])
-            self.pack_into(pack_into[1], ret[1])
+        if assign_to is not None:
+            self.assign_to(assign_to[0], ret[0])
+            self.assign_to(assign_to[1], ret[1])
         
         return ret
