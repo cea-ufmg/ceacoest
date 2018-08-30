@@ -50,13 +50,13 @@ if __name__ == '__main__':
     )
     mdl = GeneratedBrysonDenham()
     
-    t = np.linspace(0, 1, 30)
+    t = np.linspace(0, 1, 20)
     problem = oc.Problem(mdl, t)
     
     dec_bounds = np.repeat([[-np.inf], [np.inf]], problem.ndec, axis=-1)
     problem.set_decision('p', 0, dec_bounds[0])
-    problem.set_decision('p', np.inf, dec_bounds[1])
-    problem.set_decision('x', [-np.inf, -np.inf, 0], dec_bounds[0])
+    problem.set_decision('p', 4, dec_bounds[1])
+    problem.set_decision('x', [0, -np.inf, 0], dec_bounds[0])
     problem.set_decision('x', [1/9, np.inf, np.inf], dec_bounds[1])
     constr_bounds = np.zeros((2, problem.ncons))
     
