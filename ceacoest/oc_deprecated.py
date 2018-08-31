@@ -56,8 +56,7 @@ class Problem:
         self.constr_bounds = constr_bounds
         """NLP constraint bounds."""
         
-        tr = self.unravel_pieces(self.tc)
-        self.dt = tr[:, 1:] - tr[:, :-1]
+        self.dt = np.tile(np.diff(t)[:, None], self.collocation.ninterv)
         """Normalized length of each collocation interval."""
     
     def set_g_bounds(self, *args):
