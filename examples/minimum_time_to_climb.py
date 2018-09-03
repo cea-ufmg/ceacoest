@@ -4,7 +4,7 @@
 import numpy as np
 import sympy
 from sympy import sin, cos
-from scipy import interpolate, constants
+from scipy import  constants, integrate, interpolate
 
 import sym2num.model
 import sym2num.var
@@ -58,12 +58,42 @@ class MinimumTimeToClimb:
     @sym2num.model.symbols_from('xe, p')
     def h(self, s):
         """Endpoint constraints."""
-        return sympy.Array([], 0)
+        return sympy.Array([s.h_start, 
+                            s.v_start - 424.26, 
+                            s.gamma_start, 
+                            s.w_start - 42e3,
+                            s.h_end - 65600,
+                            s.v_end - 968.148, 
+                            s.gamma_end])
     
     @sym2num.model.symbols_from('xe, p')
     def M(self, s):
         """Mayer (endpoint) cost."""
         return sympy.Array(s.tf)
+
+
+def guess(problem):
+    def u(x):
+        return 6*constants.degree - x[[2]]
+    
+    def xdot(t, x):
+        return problem.model.f(x, u(x), [1])
+    
+    tf = 600
+    x0 = [0, 424.26, 0, 42e3]
+    tspan = [0, tf]
+    sol = integrate.solve_ivp(xdot, tspan, x0, max_step=1)
+    
+    x = interpolate.interp1d(sol.t / tf, sol.y)(problem.tc).T
+    u = interpolate.interp1d(sol.t / tf, u(sol.y))(problem.tc).T
+    p = np.array([tf])
+    
+    dec0 = np.zeros(problem.ndec)
+    problem.set_decision('p', p, dec0)
+    problem.set_decision('u', u, dec0)
+    problem.set_decision('x', x, dec0)
+
+    return dec0
 
 
 if __name__ == '__main__':
@@ -157,17 +187,11 @@ if __name__ == '__main__':
     nlp = yaipopt.Problem(dec_bounds, obj, grad, constr_bounds, constr,
                           jac_val, jac_ind, hess_val, hess_ind)
     nlp.str_option('linear_solver', 'ma57')
-    nlp.num_option('tol', 1e-6)
-    nlp.int_option('max_iter', 500)
-
+    nlp.num_option('tol', 1e-5)
+    #nlp.int_option('max_iter', 1000)
+    
     ntc = problem.tc.size
-    dec0 = np.zeros(problem.ndec)
-    problem.set_decision('p', 1000, dec0)
-    x0 = np.c_[np.linspace(0, 65600, ntc), 
-               np.linspace(424.26, 968.148, ntc), 
-               np.repeat(5*d2r, ntc),
-               np.linspace(42e3, 30e3, ntc)]
-    problem.set_decision('x', x0, dec0)
+    dec0 = guess(problem)
     decopt, info = nlp.solve(dec0)
     opt = problem.variables(decopt)
     xopt = opt['x'] 
