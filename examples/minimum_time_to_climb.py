@@ -12,6 +12,10 @@ import sym2num.spline
 from ceacoest import oc, symb_oc
 
 
+hS = 5e5
+vS = 1e3
+
+
 @symb_oc.collocate(order=3)
 class MinimumTimeToClimb:
     """Symbolic minimum time to climb optimal control model."""
@@ -38,15 +42,17 @@ class MinimumTimeToClimb:
     def f(self, s):
         """ODE function."""
         m = s.w / s.g0
-        M = s.v / s.speed_of_sound(s.h)
+        v = s.v * vS
+        h = s.h * hS
+        M = v / s.speed_of_sound(s.h)
         T = s.T(s.h, M)
-        qbar = 0.5 * s.rho(s.h) * s.v**2
+        qbar = 0.5 * s.rho(s.h) * v**2
         L = qbar * s.S * s.CLa(M) * s.alpha
         D = qbar * s.S * (s.CD0(M) + s.eta(M)*s.CLa(M)*s.alpha**2)
-        g = s.mu / (s.Re + s.h) ** 2
-        f = [s.v * sin(s.gamma),
-             (T * cos(s.alpha) - D)/m - g * sin(s.gamma),
-             (T*sin(s.alpha) + L)/m/s.v + cos(s.gamma)*(s.v/(s.Re+s.h) - g/s.v),
+        g = s.mu / (s.Re + h) ** 2
+        f = [v * sin(s.gamma) / hS,
+             ((T * cos(s.alpha) - D)/m - g * sin(s.gamma)) / vS,
+             (T*sin(s.alpha) + L)/m/v + cos(s.gamma)*(v/(s.Re+h) - g/v),
              -T / s.Isp]
         return sympy.Array(f) * s.tf
     
@@ -59,11 +65,11 @@ class MinimumTimeToClimb:
     def h(self, s):
         """Endpoint constraints."""
         return sympy.Array([s.h_start, 
-                            s.v_start - 424.26, 
+                            s.v_start - 424.26 / vS, 
                             s.gamma_start, 
-                            s.w_start - 42e3,
-                            s.h_end - 65600,
-                            s.v_end - 968.148, 
+                            (s.w_start - 42e3) / 40e3,
+                            s.h_end - 65600 / hS,
+                            s.v_end - 968.148 / vS, 
                             s.gamma_end])
     
     @sym2num.model.symbols_from('xe, p')
@@ -74,13 +80,13 @@ class MinimumTimeToClimb:
 
 def guess(problem):
     def u(x):
-        return 6*constants.degree - x[[2]]
+        return 4*constants.degree - x[[2]]
     
     def xdot(t, x):
         return problem.model.f(x, u(x), [1])
     
-    tf = 600
-    x0 = [0, 424.26, 0, 42e3]
+    tf = 400
+    x0 = [0, 424.26 / vS, 0, 42e3]
     tspan = [0, tf]
     sol = integrate.solve_ivp(xdot, tspan, x0, max_step=1)
     
@@ -97,7 +103,7 @@ def guess(problem):
 
 
 if __name__ == '__main__':
-    T_h = np.r_[0:31e3:5e3, 40e3, 50e3, 70e3]
+    T_h = np.r_[0:31e3:5e3, 40e3, 50e3, 70e3] / hS
     T_M = np.r_[0:1.9:0.2]
     T = np.array([[24.2, 22.2, 19.8, 17.8, 14.8, 12.3, 10.3, 6.3, 3.3, 0.3],
                   [28, 24.6, 21.1, 18.1, 15.2, 12.8, 10.7, 6.7, 3.7, 0.5],
@@ -119,7 +125,7 @@ if __name__ == '__main__':
     CD0_pchip = interpolate.PchipInterpolator(aero_M, CD0)
     eta_pchip = interpolate.PchipInterpolator(aero_M, eta)
 
-    temp_h = np.array([0, 11e3, 20e3, 32e3]) / constants.foot
+    temp_h = np.array([0, 11e3, 20e3, 32e3]) / constants.foot / hS
     temp = np.array([288.15, 216.65, 216.65, 226.650])
     a = np.sqrt(287.058 *  1.4 * temp) / constants.foot
     a_spline = interpolate.InterpolatedUnivariateSpline(temp_h, a, k=1)
@@ -138,7 +144,7 @@ if __name__ == '__main__':
                        55000.0, 0.000284571,
                        60000.0, 0.000223781,
                        65000.0, 0.000175976,
-                       70000.0, 0.000137625].reshape((-1,2)).T
+                       70000.0, 0.000137625].reshape((-1,2)).T / [[hS],[1]]
     rho_spline = interpolate.UnivariateSpline(rho_h, rho)
     
     symb_mdl = MinimumTimeToClimb()
@@ -155,19 +161,14 @@ if __name__ == '__main__':
     mdl.consts = np.array([530, 1600, 20902900, 0.14076539e17, 32.174])
     #   consts:           ['S', 'Isp', 'Re',    'mu',          'g0']
     
-    t = np.linspace(0, 1, 500)
+    t = np.linspace(0, 1, 250)
     problem = oc.Problem(mdl, t)
     
-    d2r = np.pi / 180
+    d2r = constants.degree
     dec_bounds = np.repeat([[-np.inf], [np.inf]], problem.ndec, axis=-1)
-    problem.set_decision('p', 0,    dec_bounds[0])
-    #problem.set_decision('p', 1000, dec_bounds[1])
-    problem.set_decision('x', [0,    1,  -89*d2r, 0],    dec_bounds[0])
-    problem.set_decision('x', [69e3, 2e3, 89*d2r, 45e3], dec_bounds[1])
-    problem.unpack_decision(dec_bounds[0])['x'][0] = [0, 424.26, 0, 42e3]
-    problem.unpack_decision(dec_bounds[1])['x'][0] = [0, 424.26, 0, 42e3]
-    problem.unpack_decision(dec_bounds[0])['x'][-1, :3] = [65600, 968.148, 0]
-    problem.unpack_decision(dec_bounds[1])['x'][-1, :3] = [65600, 968.148, 0]
+    problem.set_decision('p', 0, dec_bounds[0])
+    problem.set_decision('x', [0, 1/vS, -89*d2r, 0],    dec_bounds[0])
+    problem.set_decision('x', [69e3/hS, 2e3/vS, 89*d2r, 45e3], dec_bounds[1])
     problem.set_decision('u', -20*d2r, dec_bounds[0])
     problem.set_decision('u',  20*d2r, dec_bounds[1])
     constr_bounds = np.zeros((2, problem.ncons))
@@ -187,7 +188,7 @@ if __name__ == '__main__':
     nlp = yaipopt.Problem(dec_bounds, obj, grad, constr_bounds, constr,
                           jac_val, jac_ind, hess_val, hess_ind)
     nlp.str_option('linear_solver', 'ma57')
-    nlp.num_option('tol', 1e-5)
+    nlp.num_option('tol', 1e-6)
     #nlp.int_option('max_iter', 1000)
     
     ntc = problem.tc.size
