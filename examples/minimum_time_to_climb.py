@@ -1,12 +1,15 @@
 """Minimum time to climb optimal control problem."""
 
 
+import functools
+
 import numpy as np
 import sympy
 from sympy import sin, cos
 from scipy import  constants, integrate, interpolate
 
 import sym2num.model
+import sym2num.utils
 import sym2num.var
 import sym2num.spline
 from ceacoest import oc, symb_oc
@@ -20,8 +23,9 @@ vS = 1e3
 class MinimumTimeToClimb:
     """Symbolic minimum time to climb optimal control model."""
     
-    @sym2num.model.make_variables_dict
-    def variables():
+    @sym2num.utils.classproperty
+    @functools.lru_cache()
+    def variables(cls):
         """Model variables definition."""
         obj  = sym2num.var.SymbolObject(
             'self', 
@@ -33,13 +37,14 @@ class MinimumTimeToClimb:
             sym2num.spline.UnivariateSpline('rho'),
             sym2num.var.SymbolArray('consts', ['S', 'Isp', 'Re', 'mu', 'g0'])
         )
-        return [obj,
+        vars = [obj,
                 sym2num.var.SymbolArray('x', ['h', 'v', 'gamma', 'w']),
                 sym2num.var.SymbolArray('u', ['alpha']),
                 sym2num.var.SymbolArray('p', ['tf'])]
+        return sym2num.var.make_dict(vars)
     
-    @sym2num.model.symbols_from('x, u, p')
-    def f(self, s):
+    @sym2num.model.collect_symbols
+    def f(self, x, u, p, *, s):
         """ODE function."""
         m = s.w / s.g0
         v = s.v * vS
@@ -56,13 +61,13 @@ class MinimumTimeToClimb:
              -T / s.Isp]
         return sympy.Array(f) * s.tf
     
-    @sym2num.model.symbols_from('x, u, p')
-    def g(self, s):
+    @sym2num.model.collect_symbols
+    def g(self, x, u, p, *, s):
         """Path constraints."""
         return sympy.Array([], 0)
     
-    @sym2num.model.symbols_from('xe, p')
-    def h(self, s):
+    @sym2num.model.collect_symbols
+    def h(self, xe, p, *, s):
         """Endpoint constraints."""
         return sympy.Array([s.h_start, 
                             s.v_start - 424.26 / vS, 
@@ -72,8 +77,8 @@ class MinimumTimeToClimb:
                             s.v_end - 968.148 / vS, 
                             s.gamma_end])
     
-    @sym2num.model.symbols_from('xe, p')
-    def M(self, s):
+    @sym2num.model.collect_symbols
+    def M(self, xe, p, *, s):
         """Mayer (endpoint) cost."""
         return sympy.Array(s.tf)
 
@@ -148,9 +153,7 @@ if __name__ == '__main__':
     rho_spline = interpolate.UnivariateSpline(rho_h, rho)
     
     symb_mdl = MinimumTimeToClimb()
-    GeneratedMinimumTimeToClimb = sym2num.model.compile_class(
-        'GeneratedMinimumTimeToClimb', symb_mdl
-    )
+    GeneratedMinimumTimeToClimb = sym2num.model.compile_class(symb_mdl)
     mdl = GeneratedMinimumTimeToClimb()
     mdl.T = T_spline
     mdl.CLa = CLa_pchip

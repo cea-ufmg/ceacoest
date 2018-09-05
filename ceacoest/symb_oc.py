@@ -108,7 +108,7 @@ class CollocatedModel(sym2num.model.Base):
         # Endpoint states
         xe = [[f'{n}_start' for n in x], [f'{n}_end' for n in x]]
         
-        additional_variables = sym2num.model.make_variables_dict(
+        additional_variables = sym2num.var.make_dict(
             [sym2num.var.SymbolArray('piece_len'),
              sym2num.var.SymbolArray('xp', xp),
              sym2num.var.SymbolArray('up', up),
