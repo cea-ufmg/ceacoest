@@ -47,13 +47,12 @@ class BrysonDenham:
 
 
 if __name__ == '__main__':
-    import imp;[imp.reload(m) for m in [optim]]
     symb_mdl = BrysonDenham()
     GeneratedBrysonDenham = sym2num.model.compile_class(symb_mdl)
     mdl = GeneratedBrysonDenham()
     
-    t = np.linspace(0, 1, 20)
-    problem = oc.Problem(mdl, t)
+    tcoarse = np.linspace(0, 1, 20)
+    problem = oc.Problem(mdl, tcoarse)
     
     dec_bounds = np.repeat([[-np.inf], [np.inf]], problem.ndec, axis=-1)
     problem.set_decision('p', 0, dec_bounds[0])
@@ -68,5 +67,8 @@ if __name__ == '__main__':
         decopt, info = nlp.solve(dec0)
     
     opt = problem.variables(decopt)
-    tc = problem.tc * opt['p']
+    xopt = opt['x']
+    uopt = opt['u']
+    Topt = opt['p'][0]
+    topt = problem.tc * Topt
     

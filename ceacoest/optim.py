@@ -219,7 +219,7 @@ class Problem:
         
         chess_val = out[:self.nnzchess]
         mhess_val = out[self.nnzchess:]
-        self.constraint_hessian_val(dvec, contr_mult, out=chess_val)
+        self.constraint_hessian_val(dvec, constr_mult, out=chess_val)
         self.merit_hessian_val(dvec, out=mhess_val)
         mhess_val *= merit_mult
         return out
@@ -230,8 +230,10 @@ class Problem:
         f = self.merit
         g = self.constraint
         grad = self.merit_gradient
-        jac = self.constraint_jacobian_ind, self.constraint_jacobian_val
-        hess = self.lagrangian_hessian_ind, self.lagrangian_hessian_val
+        jac_ind = lambda: self.constraint_jacobian_ind()[[1,0]]
+        hess_ind = lambda: self.lagrangian_hessian_ind()[[1,0]]
+        jac = jac_ind, self.constraint_jacobian_val
+        hess = hess_ind, self.lagrangian_hessian_val
         nele_jac = self.nnzjac
         nele_hess = self.nnzlhess
         with ez.Problem(d_bounds, constr_bounds, f, g,
