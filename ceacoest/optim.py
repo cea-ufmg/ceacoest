@@ -2,6 +2,7 @@
 
 
 import collections
+import contextlib
 import itertools
 import numbers
 
@@ -191,6 +192,52 @@ class Problem:
             hess.ind(assign_to=out)
         return out
 
+    @property
+    def nnzlhess(self):
+        return self.nnzchess + self.nnzmhess
+
+    def lagrangian_hessian_ind(self, out=None):
+        nnzlhess = self.nnzchess + self.nnzmhess
+        if out is None:
+            out = np.zeros((2, nnzlhess), dtype=int)
+        else:
+            assert isinstance(out, np.ndarray) 
+            assert out.dtype == int and out.shape = (2, nnzlhess)
+        chess_ind = out[:, :self.nnzchess]
+        mhess_ind = out[:, self.nnzchess:]
+        self.contraint_hessian_ind(chess_ind)
+        self.merit_hessian_ind(mhess_ind)
+        return out
+    
+    def lagrangian_hessian_val(self, dvec, merit_mult, constr_mult, out=None):
+        nnzlhess = self.nnzchess + self.nnzmhess
+        if out is None:
+            out = np.zeros(nnzlhess, dtype=int)
+        else:
+            assert isinstance(out, np.ndarray) 
+            assert out.dtype == np.double and out.shape = (nnzlhess,)
+        
+        chess_val = out[:self.nnzchess]
+        mhess_val = out[self.nnzchess:]
+        self.contraint_hessian_val(dvec, contr_mult, out=chess_val)
+        self.merit_hessian_val(dvec, out=mhess_val)
+        mhess_val *= merit_mult
+        return out
+    
+    @contextlib.contextmanager
+    def ipopt(self, d_bounds, constr_bounds):
+        from mseipopt import ez
+        f = self.merit
+        g = self.constraint
+        grad = self.merit_gradient
+        jac = self.constraint_jacobian_ind, self.constraint_jacobian_val
+        hess = self.lagrangian_hessian_ind, self.lagrangian_hessian_val
+        nele_jac = self.nnzjac
+        nele_hess = self.nnzlhess
+        with ez.Problem(d_bounds, constr_bounds, f, g,
+                        grad, jac, nele_jac, hess, nele_hess) as problem:
+            yield problem
+
 
 class Component:
     """Specificiation of a problem's decision or constraint vector component."""
@@ -367,7 +414,7 @@ class ConstraintHessian(CallableComponent):
         if assign_to is not None:
             self.assign_to(assign_to, out)
         return out
-        
+
 
 class Merit:
     def __init__(self, fun, argument_names, tiling=None):
