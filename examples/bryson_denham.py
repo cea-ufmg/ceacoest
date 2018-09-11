@@ -9,7 +9,7 @@ import sym2num.model
 import sym2num.utils
 import sym2num.var
 
-from ceacoest import oc, symb_oc
+from ceacoest import oc, optim, symb_oc
 
 
 @symb_oc.collocate(order=3)
@@ -47,6 +47,7 @@ class BrysonDenham:
 
 
 if __name__ == '__main__':
+    import imp;[imp.reload(m) for m in [optim]]
     symb_mdl = BrysonDenham()
     GeneratedBrysonDenham = sym2num.model.compile_class(symb_mdl)
     mdl = GeneratedBrysonDenham()
@@ -61,23 +62,11 @@ if __name__ == '__main__':
     problem.set_decision('x', [1/9, np.inf, np.inf], dec_bounds[1])
     constr_bounds = np.zeros((2, problem.ncons))
     
-    obj = lambda dec, new: problem.merit(dec)
-    grad = lambda dec, new: problem.merit_gradient(dec)
-    constr = lambda dec, new: problem.constraint(dec)
-    jac_ind = problem.constraint_jacobian_ind()[[1,0]]
-    jac_val = lambda dec, new: problem.constraint_jacobian_val(dec)
-    hess_ind = np.c_[problem.merit_hessian_ind(),
-                     problem.constraint_hessian_ind()][[1,0]]
-    def hess_val(dec, newd, obj_factor, mult, newm):
-        return np.r_[problem.merit_hessian_val(dec) * obj_factor,
-                     problem.constraint_hessian_val(dec, mult)]
+    with problem.ipopt(dec_bounds, constr_bounds) as nlp:
+        dec0 = np.zeros(problem.ndec)
+        problem.set_decision('p', 1, dec0)
+        decopt, info = nlp.solve(dec0)
     
-    import yaipopt
-    nlp = yaipopt.Problem(dec_bounds, obj, grad, constr_bounds, constr,
-                          jac_val, jac_ind, hess_val, hess_ind)
-    dec0 = np.zeros(problem.ndec)
-    problem.set_decision('p', 1, dec0)
-    decopt, info = nlp.solve(dec0)
     opt = problem.variables(decopt)
     tc = problem.tc * opt['p']
     

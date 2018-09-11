@@ -123,7 +123,7 @@ class Problem:
     
     def merit_hessian_ind(self, out=None):
         if out is None:
-            out = np.zeros((2, self.nnzmhess), dtype=int)
+            out = np.zeros((2, self.nnzmhess), dtype=np.intc)
         for hess in self.merit_hessian:
             hess.ind(assign_to=out)
         return out
@@ -165,7 +165,7 @@ class Problem:
     
     def constraint_jacobian_ind(self, out=None):
         if out is None:
-            out = np.zeros((2, self.nnzjac), dtype=int)
+            out = np.zeros((2, self.nnzjac), dtype=np.intc)
         for jac in self.jacobian:
             jac.ind(assign_to=out)
         return out
@@ -187,7 +187,7 @@ class Problem:
     
     def constraint_hessian_ind(self, out=None):
         if out is None:
-            out = np.zeros((2, self.nnzchess), dtype=int)
+            out = np.zeros((2, self.nnzchess), dtype=np.intc)
         for hess in self.constraint_hessian:
             hess.ind(assign_to=out)
         return out
@@ -199,27 +199,27 @@ class Problem:
     def lagrangian_hessian_ind(self, out=None):
         nnzlhess = self.nnzchess + self.nnzmhess
         if out is None:
-            out = np.zeros((2, nnzlhess), dtype=int)
+            out = np.zeros((2, nnzlhess), dtype=np.intc)
         else:
-            assert isinstance(out, np.ndarray) 
-            assert out.dtype == int and out.shape = (2, nnzlhess)
+            assert isinstance(out, np.ndarray)
+            assert out.shape == (2, nnzlhess)
         chess_ind = out[:, :self.nnzchess]
         mhess_ind = out[:, self.nnzchess:]
-        self.contraint_hessian_ind(chess_ind)
+        self.constraint_hessian_ind(chess_ind)
         self.merit_hessian_ind(mhess_ind)
         return out
     
     def lagrangian_hessian_val(self, dvec, merit_mult, constr_mult, out=None):
         nnzlhess = self.nnzchess + self.nnzmhess
         if out is None:
-            out = np.zeros(nnzlhess, dtype=int)
+            out = np.zeros(nnzlhess, dtype=double)
         else:
-            assert isinstance(out, np.ndarray) 
-            assert out.dtype == np.double and out.shape = (nnzlhess,)
+            assert isinstance(out, np.ndarray)
+            assert out.dtype == np.double and out.shape == (nnzlhess,)
         
         chess_val = out[:self.nnzchess]
         mhess_val = out[self.nnzchess:]
-        self.contraint_hessian_val(dvec, contr_mult, out=chess_val)
+        self.constraint_hessian_val(dvec, contr_mult, out=chess_val)
         self.merit_hessian_val(dvec, out=mhess_val)
         mhess_val *= merit_mult
         return out
@@ -246,16 +246,13 @@ class Component:
         self.shape = (shape,) if isinstance(shape, numbers.Integral) else shape
         """The component's ndarray shape."""
         
-        if shape == 4 and self.shape == (0,):
-            import ipdb; ipdb.set_trace()
-
         self.offset = offset
         """Offset into the parent vector."""
     
     @property
     def size(self):
         """Total number of elements."""
-        return np.prod(self.shape, dtype=int)
+        return np.prod(self.shape, dtype=np.intc)
     
     @property
     def slice(self):
@@ -296,9 +293,9 @@ class IndexedComponent(Component):
     
     def expand_indices(self, ind):
         if self.tiling is None:
-            return np.asarray(ind, dtype=int) + self.offset
+            return np.asarray(ind, dtype=np.intc) + self.offset
         else:
-            increment = np.prod(self.shape[1:], dtype=int)
+            increment = np.prod(self.shape[1:], dtype=np.intc)
             return np.arange(self.tiling)[:, None]*increment + ind + self.offset
 
 
@@ -349,7 +346,7 @@ class Constraint(CallableComponent, IndexedComponent):
 class ConstraintJacobian(CallableComponent):
     def __init__(self, val, ind, offset, wrt, constraint):
         assert np.ndim(ind) == 2 and np.size(ind, 0) == 2
-        self.template_ind = np.asarray(ind, dtype=int)
+        self.template_ind = np.asarray(ind, dtype=np.intc)
         """Nonzero Jacobian element indices template."""
         
         self.constraint = constraint
@@ -365,7 +362,7 @@ class ConstraintJacobian(CallableComponent):
     
     def ind(self, assign_to=None):
         ind = self.template_ind
-        ret = np.zeros((2,) + self.shape, dtype=int)
+        ret = np.zeros((2,) + self.shape, dtype=np.intc)
         ret[1] = self.constraint.expand_indices(ind[1])
         ret[0] = self.wrt.expand_indices(ind[0])
         
@@ -379,7 +376,7 @@ class ConstraintJacobian(CallableComponent):
 class ConstraintHessian(CallableComponent):
     def __init__(self, val, ind, offset, wrt, constraint):
         assert np.ndim(ind) == 2 and np.size(ind, 0) == 3
-        self.template_ind = np.asarray(ind, dtype=int)
+        self.template_ind = np.asarray(ind, dtype=np.intc)
         """Nonzero Hessian element indices template."""
         
         self.constraint = constraint
@@ -396,7 +393,7 @@ class ConstraintHessian(CallableComponent):
     
     def ind(self, assign_to=None):
         ind = self.template_ind
-        ret = np.zeros((2,) + self.shape, dtype=int)
+        ret = np.zeros((2,) + self.shape, dtype=np.intc)
         ret[1] = self.wrt[0].expand_indices(ind[1])
         ret[0] = self.wrt[1].expand_indices(ind[0])
         
@@ -471,7 +468,7 @@ class MeritHessian(Component):
         """Hessian nonzero elements function."""
         
         assert np.ndim(ind) == 2 and np.size(ind, 0) == 2
-        self.template_ind = np.asarray(ind, dtype=int)
+        self.template_ind = np.asarray(ind, dtype=np.intc)
         """Nonzero Hessian element indices template."""
         
         assert len(wrt) == 2
@@ -495,7 +492,7 @@ class MeritHessian(Component):
 
     def ind(self, assign_to=None):
         ind = self.template_ind
-        ret = np.zeros((2,) + self.shape, dtype=int)
+        ret = np.zeros((2,) + self.shape, dtype=np.intc)
         ret[1] = self.wrt[0].expand_indices(ind[1])
         ret[0] = self.wrt[1].expand_indices(ind[0])
         
