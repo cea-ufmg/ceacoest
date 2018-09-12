@@ -47,7 +47,11 @@ class Problem(optim.Problem):
         self._register_model_constraint_derivatives('e', ('xp', 'up', 'p'))
         
         self.register_merit('M', model.M, ('xe', 'p'))
+        self.register_merit(
+            'IL', model.IL, ('xp', 'up', 'p', 'piece_len'), npieces
+        )
         self._register_model_merit_derivatives('M', ('xe', 'p'))
+        self._register_model_merit_derivatives('IL', ('xp', 'up', 'p'))
     
     def _register_model_merit_gradient(self, merit_name, wrt_name):
         grad = getattr(self.model, f'd{merit_name}_d{wrt_name}')
@@ -100,23 +104,30 @@ class PieceRavelledVariable:
     def nvar(self):
         return self.var.shape[1]
     
+    @property
+    def shape(self):
+        return (self.p.npieces, self.p.collocation.n, self.nvar)
+
+    @property
+    def tiling(self):
+        return self.p.npieces
+    
     def build(self, variables):
         v = variables[self.var_name]
         assert v.shape == self.var.shape
-        vp = np.zeros((self.p.npieces, self.p.collocation.n, self.nvar))
+        vp = np.zeros(self.shape)
         vp[:, :-1].flat = v[:-1, :].flat
         vp[:-1, -1] = vp[1:, 0]
         vp[-1, -1] = v[-1]
         return vp
     
-    def assign_to(self, destination, value):
+    def add_to(self, destination, value):
         vp = np.asarray(value)
-        assert vp.shape == (self.p.npieces, self.p.collocation.n, self.nvar)
+        assert vp.shape == self.shape
         v = np.zeros(self.var.shape)
-        v[:-1, :].flat = vp[:, :-1].flat
-        v[-1] = vp[-1, -1]
-        v[self.p.collocation.n::self.p.collocation.n] += vp[:, -1]
-        self.var.pack_into(destination, v)
+        v[:-1].flat = vp[:, :-1].flatten()
+        v[self.p.collocation.n-1::self.p.collocation.n-1] += vp[:, -1]
+        self.var.add_to(destination, v)
     
     def expand_indices(self, ind):
         npieces = self.p.npieces

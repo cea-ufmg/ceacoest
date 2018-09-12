@@ -44,13 +44,23 @@ class CollocatedModel(sym2num.model.Base):
                         ('dM_dp', 'M', 'p'),
                         ('d2M_dxe2', 'M',  ('xe_flat', 'xe_flat')), 
                         ('d2M_dxe_dp', 'M', ('xe_flat', 'p')),
-                        ('d2M_dp2', 'dM_dp',  'p')]
+                        ('d2M_dp2', 'dM_dp',  'p'),
+                        ('dIL_dxp', 'IL', 'xp'),
+                        ('dIL_dup', 'IL', 'up'),
+                        ('dIL_dp', 'IL', 'p'),
+                        ('d2IL_dxp2', 'IL', ('xp_flat', 'xp_flat')),
+                        ('d2IL_dup2', 'IL', ('up_flat', 'up_flat')),
+                        ('d2IL_dp2', 'dIL_dp', 'p'),
+                        ('d2IL_dxp_dup', 'IL', ('xp_flat', 'up_flat')),
+                        ('d2IL_dxp_dp', 'IL', ('xp_flat', 'p')),
+                        ('d2IL_dup_dp', 'IL', ('up_flat', 'p'))]
         return getattr(super(), 'derivatives', []) + derivatives
     
     @property
     def generate_functions(self):
         """List of the model functions to generate."""
-        gen = ['e', 'f', 'g', 'h', 'M', 'dM_dp', 'dM_dxe']
+        gen = ['e', 'f', 'g', 'h', 'M', 'dM_dp', 'dM_dxe',
+               'IL', 'dIL_dxp', 'dIL_dup', 'dIL_dp']
         return getattr(super(), 'generate_functions', []) + gen
     
     @property
@@ -69,6 +79,10 @@ class CollocatedModel(sym2num.model.Base):
                'd2M_dxe_dp',
                ('d2M_dxe2', lambda i,j: i<=j),
                ('d2M_dp2', lambda i,j: i<=j),
+               ('d2IL_dxp2', lambda i,j: i<=j),
+               ('d2IL_dup2', lambda i,j: i<=j),
+               ('d2IL_dp2', lambda i,j: i<=j),
+               'd2IL_dxp_dup', 'd2IL_dxp_dp', 'd2IL_dup_dp',
                'dh_dxe', 'dh_dp', 'd2h_dp2', 'd2h_dxe_dp', 
                ('d2h_dxe2', lambda i,j,k: i<=j),
                ('d2h_dp2', lambda i,j,k: i<=j)]
@@ -121,15 +135,22 @@ class CollocatedModel(sym2num.model.Base):
     
     def e(self, xp, up, p, piece_len):
         """Collocation defects (error)."""
-        fp = sympy.Matrix([self.f(xp[i, :], up[i, :], p)
-                           for i in range(self.collocation.n)])
+        ncol = self.collocation.n
+        fp = sympy.Matrix([self.f(xp[i, :], up[i, :], p) for i in range(ncol)])
         J = sympy.Matrix(self.collocation.J)
         dt = piece_len[()]
         
         xp = xp.tomatrix()
         defects = xp[1:, :] - xp[:-1, :] - dt * J * fp
         return sympy.Array(defects, len(defects))
-
+    
+    def IL(self, xp, up, p, piece_len):
+        ncol = self.collocation.n
+        Lp = [self.L(xp[i,:], up[i,:], p)[()] for i in range(ncol)]
+        K = self.collocation.K
+        dt = piece_len[()]
+        IL = sum(Lp[i] * K[i] * dt for i in range(ncol))
+        return sympy.Array(IL)
 
 def collocate(order=2):
     def decorator(BaseModel):

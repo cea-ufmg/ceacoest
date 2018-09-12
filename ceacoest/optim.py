@@ -451,14 +451,14 @@ class MeritGradient:
     
     @property
     def shape(self):
-        return self.merit.shape + self.wrt.shape
+        return self.wrt.shape
     
     def __call__(self, arg_dict, add_to=None):
         args = tuple(arg_dict[n] for n in self.merit.argument_names)
         grad = self.fun(*args)
-        assert grad.shape == self.shape
-        if self.merit.tiling is not None:
+        if self.merit.tiling and not self.wrt.tiling:
             grad = grad.sum(0)
+        assert grad.shape == self.shape
         if add_to is not None:
             self.wrt.add_to(add_to, grad)
         return grad

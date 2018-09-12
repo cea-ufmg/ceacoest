@@ -81,6 +81,11 @@ class MinimumTimeToClimb:
     def M(self, xe, p, *, s):
         """Mayer (endpoint) cost."""
         return sympy.Array(s.tf)
+    
+    @sym2num.model.collect_symbols
+    def L(self, x, u, p, *, s):
+        """Lagrange (running) cost."""
+        return sympy.Array(0)
 
 
 def guess(problem):
@@ -186,4 +191,5 @@ if __name__ == '__main__':
     opt = problem.variables(decopt)
     xopt = opt['x'] 
     uopt = opt['u']
-    tc = problem.tc * opt['p']
+    Topt = opt['p']
+    topt = problem.tc * Topt

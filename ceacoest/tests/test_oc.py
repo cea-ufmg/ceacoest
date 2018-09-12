@@ -1,6 +1,8 @@
 """Optimal control test module."""
 
 
+import functools
+
 import numpy as np
 import pytest
 import sympy
@@ -20,17 +22,19 @@ from ceacoest.testsupport.array_cmp import ArrayDiff
 class SymbolicModel:
     """Symbolic optimal control test model."""
         
-    @sym2num.model.make_variables_dict
-    def variables():
+    @property
+    @functools.lru_cache()
+    def variables(self):
         """Model variables definition."""
-        return [
+        var_list = [
             sym2num.var.SymbolArray('x', ['x1', 'x2', 'x3']),
             sym2num.var.SymbolArray('u', ['u1', 'u2']),
             sym2num.var.SymbolArray('p', ['p1', 'p2']),
         ]
+        return sym2num.var.make_dict(var_list)
     
-    @sym2num.model.symbols_from('x, u, p')
-    def f(self, s):
+    @sym2num.model.collect_symbols
+    def f(self, x, u, p, *, s):
         """ODE function."""
         return sympy.Array(
             [s.x1 * sympy.cos(s.x2), 
@@ -38,34 +42,41 @@ class SymbolicModel:
              s.u1**2 * s.x1**3 * sympy.exp(s.p1)]
         )
     
-    @sym2num.model.symbols_from('x, u, p')
-    def g(self, s):
+    @sym2num.model.collect_symbols
+    def g(self, x, u, p, *, s):
         """Path constraints."""
         return sympy.Array(
             [(s.u1 ** 2 + 2) **  (s.x1** 2 + 1) * s.p1,
              s.p1 ** 3 * s.p2 * s.u1 ** 2 * s.p2])
     
-    @sym2num.model.symbols_from('xe, p')
-    def h(self, s):
+    @sym2num.model.collect_symbols
+    def h(self, xe, p, *, s):
         """Endpoint constraints."""
         return sympy.Array(
             [s.x1_start * s.p1 ** 3, 
              s.x1_start * s.x2_end ** 3 * s.p1])
     
-    @sym2num.model.symbols_from('xe, p')
-    def M(self, s):
+    @sym2num.model.collect_symbols
+    def M(self, xe, p, *, s):
         """Mayer (endpoint) cost."""
         return sympy.Array(
             s.x3_end ** 3 * s.p2 ** 3 + s.p1 * s.x1_start 
             + s.x1_end * s.x2_start ** 2
         )
 
+    @sym2num.model.collect_symbols
+    def L(self, x, u, p, *, s):
+        """Lagrange (running) cost."""
+        L = (s.x1 ** 2 + s.p2**4 + s.p1 * s.u2 * (s.x1 + 2)
+             + (s.p2 + s.u1 + s.u2 + s.x1) ** 2)
+        return sympy.Array(L)
+
 
 @pytest.fixture(scope='module')
 def model():
     """Optimal control collocation model."""
     symb_mdl = SymbolicModel()
-    GeneratedModel = sym2num.model.compile_class('GeneratedModel', symb_mdl)
+    GeneratedModel = sym2num.model.compile_class(symb_mdl)
     return GeneratedModel()
 
 
