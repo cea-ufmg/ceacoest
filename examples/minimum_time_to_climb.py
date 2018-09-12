@@ -175,28 +175,14 @@ if __name__ == '__main__':
     problem.set_decision('u', -20*d2r, dec_bounds[0])
     problem.set_decision('u',  20*d2r, dec_bounds[1])
     constr_bounds = np.zeros((2, problem.ncons))
-    
-    obj = lambda dec, new: problem.merit(dec)
-    grad = lambda dec, new: problem.merit_gradient(dec)
-    constr = lambda dec, new: problem.constraint(dec)
-    jac_ind = problem.constraint_jacobian_ind()[[1,0]]
-    jac_val = lambda dec, new: problem.constraint_jacobian_val(dec)
-    hess_ind = np.c_[problem.merit_hessian_ind(),
-                     problem.constraint_hessian_ind()][[1,0]]
-    def hess_val(dec, newd, obj_factor, mult, newm):
-        return np.r_[problem.merit_hessian_val(dec) * obj_factor,
-                     problem.constraint_hessian_val(dec, mult)]
-    
-    import yaipopt
-    nlp = yaipopt.Problem(dec_bounds, obj, grad, constr_bounds, constr,
-                          jac_val, jac_ind, hess_val, hess_ind)
-    nlp.str_option('linear_solver', 'ma57')
-    nlp.num_option('tol', 1e-6)
-    #nlp.int_option('max_iter', 1000)
-    
-    ntc = problem.tc.size
     dec0 = guess(problem)
-    decopt, info = nlp.solve(dec0)
+    
+    with problem.ipopt(dec_bounds, constr_bounds) as nlp:
+        nlp.add_str_option('linear_solver', 'ma57')
+        nlp.add_num_option('tol', 1e-6)
+        nlp.add_int_option('max_iter', 1000)
+        decopt, info = nlp.solve(dec0)
+    
     opt = problem.variables(decopt)
     xopt = opt['x'] 
     uopt = opt['u']
