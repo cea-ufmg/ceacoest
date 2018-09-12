@@ -18,14 +18,14 @@ Topic :: Software Development'''
 
 setup(
     name="ceacoest",
-    version="0.1.dev3",
+    version="0.2.dev0",
     packages=find_packages(),
     install_requires=["attrdict", "numpy", "scipy", "sym2num"],
     tests_require=["pytest"],
     
     # metadata for upload to PyPI
-    author="Dimas Abreu Dutra",
-    author_email="dimasadutra@gmail.com",
+    author="Dimas Abreu Archanjo Dutra",
+    author_email="dimasad@ufmg.br",
     description='CEA control and estimation library.',
     classifiers=CLASSIFIERS.split('\n'),
     platforms=["Linux", "Unix"],
