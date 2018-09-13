@@ -12,6 +12,10 @@ import sym2num.var
 from ceacoest import oc, optim, symb_oc
 
 
+import imp;
+[imp.reload(m) for m in [optim, oc]]
+
+
 @symb_oc.collocate(order=3)
 class BrysonDenham:
     """Symbolic Bryson--Denham optimal control model."""
@@ -38,7 +42,7 @@ class BrysonDenham:
     @sym2num.model.collect_symbols
     def h(self, xe, p, *, s):
         """Endpoint constraints."""
-        return sympy.Array([s.x1_start, s.x1_end, s.x2_start - 1, s.x2_end + 1])
+        return sympy.Array([], 0)
     
     @sym2num.model.collect_symbols
     def L(self, x, u, p, *, s):
@@ -59,14 +63,22 @@ if __name__ == '__main__':
     tcoarse = np.linspace(0, 1, 20)
     problem = oc.Problem(mdl, tcoarse)
     
-    dec_bounds = np.repeat([[-np.inf], [np.inf]], problem.ndec, axis=-1)
-    problem.set_decision('p', 0, dec_bounds[0])
-    problem.set_decision('p', 4, dec_bounds[1])
-    problem.set_decision('x', [0, -np.inf], dec_bounds[0])
-    problem.set_decision('x', [1/9, np.inf], dec_bounds[1])
+    dec_L, dec_U = np.repeat([[-np.inf], [np.inf]], problem.ndec, axis=-1)
+    problem.set_decision_item('T', 0, dec_L)
+    problem.set_decision_item('T', 4, dec_U)
+    problem.set_decision_item('x1', 0, dec_L)
+    problem.set_decision_item('x1', 1/9, dec_U)
+    problem.set_decision_item('x1_initial', 0, dec_L)
+    problem.set_decision_item('x1_initial', 0, dec_U)
+    problem.set_decision_item('x1_final', 0, dec_L)
+    problem.set_decision_item('x1_final', 0, dec_U)
+    problem.set_decision_item('x2_initial', 1, dec_L)
+    problem.set_decision_item('x2_initial', 1, dec_U)
+    problem.set_decision_item('x2_final', -1, dec_L)
+    problem.set_decision_item('x2_final', -1, dec_U)
     constr_bounds = np.zeros((2, problem.ncons))
     
-    with problem.ipopt(dec_bounds, constr_bounds) as nlp:
+    with problem.ipopt((dec_L, dec_U), constr_bounds) as nlp:
         dec0 = np.zeros(problem.ndec)
         problem.set_decision('p', 1, dec0)
         decopt, info = nlp.solve(dec0)

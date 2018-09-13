@@ -6,12 +6,11 @@ import functools
 import numpy as np
 import sympy
 from sympy import sin, cos
-from scipy import  constants, integrate, interpolate
+from scipy import constants, integrate, interpolate
 
 import sym2num.model
 import sym2num.utils
 import sym2num.var
-import sym2num.spline
 from ceacoest import oc, symb_oc
 
 
@@ -29,12 +28,12 @@ class MinimumTimeToClimb:
         """Model variables definition."""
         obj  = sym2num.var.SymbolObject(
             'self', 
-            sym2num.spline.BivariateSpline('T'), 
-            sym2num.spline.UnivariateSpline('CLa'),
-            sym2num.spline.UnivariateSpline('CD0'),
-            sym2num.spline.UnivariateSpline('eta'),
-            sym2num.spline.UnivariateSpline('speed_of_sound'),
-            sym2num.spline.UnivariateSpline('rho'),
+            sym2num.var.BivariateCallable('T'), 
+            sym2num.var.UnivariateCallable('CLa'),
+            sym2num.var.UnivariateCallable('CD0'),
+            sym2num.var.UnivariateCallable('eta'),
+            sym2num.var.UnivariateCallable('speed_of_sound'),
+            sym2num.var.UnivariateCallable('rho'),
             sym2num.var.SymbolArray('consts', ['S', 'Isp', 'Re', 'mu', 'g0'])
         )
         vars = [obj,
@@ -69,13 +68,13 @@ class MinimumTimeToClimb:
     @sym2num.model.collect_symbols
     def h(self, xe, p, *, s):
         """Endpoint constraints."""
-        return sympy.Array([s.h_start, 
-                            s.v_start - 424.26 / vS, 
-                            s.gamma_start, 
-                            (s.w_start - 42e3) / 40e3,
-                            s.h_end - 65600 / hS,
-                            s.v_end - 968.148 / vS, 
-                            s.gamma_end])
+        return sympy.Array([s.h_initial, 
+                            s.v_initial - 424.26 / vS, 
+                            s.gamma_initial, 
+                            (s.w_initial - 42e3) / 40e3,
+                            s.h_final - 65600 / hS,
+                            s.v_final - 968.148 / vS, 
+                            s.gamma_final])
     
     @sym2num.model.collect_symbols
     def M(self, xe, p, *, s):
@@ -159,15 +158,15 @@ if __name__ == '__main__':
     
     symb_mdl = MinimumTimeToClimb()
     GeneratedMinimumTimeToClimb = sym2num.model.compile_class(symb_mdl)
-    mdl = GeneratedMinimumTimeToClimb()
-    mdl.T = T_spline
+
+    mdl = GeneratedMinimumTimeToClimb(S=530, Isp=1600, Re=20902900, 
+                                      mu=0.14076539e17, g0=32.174)
+    mdl.T = T_spline.ev
     mdl.CLa = CLa_pchip
     mdl.CD0 = CD0_pchip
     mdl.eta = eta_pchip
     mdl.rho = rho_spline
     mdl.speed_of_sound = lambda h, dx=0: 0 if dx > 1 else a_spline(h, dx)
-    mdl.consts = np.array([530, 1600, 20902900, 0.14076539e17, 32.174])
-    #   consts:           ['S', 'Isp', 'Re',    'mu',          'g0']
     
     t = np.linspace(0, 1, 250)
     problem = oc.Problem(mdl, t)
@@ -189,7 +188,7 @@ if __name__ == '__main__':
         decopt, info = nlp.solve(dec0)
     
     opt = problem.variables(decopt)
-    xopt = opt['x'] 
+    xopt = opt['x']
     uopt = opt['u']
     Topt = opt['p']
     topt = problem.tc * Topt

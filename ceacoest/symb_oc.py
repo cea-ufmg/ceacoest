@@ -1,6 +1,7 @@
 """Symbolic model building for optimal control."""
 
 
+import collections
 import functools
 
 import numpy as np
@@ -97,8 +98,16 @@ class CollocatedModel(sym2num.model.Base):
                    ng=len(self.default_function_output('g')),
                    nh=len(self.default_function_output('h')),
                    collocation_order=self.collocation.n,
+                   symbol_index_map=self.symbol_index_map,
+                   array_shape_map=self.array_shape_map,
                    **getattr(super(), 'generate_assignments', {}))
         return gen
+    
+    generate_imports = ['sym2num.model']
+    """List of imports to include in the generated class code."""
+    
+    generated_bases = ['sym2num.model.ModelArrayInitializer']
+    """Base classes of the generated model class."""
     
     @utils.cached_property
     def collocation(self):
@@ -120,9 +129,9 @@ class CollocatedModel(sym2num.model.Base):
         up = [[f'{n}_piece_{k}' for n in u] for k in range(ncol)]
 
         # Endpoint states
-        xe = [[f'{n}_start' for n in x], [f'{n}_end' for n in x]]
+        xe = [[f'{n}_initial' for n in x], [f'{n}_final' for n in x]]
         
-        additional_variables = sym2num.var.make_dict(
+        additional_vars = sym2num.var.make_dict(
             [sym2num.var.SymbolArray('piece_len'),
              sym2num.var.SymbolArray('xp', xp),
              sym2num.var.SymbolArray('up', up),
@@ -131,7 +140,7 @@ class CollocatedModel(sym2num.model.Base):
              sym2num.var.SymbolArray('up_flat', sympy.flatten(up)),
              sym2num.var.SymbolArray('xe_flat', sympy.flatten(xe))]
         )
-        return dict(**v, **additional_variables)
+        return collections.OrderedDict(collections.ChainMap(v, additional_vars))
     
     def e(self, xp, up, p, piece_len):
         """Collocation defects (error)."""

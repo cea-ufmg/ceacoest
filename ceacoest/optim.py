@@ -71,10 +71,15 @@ class Problem:
             components[name] = spec.unpack_from(dvec)
         return components
     
-    def set_decision(self, name, value, out=None):
-        out = np.zeros(self.ndec) if out is None else out
+    def set_decision(self, name, value, out):
+        assert isinstance(out, np.ndarray) and out.shape == (self.ndec,)
         self.decision[name].assign_to(out, value)
-        return out
+    
+    def _set_decision_item(self, name, value, symbol_index_map, dvec):
+        assert isinstance(dvec, np.ndarray) and dvec.shape == (self.ndec,)
+        component_name, index = symbol_index_map[name]
+        component = self.variables(dvec)[component_name]
+        component[(..., *index)] = value
     
     def variables(self, dvec):
         """Get all variables needed to evaluate problem functions."""

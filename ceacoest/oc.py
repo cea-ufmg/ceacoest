@@ -27,9 +27,12 @@ class Problem(optim.Problem):
         
         self.tc = self.collocation.grid(t)
         """Normalized collocation time grid."""
+
+        npoints = self.tc.size
+        self.npoints = npoints
+        """Total number of collocation points."""
         
         super().__init__()
-        npoints = self.tc.size #Total number of collocation points
         x = self.register_decision('x', model.nx, npoints)
         u = self.register_decision('u', model.nu, npoints)
         p = self.register_decision('p', model.np)
@@ -89,6 +92,9 @@ class Problem(optim.Problem):
     def variables(self, dvec):
         """Get all variables needed to evaluate problem functions."""
         return {'piece_len': self.piece_len, **super().variables(dvec)}
+    
+    def set_decision_item(self, name, value, dvec):
+        self._set_decision_item(name, value, self.model.symbol_index_map, dvec)
 
 
 class PieceRavelledVariable:
@@ -145,20 +151,15 @@ class XEVariable:
     
     def build(self, variables):
         x = variables['x']
-        return x[[0,-1]]
+        return x[::self.p.npoints-1]
     
     def add_to(self, destination, value):
-        nx = self.p.model.nx
-        x_offset = self.p.decision['x'].offset
-        npoints = self.p.tc.size
-        xe = np.asarray(value)
-        assert xe.shape == (2, nx)        
-        destination[x_offset:][:nx] += xe[0]
-        destination[x_offset + (npoints - 1)*nx:][:nx] += xe[1]
+        assert np.shape(value) == self.shape
+        x = self.p.decision['x'].unpack_from(destination)
+        x[::self.p.npoints-1] += value
     
     def expand_indices(self, ind):
         nx = self.p.model.nx
-        npoints = self.p.tc.size
         x_offset = self.p.decision['x'].offset
         ind = np.asarray(ind, dtype=int)
-        return ind + x_offset + (ind >= nx) * (npoints - 2) * nx
+        return ind + x_offset + (ind >= nx) * (self.p.npoints - 2) * nx
