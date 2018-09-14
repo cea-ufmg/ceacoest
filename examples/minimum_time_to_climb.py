@@ -17,6 +17,38 @@ from ceacoest import oc, symb_oc
 hS = 5e5
 vS = 1e3
 
+# Propulsion model tables
+T_h = np.r_[0, 5, 10, 15, 20, 25, 30, 40, 50, 70] * 1e3 / hS
+T_M = np.r_[0, 0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8]
+T_data = np.array(
+    [[24.2, 28.0, 28.3, 30.8, 34.5, 37.9, 36.1, 34.3, 32.5, 30.7],
+     [22.2, 24.6, 25.2, 27.2, 30.3, 34.3, 38.0, 36.6, 35.2, 33.8],
+     [19.8, 21.1, 21.9, 23.8, 26.6, 30.4, 34.9, 38.5, 37.5, 36.5],
+     [17.8, 18.1, 18.7, 20.5, 23.2, 26.8, 31.3, 36.1, 38.7, 38.0],
+     [14.8, 15.2, 15.9, 17.3, 19.8, 23.3, 27.3, 31.6, 35.7, 37.0],
+     [12.3, 12.8, 13.4, 14.7, 16.8, 19.8, 23.6, 28.1, 32.0, 34.6],
+     [10.3, 10.7, 11.2, 12.3, 14.1, 16.8, 20.1, 24.2, 28.1, 31.1],
+     [6.3, 6.7, 7.3, 8.1, 9.4, 11.2, 13.4, 16.2, 19.3, 21.7],
+     [3.3, 3.7, 4.4, 4.9, 5.6, 6.8, 8.3, 10.0, 11.9, 13.3],
+     [0.3, 0.5, 0.7, 0.9, 1.1, 1.4, 1.7, 2.2, 2.9, 3.1]]
+) * 1e3
+
+# Aerodynamic model tables
+aero_M = np.r_[0, 0.4, 0.8, 0.9, 1, 1.2, 1.4, 1.6, 1.8]
+CLa_data = np.array([3.44, 3.44, 3.44, 3.58, 4.44, 3.44, 3.01, 2.86, 2.44])
+CD0_data = np.array([13, 13, 13, 14, 31, 41, 39, 36, 35]) * 1e-3
+eta_data = np.array([54, 54, 54, 75, 79, 78, 89, 93, 93]) * 1e-2
+
+# Air density table
+rho_h = np.r_[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70] *1e3/hS
+rho_data = np.r_[0.00237717, 0.00204834, 0.00175549, 0.00149581, 0.00126659, 
+                 0.00106526, 0.00088938, 0.00073663, 0.00058519, 0.00046018, 
+                 0.00036188, 0.00028457, 0.00022378, 0.00017598, 0.00013762]
+
+# Speed of sound table
+a_h = np.r_[0,  36089,  65617, 104986] / hS
+a_data = np.r_[1116.46, 968.08, 968.08, 990.17]
+
 
 @symb_oc.collocate(order=3)
 class MinimumTimeToClimb:
@@ -112,49 +144,12 @@ def guess(problem):
 
 
 if __name__ == '__main__':
-    T_h = np.r_[0:31e3:5e3, 40e3, 50e3, 70e3] / hS
-    T_M = np.r_[0:1.9:0.2]
-    T = np.array([[24.2, 22.2, 19.8, 17.8, 14.8, 12.3, 10.3, 6.3, 3.3, 0.3],
-                  [28, 24.6, 21.1, 18.1, 15.2, 12.8, 10.7, 6.7, 3.7, 0.5],
-                  [28.3, 25.2, 21.9, 18.7, 15.9, 13.4, 11.2, 7.3, 4.4, 0.7],
-                  [30.8, 27.2, 23.8, 20.5, 17.3, 14.7, 12.3, 8.1, 4.9, 0.9],
-                  [34.5, 30.3, 26.6, 23.2, 19.8, 16.8, 14.1, 9.4, 5.6, 1.1],
-                  [37.9, 34.3, 30.4, 26.8, 23.3, 19.8, 16.8, 11.2, 6.8, 1.4],
-                  [36.1, 38.0, 34.9, 31.3, 27.3, 23.6, 20.1, 13.4, 8.3, 1.7],
-                  [34.3, 36.6, 38.5, 36.1, 31.6, 28.1, 24.2, 16.2, 10,  2.2],
-                  [32.5, 35.2, 37.5, 38.7, 35.7, 32.0, 28.1, 19.3, 11.9, 2.9],
-                  [30.7, 33.8, 36.5, 38, 37, 34.6, 31.1, 21.7, 13.3, 3.1]])*1e3
-    T_spline = interpolate.RectBivariateSpline(T_h, T_M, T.T)
-    
-    aero_M = np.r_[0:0.9:0.4, 0.9, 1:2:0.2]
-    CLa = np.array([3.44, 3.44, 3.44, 3.58, 4.44, 3.44, 3.01, 2.86, 2.44])
-    CD0 = np.array([13, 13, 13, 14, 31, 41, 39, 36, 35]) * 1e-3
-    eta = np.array([54, 54, 54, 75, 79, 78, 89, 93, 93]) * 1e-2
-    CLa_pchip = interpolate.PchipInterpolator(aero_M, CLa)
-    CD0_pchip = interpolate.PchipInterpolator(aero_M, CD0)
-    eta_pchip = interpolate.PchipInterpolator(aero_M, eta)
-
-    temp_h = np.array([0, 11e3, 20e3, 32e3]) / constants.foot / hS
-    temp = np.array([288.15, 216.65, 216.65, 226.650])
-    a = np.sqrt(287.058 *  1.4 * temp) / constants.foot
-    a_spline = interpolate.InterpolatedUnivariateSpline(temp_h, a, k=1)
-
-    rho_h, rho = np.r_[0.00000, 0.00237717,
-                       5000.00, 0.00204834,
-                       10000.0, 0.00175549,
-                       15000.0, 0.00149581,
-                       20000.0, 0.00126659,
-                       25000.0, 0.00106526,
-                       30000.0, 0.000889378,
-                       35000.0, 0.000736627,
-                       40000.0, 0.000585189,
-                       45000.0, 0.000460180,
-                       50000.0, 0.000361876,
-                       55000.0, 0.000284571,
-                       60000.0, 0.000223781,
-                       65000.0, 0.000175976,
-                       70000.0, 0.000137625].reshape((-1,2)).T / [[hS],[1]]
-    rho_spline = interpolate.UnivariateSpline(rho_h, rho)
+    T_spline = interpolate.RectBivariateSpline(T_h, T_M, T_data)
+    CLa_pchip = interpolate.PchipInterpolator(aero_M, CLa_data)
+    CD0_pchip = interpolate.PchipInterpolator(aero_M, CD0_data)
+    eta_pchip = interpolate.PchipInterpolator(aero_M, eta_data)
+    a_spline = interpolate.InterpolatedUnivariateSpline(a_h, a_data, k=1)
+    rho_spline = interpolate.UnivariateSpline(rho_h, rho_data)
     
     symb_mdl = MinimumTimeToClimb()
     GeneratedMinimumTimeToClimb = sym2num.model.compile_class(symb_mdl)
