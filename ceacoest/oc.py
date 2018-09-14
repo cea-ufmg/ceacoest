@@ -96,9 +96,13 @@ class Problem(optim.Problem):
     def set_decision_item(self, name, value, dvec):
         self._set_decision_item(name, value, self.model.symbol_index_map, dvec)
 
-    def set_defect_item(self, name, value, cvec):
+    def set_defect_scale(self, name, value, cvec):
         component_name, index = self.model.symbol_index_map[name]
-        
+        if component_name != 'x':
+            raise ValueError(f"'{name}' is not a component of the state vector")
+        e = self.constraints['e'].unpack_from(cvec)
+        e = e.reshape((self.npieces, self.collocation.ninterv, self.model.nx))
+        e[(..., *index)] = value
 
 
 class PieceRavelledVariable:

@@ -182,7 +182,7 @@ if __name__ == '__main__':
     problem.set_decision_item('gamma_final', 0, dec_U)
     
     dec_scale = np.ones(problem.ndec)
-    problem.set_decision_item('tf', 2e-2, dec_scale)
+    problem.set_decision_item('tf', 1e-2, dec_scale)
     problem.set_decision_item('h', 2e-5, dec_scale)
     problem.set_decision_item('v', 1e-3, dec_scale)
     problem.set_decision_item('w', 1e-3, dec_scale)
@@ -190,9 +190,10 @@ if __name__ == '__main__':
     problem.set_decision_item('alpha', 10, dec_scale)
     
     constr_scale = np.ones(problem.ncons)
-    e = problem.constraints['e'].unpack_from(constr_scale)
-    e = e.reshape((-1, problem.collocation.ninterv, mdl.nx))
-    e[()] = [2e-5, 1e-3, 10, 1e-3]
+    problem.set_defect_scale('h', 2e-5, constr_scale)
+    problem.set_defect_scale('v', 1e-3, constr_scale)
+    problem.set_defect_scale('gamma', 10, constr_scale)
+    problem.set_defect_scale('w', 1e-3, constr_scale)
     
     constr_bounds = np.zeros((2, problem.ncons))
     dec0 = guess(problem)
@@ -201,7 +202,7 @@ if __name__ == '__main__':
         nlp.add_str_option('linear_solver', 'ma57')
         nlp.add_num_option('tol', 1e-6)
         nlp.add_int_option('max_iter', 1000)
-        nlp.set_scaling(1, dec_scale, constr_scale)
+        nlp.set_scaling(1e-2, dec_scale, constr_scale)
         decopt, info = nlp.solve(dec0)
     
     opt = problem.variables(decopt)
