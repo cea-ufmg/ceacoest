@@ -140,7 +140,7 @@ class CollocatedModel(sym2num.model.Base):
              sym2num.var.SymbolArray('up_flat', sympy.flatten(up)),
              sym2num.var.SymbolArray('xe_flat', sympy.flatten(xe))]
         )
-        return collections.OrderedDict(collections.ChainMap(v, additional_vars))
+        return collections.OrderedDict([*v.items(), *additional_vars.items()])
     
     def e(self, xp, up, p, piece_len):
         """Collocation defects (error)."""

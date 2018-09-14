@@ -14,11 +14,8 @@ import sym2num.var
 from ceacoest import oc, symb_oc
 
 
-hS = 5e5
-vS = 1e3
-
 # Propulsion model tables
-T_h = np.r_[0, 5, 10, 15, 20, 25, 30, 40, 50, 70] * 1e3 / hS
+T_h = np.r_[0, 5, 10, 15, 20, 25, 30, 40, 50, 70] * 1e3
 T_M = np.r_[0, 0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8]
 T_data = np.array(
     [[24.2, 28.0, 28.3, 30.8, 34.5, 37.9, 36.1, 34.3, 32.5, 30.7],
@@ -40,13 +37,13 @@ CD0_data = np.array([13, 13, 13, 14, 31, 41, 39, 36, 35]) * 1e-3
 eta_data = np.array([54, 54, 54, 75, 79, 78, 89, 93, 93]) * 1e-2
 
 # Air density table
-rho_h = np.r_[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70] *1e3/hS
+rho_h = np.r_[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70] *1e3
 rho_data = np.r_[0.00237717, 0.00204834, 0.00175549, 0.00149581, 0.00126659, 
                  0.00106526, 0.00088938, 0.00073663, 0.00058519, 0.00046018, 
                  0.00036188, 0.00028457, 0.00022378, 0.00017598, 0.00013762]
 
 # Speed of sound table
-a_h = np.r_[0,  36089,  65617, 104986] / hS
+a_h = np.r_[0,  36089,  65617, 104986]
 a_data = np.r_[1116.46, 968.08, 968.08, 990.17]
 
 
@@ -78,16 +75,16 @@ class MinimumTimeToClimb:
     def f(self, x, u, p, *, s):
         """ODE function."""
         m = s.w / s.g0
-        v = s.v * vS
-        h = s.h * hS
+        v = s.v
+        h = s.h
         M = v / s.speed_of_sound(s.h)
         T = s.T(s.h, M)
         qbar = 0.5 * s.rho(s.h) * v**2
         L = qbar * s.S * s.CLa(M) * s.alpha
         D = qbar * s.S * (s.CD0(M) + s.eta(M)*s.CLa(M)*s.alpha**2)
         g = s.mu / (s.Re + h) ** 2
-        f = [v * sin(s.gamma) / hS,
-             ((T * cos(s.alpha) - D)/m - g * sin(s.gamma)) / vS,
+        f = [v * sin(s.gamma),
+             (T * cos(s.alpha) - D)/m - g * sin(s.gamma),
              (T*sin(s.alpha) + L)/m/v + cos(s.gamma)*(v/(s.Re+h) - g/v),
              -T / s.Isp]
         return sympy.Array(f) * s.tf
@@ -100,13 +97,7 @@ class MinimumTimeToClimb:
     @sym2num.model.collect_symbols
     def h(self, xe, p, *, s):
         """Endpoint constraints."""
-        return sympy.Array([s.h_initial, 
-                            s.v_initial - 424.26 / vS, 
-                            s.gamma_initial, 
-                            (s.w_initial - 42e3) / 40e3,
-                            s.h_final - 65600 / hS,
-                            s.v_final - 968.148 / vS, 
-                            s.gamma_final])
+        return sympy.Array([], 0)
     
     @sym2num.model.collect_symbols
     def M(self, xe, p, *, s):
@@ -127,7 +118,7 @@ def guess(problem):
         return problem.model.f(x, u(x), [1])
     
     tf = 400
-    x0 = [0, 424.26 / vS, 0, 42e3]
+    x0 = [0, 424.26, 0, 42e3]
     tspan = [0, tf]
     sol = integrate.solve_ivp(xdot, tspan, x0, max_step=1)
     
@@ -154,8 +145,8 @@ if __name__ == '__main__':
     symb_mdl = MinimumTimeToClimb()
     GeneratedMinimumTimeToClimb = sym2num.model.compile_class(symb_mdl)
 
-    mdl = GeneratedMinimumTimeToClimb(S=530, Isp=1600, Re=20902900, 
-                                      mu=0.14076539e17, g0=32.174)
+    mdl_consts = dict(S=530, Isp=1600, Re=20902900, mu=0.14076539e17, g0=32.174)
+    mdl = GeneratedMinimumTimeToClimb(**mdl_consts)
     mdl.T = T_spline.ev
     mdl.CLa = CLa_pchip
     mdl.CD0 = CD0_pchip
@@ -167,19 +158,50 @@ if __name__ == '__main__':
     problem = oc.Problem(mdl, t)
     
     d2r = constants.degree
-    dec_bounds = np.repeat([[-np.inf], [np.inf]], problem.ndec, axis=-1)
-    problem.set_decision('p', 0, dec_bounds[0])
-    problem.set_decision('x', [0, 1/vS, -89*d2r, 0],    dec_bounds[0])
-    problem.set_decision('x', [69e3/hS, 2e3/vS, 89*d2r, 45e3], dec_bounds[1])
-    problem.set_decision('u', -20*d2r, dec_bounds[0])
-    problem.set_decision('u',  20*d2r, dec_bounds[1])
+    dec_L, dec_U = np.repeat([[-np.inf], [np.inf]], problem.ndec, axis=-1)
+    problem.set_decision_item('tf', 0, dec_L)
+    problem.set_decision_item('h', 0, dec_L)
+    problem.set_decision_item('h', 69e3, dec_U)
+    problem.set_decision('x', [0, 1, -89*d2r, 0],    dec_L)
+    problem.set_decision('x', [69e3, 2e3, 89*d2r, 45e3], dec_U) 
+    problem.set_decision_item('alpha', -20*d2r, dec_L)
+    problem.set_decision_item('alpha', 20*d2r, dec_U)
+    problem.set_decision_item('h_initial', 0, dec_L)
+    problem.set_decision_item('h_initial', 0, dec_U)
+    problem.set_decision_item('v_initial', 424.26, dec_L)
+    problem.set_decision_item('v_initial', 424.26, dec_U)
+    problem.set_decision_item('gamma_initial', 0, dec_L)
+    problem.set_decision_item('gamma_initial', 0, dec_U)
+    problem.set_decision_item('w_initial', 42e3, dec_L)
+    problem.set_decision_item('w_initial', 42e3, dec_U)
+    problem.set_decision_item('h_final', 65600, dec_L)
+    problem.set_decision_item('h_final', 65600, dec_U)
+    problem.set_decision_item('v_final', 968.148, dec_L)
+    problem.set_decision_item('v_final', 968.148, dec_U)
+    problem.set_decision_item('gamma_final', 0, dec_L)
+    problem.set_decision_item('gamma_final', 0, dec_U)
+    
+    dec_scale = np.ones(problem.ndec)
+    problem.set_decision_item('tf', 2e-2, dec_scale)
+    problem.set_decision_item('h', 2e-5, dec_scale)
+    problem.set_decision_item('v', 1e-3, dec_scale)
+    problem.set_decision_item('w', 1e-3, dec_scale)
+    problem.set_decision_item('gamma', 10, dec_scale)
+    problem.set_decision_item('alpha', 10, dec_scale)
+    
+    constr_scale = np.ones(problem.ncons)
+    e = problem.constraints['e'].unpack_from(constr_scale)
+    e = e.reshape((-1, problem.collocation.ninterv, mdl.nx))
+    e[()] = [2e-5, 1e-3, 10, 1e-3]
+    
     constr_bounds = np.zeros((2, problem.ncons))
     dec0 = guess(problem)
-    
-    with problem.ipopt(dec_bounds, constr_bounds) as nlp:
+
+    with problem.ipopt((dec_L, dec_U), constr_bounds) as nlp:
         nlp.add_str_option('linear_solver', 'ma57')
         nlp.add_num_option('tol', 1e-6)
         nlp.add_int_option('max_iter', 1000)
+        nlp.set_scaling(1, dec_scale, constr_scale)
         decopt, info = nlp.solve(dec0)
     
     opt = problem.variables(decopt)

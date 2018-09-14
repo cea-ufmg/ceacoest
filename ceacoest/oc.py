@@ -96,6 +96,10 @@ class Problem(optim.Problem):
     def set_decision_item(self, name, value, dvec):
         self._set_decision_item(name, value, self.model.symbol_index_map, dvec)
 
+    def set_defect_item(self, name, value, cvec):
+        component_name, index = self.model.symbol_index_map[name]
+        
+
 
 class PieceRavelledVariable:
     def __init__(self, problem, var_name):
