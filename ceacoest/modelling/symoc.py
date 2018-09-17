@@ -5,27 +5,22 @@ import collections
 import functools
 
 import numpy as np
-import sym2num.model
 import sym2num.var
 import sympy
 
-from .. import utils, rk
+from . import symcol
+from .. import utils
 
 
-class CollocatedModel(sym2num.model.Base):
+class ModelSubclass(symcol.CollocatedModel):
     """Symbolic LGL-collocation optimal control model subclass."""
     
     @property
     def derivatives(self):
         """List of the model function derivatives to calculate."""
-        derivatives =  [('de_dxp', 'e', 'xp_flat'),
-                        ('d2e_dxp2', 'de_dxp', 'xp_flat'),
-                        ('de_dup', 'e', 'up_flat'),
+        derivatives =  [('de_dup', 'e', 'up_flat'),
                         ('d2e_dup2', 'de_dup', 'up_flat'),
-                        ('de_dp', 'e', 'p'),
-                        ('d2e_dp2', 'de_dp', 'p'),
                         ('d2e_dxp_dup', 'de_dxp', 'up_flat'),
-                        ('d2e_dxp_dp', 'de_dxp', 'p'),
                         ('d2e_dup_dp', 'de_dup', 'p'),
                         ('dg_dx', 'g', 'x'), 
                         ('dg_du', 'g', 'u'),
@@ -59,19 +54,16 @@ class CollocatedModel(sym2num.model.Base):
     
     @property
     def generate_functions(self):
-        """List of the model functions to generate."""
-        gen = ['e', 'f', 'g', 'h', 'M', 'dM_dp', 'dM_dxe',
-               'IL', 'dIL_dxp', 'dIL_dup', 'dIL_dp']
-        return getattr(super(), 'generate_functions', []) + gen
+        """Iterable of the model functions to generate."""
+        gen = {'g', 'h', 'M', 'dM_dp', 'dM_dxe',
+               'IL', 'dIL_dxp', 'dIL_dup', 'dIL_dp'}
+        return getattr(super(), 'generate_functions', set()) | gen
     
     @property
     def generate_sparse(self):
         """List of the model functions to generate in a sparse format."""
-        gen = ['de_dxp', 'de_dup', 'de_dp',
-               'd2e_dxp_dup', 'd2e_dxp_dp', 'd2e_dup_dp',
-               ('d2e_dxp2', lambda i,j,k: i<=j),
+        gen = ['de_dup', 'd2e_dxp_dup', 'd2e_dup_dp',
                ('d2e_dup2', lambda i,j,k: i<=j),
-               ('d2e_dp2', lambda i,j,k: i<=j),
                'dg_dx', 'dg_du', 'dg_dp',
                'd2g_dx_du', 'd2g_dx_dp', 'd2g_du_dp',
                ('d2g_dx2', lambda i,j,k: i<=j),
@@ -91,69 +83,28 @@ class CollocatedModel(sym2num.model.Base):
     
     @property
     def generate_assignments(self):
-        gen = dict(nx=len(self.variables['x']),
-                   nu=len(self.variables['u']),
-                   np=len(self.variables['p']),
-                   ne=len(self.default_function_output('e')),
-                   ng=len(self.default_function_output('g')),
-                   nh=len(self.default_function_output('h')),
-                   collocation_order=self.collocation.n,
-                   symbol_index_map=self.symbol_index_map,
-                   array_shape_map=self.array_shape_map,
-                   **getattr(super(), 'generate_assignments', {}))
+        gen = {'ng': len(self.default_function_output('g')),
+               'nh': len(self.default_function_output('h')),
+               **getattr(super(), 'generate_assignments', {})}
         return gen
-    
-    generate_imports = ['sym2num.model']
-    """List of imports to include in the generated class code."""
-    
-    generated_bases = ['sym2num.model.ModelArrayInitializer']
-    """Base classes of the generated model class."""
-    
-    @utils.cached_property
-    def collocation(self):
-        """Collocation method."""
-        collocation_order = getattr(self, 'collocation_order', 2)
-        return rk.LGLCollocation(collocation_order)
-    
+        
     @utils.cached_property
     def variables(self):
         """Model variables definition."""
         v = super().variables
-        ncol = self.collocation.n
-
         x = [xi.name for xi in v['x']]
-        u = [ui.name for ui in v['u']]
         
-        # Piece states and controls
-        xp = [[f'{n}_piece_{k}' for n in x] for k in range(ncol)]
-        up = [[f'{n}_piece_{k}' for n in u] for k in range(ncol)]
-
         # Endpoint states
         xe = [[f'{n}_initial' for n in x], [f'{n}_final' for n in x]]
         
         additional_vars = sym2num.var.make_dict(
-            [sym2num.var.SymbolArray('piece_len'),
-             sym2num.var.SymbolArray('xp', xp),
-             sym2num.var.SymbolArray('up', up),
-             sym2num.var.SymbolArray('xe', xe),
-             sym2num.var.SymbolArray('xp_flat', sympy.flatten(xp)),
-             sym2num.var.SymbolArray('up_flat', sympy.flatten(up)),
+            [sym2num.var.SymbolArray('xe', xe),
              sym2num.var.SymbolArray('xe_flat', sympy.flatten(xe))]
         )
         return collections.OrderedDict([*v.items(), *additional_vars.items()])
     
-    def e(self, xp, up, p, piece_len):
-        """Collocation defects (error)."""
-        ncol = self.collocation.n
-        fp = sympy.Matrix([self.f(xp[i, :], up[i, :], p) for i in range(ncol)])
-        J = sympy.Matrix(self.collocation.J)
-        dt = piece_len[()]
-        
-        xp = xp.tomatrix()
-        defects = xp[1:, :] - xp[:-1, :] - dt * J * fp
-        return sympy.Array(defects, len(defects))
-    
     def IL(self, xp, up, p, piece_len):
+        """Integral of the Lagrangian (total running cost)."""
         ncol = self.collocation.n
         Lp = [self.L(xp[i,:], up[i,:], p)[()] for i in range(ncol)]
         K = self.collocation.K
@@ -161,10 +112,11 @@ class CollocatedModel(sym2num.model.Base):
         IL = sum(Lp[i] * K[i] * dt for i in range(ncol))
         return sympy.Array(IL)
 
+
 def collocate(order=2):
     def decorator(BaseModel):
         @functools.wraps(BaseModel, updated=())
-        class OptimalControlModel(CollocatedModel, BaseModel):
+        class OptimalControlModel(ModelSubclass, BaseModel):
             collocation_order = order
         return OptimalControlModel
     return decorator
