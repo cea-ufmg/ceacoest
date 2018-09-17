@@ -9,14 +9,11 @@ import sym2num.model
 import sym2num.utils
 import sym2num.var
 
-from ceacoest import oc, optim, symb_oc
+from ceacoest import oc, optim
+from ceacoest.modelling import symoc
 
 
-import imp;
-[imp.reload(m) for m in [optim, oc]]
-
-
-@symb_oc.collocate(order=3)
+@symoc.collocate(order=3)
 class BrysonDenham:
     """Symbolic Bryson--Denham optimal control model."""
         

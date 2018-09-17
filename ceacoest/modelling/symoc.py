@@ -9,7 +9,7 @@ import sym2num.model
 import sym2num.var
 import sympy
 
-from . import utils, rk
+from .. import utils, rk
 
 
 class CollocatedModel(sym2num.model.Base):

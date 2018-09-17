@@ -11,7 +11,7 @@ from . import optim, rk, utils
 class Problem(optim.Problem):
     """Optimal control problem with LGL direct collocation."""
     
-    def __init__(self, model, t, **options):
+    def __init__(self, model, t):
         self.model = model
         """Underlying cost, constraint and dynamical system model."""
 

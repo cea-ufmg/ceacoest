@@ -11,7 +11,7 @@ from numpy import ma
 from scipy import interpolate
 
 from ceacoest import kalman, oem, utils
-from ceacoest.modeling import symstats
+from ceacoest.modelling import symstats
 
 
 class SymbolicModel(sym2num.SymbolicModel):

@@ -1,4 +1,4 @@
-"""Domain-specific modeling functions and utilities."""
+"""Domain-specific modelling functions and utilities."""
 
 
 from . import symstats, symquat

@@ -11,7 +11,8 @@ from scipy import constants, integrate, interpolate
 import sym2num.model
 import sym2num.utils
 import sym2num.var
-from ceacoest import oc, symb_oc
+from ceacoest import oc
+from ceacoest.modelling import symoc
 
 
 # Propulsion model tables
@@ -47,7 +48,7 @@ a_h = np.r_[0,  36089,  65617, 104986]
 a_data = np.r_[1116.46, 968.08, 968.08, 990.17]
 
 
-@symb_oc.collocate(order=3)
+@symoc.collocate(order=3)
 class MinimumTimeToClimb:
     """Symbolic minimum time to climb optimal control model."""
     

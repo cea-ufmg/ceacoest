@@ -1,4 +1,4 @@
-"""General sparse optimization problem modeling."""
+"""General sparse optimization problem modelling."""
 
 
 import collections
@@ -80,6 +80,10 @@ class Problem:
         component_name, index = symbol_index_map[name]
         component = self.variables(dvec)[component_name]
         component[(..., *index)] = value
+    
+    def set_constraint(self, name, value, out):
+        assert isinstance(out, np.ndarray) and out.shape == (self.ncons,)
+        self.constraints[name].assign_to(out, value)
     
     def variables(self, dvec):
         """Get all variables needed to evaluate problem functions."""
