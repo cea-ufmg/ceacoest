@@ -18,6 +18,7 @@ class CollocatedProblem(optim.Problem):
         self.collocation = col = rk.LGLCollocation(model.collocation_order)
         """Collocation method."""
         
+        assert np.ndim(t) == 1
         self.piece_len = np.diff(t)
         """Normalized length of each collocation piece."""
         

@@ -32,10 +32,6 @@ class Problem(collocation.CollocatedProblem):
         )
         self._register_model_merit_derivatives('M', ('xe', 'p'))
         self._register_model_merit_derivatives('IL', ('xp', 'up', 'p'))
-            
-    def variables(self, dvec):
-        """Get all variables needed to evaluate problem functions."""
-        return {'piece_len': self.piece_len, **super().variables(dvec)}
 
 
 class XEVariable:

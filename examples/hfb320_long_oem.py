@@ -10,6 +10,7 @@ supporting materials (not provided here).
 
 
 import functools
+import os.path
 
 import numpy as np
 import sympy
@@ -25,7 +26,7 @@ from ceacoest.modelling import symcol, symoem, symstats
 import imp; [imp.reload(m) for m in [symcol, symoem, oem]]
 
 
-@symoem.collocate(order=3)
+@symoem.collocate(order=2)
 class HFB320Long:
     """Symbolic HFB-320 aircraft nonlinear longitudinal model."""
     
@@ -104,3 +105,12 @@ if __name__ == '__main__':
     symb_mdl = HFB320Long()
     GeneratedHFB320Long = sym2num.model.compile_class(symb_mdl)
     model = GeneratedHFB320Long()
+    
+    dirname = os.path.dirname(__file__)
+    data = np.loadtxt(os.path.join(dirname, 'data', 'hfb320_1_10.asc'))
+    Ts = 0.1
+    t = np.arange(len(data)) * Ts
+    y = data[:, 4:11]
+    u = data[:, [1,3]]
+    problem = oem.Problem(model, t, y, u)
+    

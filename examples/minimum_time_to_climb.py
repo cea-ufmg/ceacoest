@@ -163,8 +163,6 @@ if __name__ == '__main__':
     problem.set_decision_item('tf', 0, dec_L)
     problem.set_decision_item('h', 0, dec_L)
     problem.set_decision_item('h', 69e3, dec_U)
-    problem.set_decision('x', [0, 1, -89*d2r, 0],    dec_L)
-    problem.set_decision('x', [69e3, 2e3, 89*d2r, 45e3], dec_U) 
     problem.set_decision_item('alpha', -20*d2r, dec_L)
     problem.set_decision_item('alpha', 20*d2r, dec_U)
     problem.set_decision_item('h_initial', 0, dec_L)
