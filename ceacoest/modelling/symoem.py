@@ -18,9 +18,9 @@ class ModelSubclass(symcol.CollocatedModel):
     @property
     def derivatives(self):
         """List of the model function derivatives to calculate."""
-        derivatives =  [('dL_dxm', 'L', 'xm'),
+        derivatives =  [('dL_dxm', 'L', 'x'),
                         ('dL_dp', 'L', 'p'),
-                        ('d2L_dxm2', 'dL_dxm', 'xm'),
+                        ('d2L_dxm2', 'dL_dxm', 'x'),
                         ('d2L_dp2', 'dL_dp', 'p'),
                         ('d2L_dxm_dp', 'dL_dxm', 'p')]
         return getattr(super(), 'derivatives', []) + derivatives
@@ -43,16 +43,6 @@ class ModelSubclass(symcol.CollocatedModel):
     def generate_assignments(self):
         return {'ny': len(self.variables['y']),
                 **getattr(super(), 'generate_assignments', {})}
-    
-    @utils.cached_property
-    def variables(self):
-        """Model variables definition."""
-        v = super().variables
-        additional_vars = sym2num.var.make_dict(
-            [sym2num.var.SymbolArray('xm', v['x']),
-             sym2num.var.SymbolArray('um', v['u'])]
-        )
-        return collections.OrderedDict([*v.items(), *additional_vars.items()])
 
 
 def collocate(order=2):

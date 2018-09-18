@@ -73,7 +73,7 @@ class HFB320Long:
         return sympy.Array([Vd, alphad, s.q, qd])
     
     @sym2num.model.collect_symbols
-    def L(self, y, xm, um, p, *, s):
+    def L(self, y, x, u, p, *, s):
         """Measurement log likelihood."""
         qbar = 0.5 * s.rho * s.V ** 2
         qhat = s.cbarH * s.q / s.V0
@@ -118,3 +118,30 @@ if __name__ == '__main__':
     u = data[:, [1,3]]
     problem = oem.Problem(model, t, y, u)
     
+    dec_L, dec_U = np.repeat([[-np.inf], [np.inf]], problem.ndec, axis=-1)
+    problem.set_decision_item('V', 2, dec_L)
+    problem.set_decision_item('V_meas_std', 1e-3, dec_L)
+    problem.set_decision_item('alpha_meas_std', 1e-4, dec_L)
+    problem.set_decision_item('theta_meas_std', 1e-4, dec_L)
+    problem.set_decision_item('q_meas_std', 1e-4, dec_L)
+    problem.set_decision_item('qdot_meas_std', 1e-4, dec_L)
+    problem.set_decision_item('ax_meas_std', 1e-4, dec_L)
+    problem.set_decision_item('az_meas_std', 1e-4, dec_L)
+
+    dec0 = np.zeros(problem.ndec)
+    problem.set_decision('x', y[:, :4], dec0)
+    problem.set_decision('p', 1, dec0)
+    
+    constr_bounds = np.zeros((2, problem.ncons))
+    
+    with problem.ipopt((dec_L, dec_U), constr_bounds) as nlp:
+        nlp.add_str_option('linear_solver', 'ma57')
+        nlp.add_num_option('tol', 1e-6)
+        nlp.add_int_option('max_iter', 1000)
+        #nlp.set_scaling(1e-2, dec_scale, constr_scale)
+        decopt, info = nlp.solve(dec0)
+    
+    opt = problem.variables(decopt)
+    xopt = opt['x']
+    popt = opt['p']
+    tc = problem.tc

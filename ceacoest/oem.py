@@ -82,7 +82,6 @@ class XMVariable:
         x[self.p.kmeas] += value
     
     def expand_indices(self, ind):
-        nx = self.p.model.nx
         x_offset = self.p.decision['x'].offset
         ind = np.asarray(ind, dtype=int)        
-        return ind + x_offset + self.p.kmeas[:, None]
+        return ind + x_offset + self.p.kmeas[:, None] * self.p.model.nx
