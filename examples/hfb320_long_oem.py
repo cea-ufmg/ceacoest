@@ -102,9 +102,13 @@ class HFB320Long:
 
 
 if __name__ == '__main__':
+    given = {'g0': 9.80665, 'Sbym': 4.0280e-3, 'ScbyIy': 8.0027e-4, 
+             'FEIYLT': -7.0153e-6, 'V0': 104.67, 'mass':7472, 'sigmaT':0.0524,
+             'rho': 0.7920, 'cbarH': 1.215}
+    
     symb_mdl = HFB320Long()
     GeneratedHFB320Long = sym2num.model.compile_class(symb_mdl)
-    model = GeneratedHFB320Long()
+    model = GeneratedHFB320Long(**given)
     
     dirname = os.path.dirname(__file__)
     data = np.loadtxt(os.path.join(dirname, 'data', 'hfb320_1_10.asc'))
