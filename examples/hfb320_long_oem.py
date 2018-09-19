@@ -24,9 +24,6 @@ from ceacoest import oem, optim
 from ceacoest.modelling import symcol, symoem, symstats
 
 
-import imp; [imp.reload(m) for m in [symcol, symoem, oem]]
-
-
 @symoem.collocate(order=3)
 class HFB320Long:
     """Symbolic HFB-320 aircraft nonlinear longitudinal model."""
@@ -38,8 +35,9 @@ class HFB320Long:
         params = [
             'CD0', 'CDV', 'CDa', 'CL0', 'CLV', 'CLa',
             'Cm0', 'CmV', 'Cma', 'Cmq', 'Cmde', 
+            'q_bias', 'qdot_bias', 'ax_bias', 'az_bias',
             'V_meas_std', 'alpha_meas_std', 'theta_meas_std', 'q_meas_std',
-            'qdot_meas_std', 'ax_meas_std', 'az_meas_std'
+            'qdot_meas_std', 'ax_meas_std', 'az_meas_std', 
         ]
         consts = [
             'g0', 'Sbym', 'ScbyIy', 'FEIYLT', 'V0', 'mass', 'sigmaT', 'rho',
@@ -83,89 +81,76 @@ class HFB320Long:
         CL = s.CL0 + s.CLV * s.V / s.V0 + s.CLa * s.alpha
         Cm = s.Cm0 + s.CmV*s.V/s.V0 + s.Cma*s.alpha + s.Cmq*qhat + s.Cmde*s.de
         
-        salpha =  sin(s.alpha);
-        calpha =  cos(s.alpha);
+        salpha =  sin(s.alpha)
+        calpha =  cos(s.alpha)
         CX =  CL*salpha - CD*calpha
         CZ = -CL*calpha - CD*salpha
         
-        qdot = s.ScbyIy*qbar*Cm + s.T*s.FEIYLT
-        ax = s.Sbym*qbar*CX + s.T*cos(s.sigmaT)/s.mass
-        az = s.Sbym*qbar*CZ - s.T*sin(s.sigmaT)/s.mass
+        qdot = s.ScbyIy*qbar*Cm + s.T*s.FEIYLT + s.qdot_bias
+        ax = s.Sbym*qbar*CX + s.T*cos(s.sigmaT)/s.mass + s.ax_bias
+        az = s.Sbym*qbar*CZ - s.T*sin(s.sigmaT)/s.mass + s.az_bias
         return sympy.Array(
             symstats.normal_logpdf1(s.V_meas, s.V, s.V_meas_std)
             + symstats.normal_logpdf1(s.alpha_meas, s.alpha, s.alpha_meas_std)
             + symstats.normal_logpdf1(s.theta_meas, s.theta, s.theta_meas_std)
-            + symstats.normal_logpdf1(s.q_meas, s.q, s.q_meas_std)
+            + symstats.normal_logpdf1(s.q_meas, s.q + s.q_bias, s.q_meas_std)
             + symstats.normal_logpdf1(s.qdot_meas, qdot, s.qdot_meas_std)
             + symstats.normal_logpdf1(s.ax_meas, ax, s.ax_meas_std)
             + symstats.normal_logpdf1(s.az_meas, az, s.az_meas_std)
         )
 
 
-def set_xguess(problem, u, dec0):
-    p0 = problem.variables(dec0)['p']
-    tspan = problem.tc[[0, -1]]
-    x0 = problem.y[0, :4]
-    
-    def xdot(t, x):
-        return problem.model.f(x, u(t), p0)
-    
-    sol = integrate.solve_ivp(xdot, tspan, x0, max_step=0.05)
-    
-    x = interpolate.interp1d(sol.t, sol.y)(problem.tc).T
-    problem.set_decision('x', x, dec0)
-
-
 if __name__ == '__main__':
     given = {'g0': 9.80665, 'Sbym': 4.0280e-3, 'ScbyIy': 8.0027e-4, 
              'FEIYLT': -7.0153e-6, 'V0': 104.67, 'mass':7472, 'sigmaT':0.0524,
              'rho': 0.7920, 'cbarH': 1.215}
+    lower = {'V': 2, 'V_meas_std': 1e-3, 'alpha_meas_std': 1e-4,
+             'theta_meas_std': 1e-4, 'q_meas_std': 1e-4, 'qdot_meas_std': 1e-4,
+             'ax_meas_std': 1e-4, 'az_meas_std': 1e-4}
     
+    # Compile and instantiate model
     symb_mdl = HFB320Long()
     GeneratedHFB320Long = sym2num.model.compile_class(symb_mdl)
     model = GeneratedHFB320Long(**given)
     
+    # Load experiment data
     dirname = os.path.dirname(__file__)
     data = np.loadtxt(os.path.join(dirname, 'data', 'hfb320_1_10.asc'))
     Ts = 0.1
     t = np.arange(len(data)) * Ts
     y = data[:, 4:11]
     u = interpolate.interp1d(t, data[:, [1,3]], axis=0)
+
+    # Create OEM problem
     problem = oem.Problem(model, t, y, u)
+    tc = problem.tc
     
-    dec_L, dec_U = np.repeat([[-np.inf], [np.inf]], problem.ndec, axis=-1)
-    problem.set_decision_item('V', 2, dec_L)
-    problem.set_decision_item('V_meas_std', 1e-3, dec_L)
-    problem.set_decision_item('alpha_meas_std', 1e-4, dec_L)
-    problem.set_decision_item('theta_meas_std', 1e-4, dec_L)
-    problem.set_decision_item('q_meas_std', 1e-4, dec_L)
-    problem.set_decision_item('qdot_meas_std', 1e-4, dec_L)
-    problem.set_decision_item('ax_meas_std', 1e-4, dec_L)
-    problem.set_decision_item('az_meas_std', 1e-4, dec_L)
-    
+    # Set bounds
     constr_bounds = np.zeros((2, problem.ncons))
+    dec_L, dec_U = np.repeat([[-np.inf], [np.inf]], problem.ndec, axis=-1)
+    for k,v in lower.items():
+        problem.set_decision_item(k, v, dec_L)    
     
-    guess = dict(CD0=5.67516e-03, CDV=7.72612e-03, CDa=6.74256e-01,
-                 CL0=-3.18267e-01, CLV=2.60317e-01, CLa=5.37576, 
-                 Cm0=4.98218e-02, CmV=1.89182e-02, Cma=-4.98586e-1, 
-                 Cmq=-2.58439e1, Cmde=-9.90687e-01)
+    # Set initial guess
+    x0 = interpolate.interp1d(t, y.T[:4])(tc).T
+    p0 = np.zeros(model.np)
+    p0[-model.ny:] = 1 # guess for measurement standard deviations
     dec0 = np.zeros(problem.ndec)
-    problem.set_decision_item('V_meas_std', 0.2, dec0)
-    problem.set_decision_item('alpha_meas_std', 0.03, dec0)
-    problem.set_decision_item('theta_meas_std', 0.002, dec0)
-    problem.set_decision_item('q_meas_std', 0.001, dec0)
-    problem.set_decision_item('qdot_meas_std', 0.025, dec0)
-    problem.set_decision_item('ax_meas_std', 0.03, dec0)
-    problem.set_decision_item('az_meas_std', 0.03, dec0)
-    for k,v in guess.items():
-        problem.set_decision_item(k, v, dec0)    
-    set_xguess(problem, u, dec0)
+    problem.set_decision('x', x0, dec0)
+    problem.set_decision('p', p0, dec0)
     
     dec_scale = np.ones(problem.ndec)
     problem.set_decision_item('V', 1e-2, dec_scale)
     problem.set_decision_item('alpha', 20, dec_scale)
     problem.set_decision_item('q', 30, dec_scale)
     problem.set_decision_item('theta', 20, dec_scale)
+    problem.set_decision_item('V_meas_std', 1/0.2, dec_scale)
+    problem.set_decision_item('alpha_meas_std', 1/0.03, dec_scale)
+    problem.set_decision_item('theta_meas_std', 1/0.002, dec_scale)
+    problem.set_decision_item('q_meas_std', 1/0.001, dec_scale)
+    problem.set_decision_item('qdot_meas_std', 1/0.025, dec_scale)
+    problem.set_decision_item('ax_meas_std', 1/0.03, dec_scale)
+    problem.set_decision_item('az_meas_std', 1/0.03, dec_scale)
     
     constr_scale = np.ones(problem.ncons)
     problem.set_defect_scale('V', 1e-2, constr_scale)
@@ -183,4 +168,3 @@ if __name__ == '__main__':
     opt = problem.variables(decopt)
     xopt = opt['x']
     popt = opt['p']
-    tc = problem.tc
