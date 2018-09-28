@@ -150,13 +150,7 @@ class Problem:
         for name, cons in self.constraints.items():
             cons(var, assign_to=out)
         return out
-    
-    def set_constraint(self, name, val, out=None):
-        out = np.zeros(self.ncons) if out is None else out
-        cons = self.constraints[name]
-        cons.assign_to(out, value)
-        return out
-    
+        
     def register_constraint_jacobian(self, constraint_name, wrt_name, val, ind):
         cons = self.constraints[constraint_name]
         wrt = self.decision.get(wrt_name, None) or self.derived[wrt_name]
