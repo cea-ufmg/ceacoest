@@ -48,6 +48,7 @@ class CollocatedModel(sym2num.model.Base):
                'collocation_order': self.collocation.n,
                'symbol_index_map': self.symbol_index_map,
                'array_shape_map': self.array_shape_map,
+               'array_element_names': self.array_element_names,
                **getattr(super(), 'generate_assignments', {})}
         return gen
 
