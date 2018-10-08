@@ -215,7 +215,7 @@ class Problem:
     def lagrangian_hessian_val(self, dvec, merit_mult, constr_mult, out=None):
         nnzlhess = self.nnzchess + self.nnzmhess
         if out is None:
-            out = np.zeros(nnzlhess, dtype=double)
+            out = np.zeros(nnzlhess, dtype=np.double)
         else:
             assert isinstance(out, np.ndarray)
             assert out.dtype == np.double and out.shape == (nnzlhess,)
