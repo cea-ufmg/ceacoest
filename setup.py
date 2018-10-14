@@ -18,7 +18,7 @@ Topic :: Software Development'''
 
 setup(
     name="ceacoest",
-    version="0.2.dev0",
+    version="0.1.dev4",
     packages=find_packages(),
     install_requires=["attrdict", "numpy", "scipy", "sym2num"],
     tests_require=["pytest"],
@@ -28,7 +28,7 @@ setup(
     author_email="dimasad@ufmg.br",
     description='CEA control and estimation library.',
     classifiers=CLASSIFIERS.split('\n'),
-    platforms=["Linux", "Unix"],
+    platforms=["Windows", "Linux", "Solaris", "Mac OS-X", "Unix"],
     license="MIT",
-    url="http://github.com/dimasad/ceacoest",
+    url="http://github.com/cea-ufmg/ceacoest",
 )
