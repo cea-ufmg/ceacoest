@@ -5,6 +5,7 @@ import collections
 import functools
 
 import numpy as np
+import sym2num.model
 import sym2num.var
 import sympy
 
@@ -48,7 +49,7 @@ class ModelSubclass(symcol.CollocatedModel):
 def collocate(order=2):
     def decorator(BaseModel):
         @functools.wraps(BaseModel, updated=())
-        class OptimalControlModel(ModelSubclass, BaseModel):
+        class EstimationModel(ModelSubclass, BaseModel, sym2num.model.Base):
             collocation_order = order
-        return OptimalControlModel
+        return EstimationModel
     return decorator
