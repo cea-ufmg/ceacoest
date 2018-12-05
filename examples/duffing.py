@@ -7,14 +7,14 @@ import sym2num.model
 from numpy import ma
 from scipy import stats
 
-#from ceacoest import kalman, sde, utils
+from ceacoest.modelling import symsde
 
 
 class SymbolicDuffing(sym2num.model.Base):
     """Symbolic Duffing oscillator model."""
     
     generate_functions = ['f']
-
+    
     @property
     def variables(self):
         """Model variables definition."""
@@ -35,12 +35,12 @@ class SymbolicDuffing(sym2num.model.Base):
         return [f1, f2]
     
     @sym2num.model.collect_symbols
-    def g(self, u, x, p, *, s):
+    def g(self, t, x, p, *, s):
         """Diffusion matrix."""
-        return [[0, 0], [0, s.g2]]
+        return [[0], [s.g2]]
     
     @sym2num.model.collect_symbols
-    def h(self, u, x, p, *, s):
+    def h(self, t, x, p, *, s):
         """Measurement function."""
         return [s.X]
     
@@ -60,5 +60,11 @@ class SymbolicDuffing(sym2num.model.Base):
         return sympy.diag(s.X0_std, s.V0_std)**2
 
 
+class SymbolicDiscretizedDuffing(symsde.EulerDiscretizedSDEModel):
+    ContinuousTimeModel = SymbolicDuffing
+
+
 symb_mdl = SymbolicDuffing()
+disc_mdl = SymbolicDiscretizedDuffing()
+
 GeneratedDuffing = sym2num.model.compile_class(symb_mdl)
