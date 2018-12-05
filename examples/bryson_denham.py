@@ -57,7 +57,7 @@ if __name__ == '__main__':
     GeneratedBrysonDenham = sym2num.model.compile_class(symb_mdl)
     mdl = GeneratedBrysonDenham()
     
-    tcoarse = np.linspace(0, 1, 20)
+    tcoarse = np.linspace(0, 1, 101)
     problem = oc.Problem(mdl, tcoarse)
     
     dec_L, dec_U = np.repeat([[-np.inf], [np.inf]], problem.ndec, axis=-1)
