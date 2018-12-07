@@ -14,6 +14,9 @@ class SymbolicDuffing(sym2num.model.Base):
     """Symbolic Duffing oscillator model."""
     
     generate_functions = ['f']
+    derivatives = [('df_dx', 'f', 'x'),
+                   ('df_dt', 'f', 't'),
+                   ('d2f_dx2', 'df_dx', 'x')]
     
     @property
     def variables(self):
