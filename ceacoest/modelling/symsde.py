@@ -68,9 +68,31 @@ class ItoTaylorAS15DiscretizedModel(DiscretizedSDEModelBase):
         L0f = df_dt + df_dx.T * f
         for k, j, p, q in np.ndindex(nx, nw, nx, nx):
             L0f[k] += g[p, j] * g[q, j] * d2f_dx2[p, q, k]
-        Lf = df_dx.T * g
         
         # Discretize the drift
         fd = x + f * dt + 0.5 * L0f * dt ** 2
         return sympy.Array(fd, nx)
+
+    def g(self, k, x):
+        t = self.t(k)
+        dt = self.dt[()]
+        p = self.ct_model_p
+        
+        f = sympy.Matrix(self.ct_model.f(t, x, p))
+        g = sympy.Matrix(self.ct_model.g(t, x, p))
+        
+        nx, nw = g.shape
+
+        df_dt = sympy.Matrix(self.ct_model.df_dt(t, x, p))
+        df_dx = self.ct_model.df_dx(t, x, p).tomatrix()
+        d2f_dx2 = self.ct_model.d2f_dx2(t, x, p)
+        
+        # Calculate the intermediates
+        Lf = df_dx.T * g
+        
+        # Discretize the diffusion
+        blk1 = g * dt ** 0.5 + 0.5 * Lf * dt ** 1.5
+        blk2 = 0.5 * Lf * dt ** 1.5 / sympy.sqrt(3)
+        gd = blk1.col_insert(nw, blk2)
+        return sympy.Array(gd)
 
