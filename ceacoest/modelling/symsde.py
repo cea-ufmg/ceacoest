@@ -14,6 +14,8 @@ class DiscretizedSDEModelBase(model.Base):
             ct_model = self.ContinuousTimeModel()
         self.ct_model = ct_model
         """The underlying continuous-time model."""
+        
+        super().__init__() #Initialize base class
     
     @property
     def variables(self):
