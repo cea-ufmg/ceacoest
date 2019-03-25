@@ -128,4 +128,3 @@ if __name__ == '__main__':
     model, t, x, y, p = sim()
     kf = kalman.DTUnscentedFilter(model)
     [xs, Pxs] = kf.smooth(y)
-
