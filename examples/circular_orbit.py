@@ -23,14 +23,14 @@ class CircularOrbit:
     @functools.lru_cache()
     def variables(cls):
         """Model variables definition."""
-        consts = ['mu', 'm', 'T_max', 'R_final']
+        consts = ['mu', 've', 'T_max', 'R_final']
         obj  = sym2num.var.SymbolObject(
             'self', 
             sym2num.var.SymbolArray('consts', consts)
         )
         vars = [obj,
-                sym2num.var.SymbolArray('x', ['X', 'Y', 'vx', 'vy']),
-                sym2num.var.SymbolArray('u', ['Tx', 'Ty']),
+                sym2num.var.SymbolArray('x', ['X', 'Y', 'vx', 'vy', 'm']),
+                sym2num.var.SymbolArray('u', ['T', 'Txn', 'Tyn']),
                 sym2num.var.SymbolArray('p', ['tf'])]
         return sym2num.var.make_dict(vars)
     
@@ -41,17 +41,21 @@ class CircularOrbit:
         gx = - s.mu * s.X / R3
         gy = - s.mu * s.Y / R3
         
-        ax = gx + s.Tx * s.T_max / s.m
-        ay = gy + s.Ty * s.T_max / s.m
+        Tx = s.T * s.Txn * s.T_max
+        Ty = s.T * s.Tyn * s.T_max
+        
+        ax = gx + Tx / s.m
+        ay = gy + Ty / s.m
+        
+        mdot = - s.T * s.T_max / s.ve
 
-        f = [s.vx, s.vy, ax, ay]
+        f = [s.vx, s.vy, ax, ay, mdot]
         return sympy.Array(f) * s.tf
     
     @sym2num.model.collect_symbols
     def g(self, x, u, p, *, s):
         """Path constraints."""
-        T2 = s.Tx ** 2 + s.Ty ** 2
-        return sympy.Array([T2])
+        return sympy.Array([s.Txn**2 + s.Tyn**2 - 1])
     
     @sym2num.model.collect_symbols
     def h(self, xe, p, *, s):
@@ -67,12 +71,13 @@ class CircularOrbit:
     @sym2num.model.collect_symbols
     def M(self, xe, p, *, s):
         """Mayer (endpoint) cost."""
-        return sympy.Array(s.tf)
+        return sympy.Array(0)
     
     @sym2num.model.collect_symbols
     def L(self, x, u, p, *, s):
         """Lagrange (running) cost."""
-        return sympy.Array(0) * s.tf
+        P = s.T * s.ve 
+        return sympy.Array(P) * s.tf
 
 
 if __name__ == '__main__':
@@ -80,10 +85,10 @@ if __name__ == '__main__':
     GeneratedCircularOrbit = sym2num.model.compile_class(symb_mdl)
 
     mu = 1
-    m = 1
-    T_max = 0.05
+    ve = 50
+    T_max = 0.025
     R_final = 2
-    mdl_consts = dict(mu=mu, m=m, T_max=T_max, R_final=R_final)
+    mdl_consts = dict(mu=mu, ve=ve, T_max=T_max, R_final=R_final)
     mdl = GeneratedCircularOrbit(**mdl_consts)
     
     t = np.linspace(0, 1, 500)
@@ -93,6 +98,14 @@ if __name__ == '__main__':
     dec_bounds = np.repeat([[-np.inf], [np.inf]], problem.ndec, axis=-1)
     dec_L, dec_U = dec_bounds
     problem.set_decision_item('tf', 0, dec_L)
+    problem.set_decision_item('tf', 20, dec_U)
+    problem.set_decision_item('m', 0, dec_L)
+    problem.set_decision_item('T', 0, dec_L)
+    problem.set_decision_item('T', 1, dec_U)
+    problem.set_decision_item('Txn', -1.5, dec_L)
+    problem.set_decision_item('Txn', 1.5, dec_U)
+    problem.set_decision_item('Tyn', -1.5, dec_L)
+    problem.set_decision_item('Tyn', 1.5, dec_U)
     problem.set_decision_item('X_initial', 1, dec_L)
     problem.set_decision_item('X_initial', 1, dec_U)
     problem.set_decision_item('Y_initial', 0, dec_L)
@@ -101,25 +114,27 @@ if __name__ == '__main__':
     problem.set_decision_item('vx_initial', 0, dec_U)
     problem.set_decision_item('vy_initial', 1, dec_L)
     problem.set_decision_item('vy_initial', 1, dec_U)
+    problem.set_decision_item('m_initial', 1, dec_L)
+    problem.set_decision_item('m_initial', 1, dec_U)
     
     constr_bounds = np.zeros((2, problem.ncons))
     constr_L, constr_U = constr_bounds
-    problem.set_constraint('g', -np.inf, constr_L)
-    problem.set_constraint('g', 1, constr_U)
     
     dec_scale = np.ones(problem.ndec)
     
     constr_scale = np.ones(problem.ncons)
     
-    obj_scale = 1
+    obj_scale = 10
     
     dec0 = np.zeros(problem.ndec)
+    problem.set_decision_item('m', 1, dec0)
     problem.set_decision_item('tf', 2*np.pi, dec0)
     problem.set_decision_item('X', np.cos(2*np.pi*tc), dec0)
     problem.set_decision_item('Y', np.sin(2*np.pi*tc), dec0)
     problem.set_decision_item('vx', -np.sin(2*np.pi*tc), dec0)
     problem.set_decision_item('vy', np.cos(2*np.pi*tc), dec0)
-
+    problem.set_decision_item('Txn', 1, dec0)
+    
     with problem.ipopt(dec_bounds, constr_bounds) as nlp:
         nlp.add_str_option('linear_solver', 'ma57')
         nlp.add_num_option('tol', 1e-6)
