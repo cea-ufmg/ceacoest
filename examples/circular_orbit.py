@@ -77,14 +77,14 @@ class CircularOrbit:
 
 if __name__ == '__main__':
     symb_mdl = CircularOrbit()
-    GeneratedMilhagem = sym2num.model.compile_class(symb_mdl)
+    GeneratedCircularOrbit = sym2num.model.compile_class(symb_mdl)
 
     mu = 1
     m = 1
     T_max = 0.05
     R_final = 2
     mdl_consts = dict(mu=mu, m=m, T_max=T_max, R_final=R_final)
-    mdl = GeneratedMilhagem(**mdl_consts)
+    mdl = GeneratedCircularOrbit(**mdl_consts)
     
     t = np.linspace(0, 1, 500)
     problem = oc.Problem(mdl, t)
