@@ -60,8 +60,8 @@ class CircularOrbit:
     @sym2num.model.collect_symbols
     def h(self, xe, p, *, s):
         """Endpoint constraints."""
-        R_error = (s.X_final ** 2 + s.Y_final ** 2) / s.R_final ** 2 - 1
-        v_dot_r = s.X_final * s.vx_final + s.Y_final * s.vy_final
+        R_error = (s.X_final ** 2 + s.Y_final ** 2)/s.R_final - s.R_final
+        v_dot_r = (s.X_final * s.vx_final + s.Y_final * s.vy_final) / s.R_final
         
         r_cross_v = s.X_final * s.vy_final - s.Y_final * s.vx_final
         V = sympy.sqrt(s.vx_final**2 + s.vy_final**2)
@@ -71,13 +71,12 @@ class CircularOrbit:
     @sym2num.model.collect_symbols
     def M(self, xe, p, *, s):
         """Mayer (endpoint) cost."""
-        return sympy.Array(0)
+        return sympy.Array(s.tf)
     
     @sym2num.model.collect_symbols
     def L(self, x, u, p, *, s):
         """Lagrange (running) cost."""
-        P = 0.5 * s.T * s.ve * s.T_max
-        return sympy.Array(P) * s.tf
+        return sympy.Array(0)
 
 
 if __name__ == '__main__':
@@ -86,7 +85,7 @@ if __name__ == '__main__':
 
     mu = 1
     ve = 50
-    T_max = 0.05
+    T_max = 0.025
     R_final = 2
     mdl_consts = dict(mu=mu, ve=ve, T_max=T_max, R_final=R_final)
     mdl = GeneratedCircularOrbit(**mdl_consts)
@@ -98,7 +97,7 @@ if __name__ == '__main__':
     dec_bounds = np.repeat([[-np.inf], [np.inf]], problem.ndec, axis=-1)
     dec_L, dec_U = dec_bounds
     problem.set_decision_item('tf', 0, dec_L)
-    problem.set_decision_item('tf', 13, dec_U)
+    #problem.set_decision_item('tf', 10, dec_U)
     problem.set_decision_item('m', 0, dec_L)
     problem.set_decision_item('T', 0, dec_L)
     problem.set_decision_item('T', 1, dec_U)
@@ -124,7 +123,7 @@ if __name__ == '__main__':
     problem.set_decision_item('m', 1, dec_scale)
     
     constr_scale = np.ones(problem.ncons)
-    problem.set_constraint('h', 1, constr_scale)
+    problem.set_constraint('h', 10, constr_scale)
     problem.set_defect_scale('m', 1, dec_scale)
     
     obj_scale = 1
@@ -140,9 +139,8 @@ if __name__ == '__main__':
     
     with problem.ipopt(dec_bounds, constr_bounds) as nlp:
         nlp.add_str_option('linear_solver', 'ma57')
-        nlp.add_num_option('ma57_pre_alloc', 100.0)
         nlp.add_num_option('tol', 1e-6)
-        nlp.add_int_option('max_iter', 4000)
+        nlp.add_int_option('max_iter', 3000)
         nlp.set_scaling(obj_scale, dec_scale, constr_scale)
         decopt, info = nlp.solve(dec0)
     
