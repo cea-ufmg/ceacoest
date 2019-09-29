@@ -105,7 +105,7 @@ class ItoTaylorAS15DiscretizedModel(DiscretizedSDEModelBase):
         # Calculate the intermediates
         L0f = df_dt + df_dx.T * f
         for i, j, p, q in np.ndindex(nx, nw, nx, nx):
-            L0f[i] += g[p, j] * g[q, j] * d2f_dx2[p, q, i]
+            L0f[i] += 0.5 * g[p, j] * g[q, j] * d2f_dx2[p, q, i]
         
         # Discretize the drift
         fd = f * dt + 0.5 * L0f * dt ** 2 + x
