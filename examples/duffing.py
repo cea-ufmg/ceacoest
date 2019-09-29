@@ -66,6 +66,14 @@ class SymbolicDuffing(sym2num.model.Base):
 
 class SymbolicDiscretizedDuffing(symsde.EulerDiscretizedSDEModel):
     ContinuousTimeModel = SymbolicDuffing
+    
+    derivatives = [('df_dx', 'f', 'x'),
+                   ('dh_dx', 'h', 'x'),]
+
+    @property
+    def generate_functions(self):
+        gen = ['df_dx', 'dh_dx']
+        return super().generate_functions + gen
 
 
 symb_mdl = SymbolicDuffing()
@@ -83,7 +91,7 @@ class DiscretizedDuffing(GeneratedDuffing):
 
         self.consts = np.asarray(c)
         """Model constants"""
-    
+
     def parametrize(self, p):
         self.ct_model_p = np.asarray(p)
     
@@ -126,5 +134,5 @@ def sim():
 
 if __name__ == '__main__':
     model, t, x, y, p = sim()
-    kf = kalman.DTUnscentedFilter(model)
+    kf = kalman.DTExtendedFilter(model)
     [xs, Pxs] = kf.smooth(y)

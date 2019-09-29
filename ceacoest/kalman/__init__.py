@@ -6,3 +6,4 @@ from . import extended
 
 
 DTUnscentedFilter = unscented.DTFilter
+DTExtendedFilter = extended.DTFilter
