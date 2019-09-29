@@ -191,7 +191,7 @@ class ItoTaylorAS15DiscretizedModel(SymbolicDiscretizedModel):
         # Calculate the intermediates
         L0f = df_dt + np.dot(f, df_dx)
         for k, j, p, q in np.ndindex(nx, nw, nx, nx):
-            L0f[k] += g[p, j] * g[q, j] * d2f_dx2[p, q, k]
+            L0f[k] += 0.5 * g[p, j] * g[q, j] * d2f_dx2[p, q, k]
         Lf = df_dx.T.dot(g)
         
         # Discretize the drift
