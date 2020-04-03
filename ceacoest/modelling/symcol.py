@@ -9,10 +9,57 @@ import sym2num.model
 import sym2num.var
 import sympy
 
+from . import symoptim
 from .. import utils, rk
 
 
-class CollocatedModel(sym2num.model.Base):
+class CollocatedModel(symoptim.Model):
+    """Symbolic LGL-collocation model base."""
+    
+    Variables = sym2num.model.Variables
+
+    def __init__(self, variables, decision=set()):
+        # Initialize base class
+        super().__init__()
+
+        # Register decision variables
+        self.decision.update(decision)
+        self.decision.update({'x', 'xp'})
+        
+        # Register variables given in constructor
+        v = self.variables
+        for varname, varspec in variables.items():
+            v[varname] = varspec
+
+        # Create and register derived variables
+        ncol = self.collocation.n
+        v['piece_len'] = 'piece_len'
+        v['xp'] = [[f'{n}_piece_{k}' for n in v['x']] for k in range(ncol)]
+        v['up'] = [[f'{n}_piece_{k}' for n in v['u']] for k in range(ncol)]
+        
+        # Register collocation constraint
+        self.add_constraint('e')
+        
+        # Mark `f` function for code generation
+        self.generate_functions.add('f')
+    
+    @utils.cached_property
+    def collocation(self):
+        """Collocation method."""
+        collocation_order = getattr(self, 'collocation_order', 2)
+        return rk.LGLCollocation(collocation_order)
+
+    def e(self, xp, up, p, piece_len):
+        """Collocation defects (error)."""
+        ncol = self.collocation.n
+        fp = np.array([self.f(xp[i], up[i], p) for i in range(ncol)])
+        J = self.collocation.J
+        
+        defects = xp[1:] - xp[:-1] - J @ fp * piece_len
+        return defects
+
+
+class OldCollocatedModel(sym2num.model.Base):
     """Symbolic LGL-collocation model base."""
     
     @property

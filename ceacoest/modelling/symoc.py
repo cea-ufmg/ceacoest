@@ -13,7 +13,16 @@ from . import symcol
 from .. import utils
 
 
-class ModelSubclass(symcol.CollocatedModel):
+class OCModel(symcol.CollocatedModel):
+    def __init__(self, variables, decision=set()):
+        
+        variables.setdefault('p', [])
+        variables.setdefault('u', [])
+        
+        super().__init__(variables, {'p', 'u', 'up', *decision})
+        
+
+class OldModelSubclass(symcol.OldCollocatedModel):
     """Symbolic LGL-collocation optimal control model subclass."""
     
     @property

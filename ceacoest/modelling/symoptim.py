@@ -1,6 +1,7 @@
 """Symbolic optimization model for code generation."""
 
 import inspect
+import itertools
 
 import numpy as np
 import sym2num.model
@@ -11,12 +12,12 @@ import sympy
 class Model(sym2num.model.Base):
     """Symbolic optimization model base."""
 
-    def __init__(self, decision):
+    def __init__(self):
         # Initialize base class
         super().__init__()
         
         # Initialize model variables
-        self.decision = set(decision)
+        self.decision = set()
         """Names of decision variables."""
         
         self.constraints = {}
@@ -45,8 +46,6 @@ class Model(sym2num.model.Base):
         return a
     
     def add_constraint(self, fname, derivatives=2):
-        # Sanitize inputs when `derivatives` is None or False
-        derivatives = derivatives or 0
         fshape = self.default_function_output(fname).shape
         
         der1 = {}
@@ -55,11 +54,16 @@ class Model(sym2num.model.Base):
         self.constraints[fname] = desc
         self.generate_functions.add(fname)
         
+        
+        if not derivatives:
+            return
+
+        # Get variables needed for derivative calculation
+        args = self.function_codegen_arguments(fname)
+        wrt = set(args).intersection(self.decision)
+
         # Calculate first derivatives
-        if derivatives <= 1:
-            args = self.function_codegen_arguments(fname)
-            wrt = set(args).intersection(self.decision)
-            
+        if derivatives <= 1:            
             for argname in wrt:
                 derivname = self.first_derivative_name(fname, argname)
                 self.add_sparse_derivative(fname, argname, derivname)
@@ -67,19 +71,19 @@ class Model(sym2num.model.Base):
         
         # Calculate second derivatives
         if derivatives <= 2:
-            for pair in itertools.combinations_with_replacement(wrt):
+            for pair in itertools.combinations_with_replacement(wrt, 2):
                 derivname = self.first_derivative_name(fname, pair)
                 self.add_sparse_derivative(fname, pair, derivname)
                 der2[pair] = derivname
     
     def add_sparse_derivative(self, fname, wrt, dname, selector='tril'):
-        if utils.isstr(wrt):
+        if isinstance(wrt, str):
             wrt = (wrt,)
         
         fsize = self.default_function_output(fname).size
         wrt_sizes = tuple(self.variables[name].size for name in reversed(wrt))
         
-        self.add_derivative(fname, argname, dname)
+        self.add_derivative(fname, wrt, dname)
         expr = self.default_function_output(dname)
         expr = np.reshape(expr, wrt_sizes + (fsize,))
 
@@ -106,7 +110,7 @@ class Model(sym2num.model.Base):
         
         # Create symbolic function
         fargs = self.function_codegen_arguments(fname)
-        valfun = function.SymbolicSubsFunction(args, nzexpr)
+        valfun = sym2num.function.SymbolicSubsFunction(fargs, nzexpr)
         valfun_name = f'{dname}_val'
         setattr(self, valfun_name, valfun)
         
