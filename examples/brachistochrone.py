@@ -17,7 +17,7 @@ for m in (symoptim, symcol, symoc):
     importlib.reload(m)
 
 
-class BrachistochroneModel(symoc.OCModel):
+class SymbolicBrachistochroneModel(symoc.OCModel):
     """Symbolic Brachistochrone optimal control model."""
     
     collocation_order = 3
@@ -25,19 +25,42 @@ class BrachistochroneModel(symoc.OCModel):
     def __init__(self):
         v = self.Variables(
             x=['x', 'y', 'v'],
-            u=['theta']
+            u=['theta'],
+            p=['tf']
         )
         super().__init__(v)
 
     @sym2num.model.collect_symbols
-    def f(self, x, u, p, *, a):
+    def f(self, x, u, p, *, s):
+        """ODE function."""        
         g = 9.80665
-        xdot = [a.v * sympy.sin(a.theta),
-                a.v * sympy.cos(a.theta),
-                g * sympy.cos(a.theta)]
+        xdot = [s.v * sympy.sin(s.theta) * s.tf,
+                s.v * sympy.cos(s.theta) * s.tf,
+                g * sympy.cos(s.theta) * s.tf]
         return xdot
+    
+    @sym2num.model.collect_symbols
+    def g(self, x, u, p, *, s):
+        """Path constraints."""
+        return []
+    
+    @sym2num.model.collect_symbols
+    def h(self, xe, p, *, s):
+        """Endpoint constraints."""
+        return []
+    
+    @sym2num.model.collect_symbols
+    def L(self, x, u, p, *, s):
+        """Lagrange (running) cost."""
+        return 0
+    
+    @sym2num.model.collect_symbols
+    def M(self, xe, p, *, s):
+        """Mayer (endpoint) cost."""
+        return s.tf
 
 
 if __name__ == '__main__':
-    model = BrachistochroneModel()
-    
+    symmodel = SymbolicBrachistochroneModel()
+    GeneratedBrachistochrone = symmodel.compile_class()
+    model = GeneratedBrachistochrone()

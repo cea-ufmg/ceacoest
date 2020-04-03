@@ -39,11 +39,40 @@ class Model(sym2num.model.Base):
     def generate_assignments(self):
         """Dictionary of assignments in generated class code."""
         a = dict(constraints=self.constraints, objectives=self.objectives)
-        for k, v in self.sparse_nzinds.items():
+        for k, v in self.sparse_nzind.items():
             a[f'{k}_ind'] = v
         for k, v in self.sparse_nnz.items():
             a[f'{k}_nnz'] = v
         return a
+    
+    def add_objective(self, fname, derivatives=2):
+        der1 = {}
+        der2 = {}
+        desc = dict(der1=der1, der2=der2)
+        self.objectives[fname] = desc
+        self.generate_functions.add(fname)
+        
+        if not derivatives:
+            return
+        
+        # Get variables needed for derivative calculation
+        args = self.function_codegen_arguments(fname)
+        wrt = set(args).intersection(self.decision)
+
+        # Calculate first derivatives
+        if derivatives >= 1:
+            for argname in wrt:
+                derivname = self.first_derivative_name(fname, argname)
+                self.add_derivative(fname, argname, derivname)
+                self.generate_functions.add(derivname)
+                der1[argname] = derivname
+        
+        # Calculate second derivatives
+        if derivatives >= 2:
+            for pair in itertools.combinations_with_replacement(wrt, 2):
+                derivname = self.second_derivative_name(fname, pair)
+                self.add_sparse_derivative(fname, pair, derivname)
+                der2[pair] = derivname
     
     def add_constraint(self, fname, derivatives=2):
         fshape = self.default_function_output(fname).shape
@@ -53,8 +82,7 @@ class Model(sym2num.model.Base):
         desc = dict(shape=fshape, der1=der1, der2=der2)
         self.constraints[fname] = desc
         self.generate_functions.add(fname)
-        
-        
+                
         if not derivatives:
             return
 
@@ -63,20 +91,20 @@ class Model(sym2num.model.Base):
         wrt = set(args).intersection(self.decision)
 
         # Calculate first derivatives
-        if derivatives <= 1:            
+        if derivatives >= 1:
             for argname in wrt:
                 derivname = self.first_derivative_name(fname, argname)
                 self.add_sparse_derivative(fname, argname, derivname)
-                der1[argname] = derivname                
+                der1[argname] = derivname
         
         # Calculate second derivatives
-        if derivatives <= 2:
+        if derivatives >= 2:
             for pair in itertools.combinations_with_replacement(wrt, 2):
-                derivname = self.first_derivative_name(fname, pair)
+                derivname = self.second_derivative_name(fname, pair)
                 self.add_sparse_derivative(fname, pair, derivname)
                 der2[pair] = derivname
     
-    def add_sparse_derivative(self, fname, wrt, dname, selector='tril'):
+    def add_sparse_derivative(self, fname, wrt, dname, sel='tril', gen=True):
         if isinstance(wrt, str):
             wrt = (wrt,)
         
@@ -86,9 +114,9 @@ class Model(sym2num.model.Base):
         self.add_derivative(fname, wrt, dname)
         expr = self.default_function_output(dname)
         expr = np.reshape(expr, wrt_sizes + (fsize,))
-
+        
         # Choose selector
-        if len(wrt) == 2 and wrt[0] == wrt[1] and selector == 'tril':
+        if len(wrt) == 2 and wrt[0] == wrt[1] and sel == 'tril':
             keepind = lambda ind: ind[0] <= ind[1]
         else:
             keepind = lambda ind: True
@@ -115,7 +143,8 @@ class Model(sym2num.model.Base):
         setattr(self, valfun_name, valfun)
         
         # Include in set of functions to generate code
-        self.generate_functions.add(valfun_name)
+        if gen:
+            self.generate_functions.add(valfun_name)
     
     def first_derivative_name(self, fname, wrtname):
         """Generator of default name of first derivatives."""
@@ -123,6 +152,9 @@ class Model(sym2num.model.Base):
     
     def second_derivative_name(self, fname, wrt):
         """Generator of default name of second derivatives."""
+        if not isinstance(wrt, tuple) or len(wrt) != 2:
+            raise ValueError("wrt must be a two-element tuple")
+        
         if wrt[0] == wrt[1]:
             return f'd2{fname}_d{wrt[0]}2'
         else:
