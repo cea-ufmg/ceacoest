@@ -50,9 +50,9 @@ class OptimizationModel(sym2num.model.Base):
         return a
     
     def add_objective(self, fname, derivatives=2):
-        der1 = {}
-        der2 = {}
-        desc = dict(der1=der1, der2=der2)
+        grad = {}
+        hess = {}
+        desc = dict(grad=grad, hess=hess)
         self.objectives[fname] = desc
         self.generate_functions.add(fname)
         
@@ -69,21 +69,21 @@ class OptimizationModel(sym2num.model.Base):
                 derivname = self.first_derivative_name(fname, argname)
                 self.add_derivative(fname, argname, derivname)
                 self.generate_functions.add(derivname)
-                der1[argname,] = derivname
+                grad[argname] = derivname
         
         # Calculate second derivatives
         if derivatives >= 2:
             for pair in itertools.combinations_with_replacement(wrt, 2):
                 derivname = self.second_derivative_name(fname, pair)
                 self.add_sparse_derivative(fname, pair, derivname)
-                der2[pair] = derivname
+                hess[pair] = derivname
     
     def add_constraint(self, fname, derivatives=2):
         fshape = self.default_function_output(fname).shape
         
-        der1 = {}
-        der2 = {}
-        desc = dict(shape=fshape, der1=der1, der2=der2)
+        jac = {}
+        hess = {}
+        desc = dict(shape=fshape, jac=jac, hess=hess)
         self.constraints[fname] = desc
         self.generate_functions.add(fname)
                 
@@ -99,14 +99,14 @@ class OptimizationModel(sym2num.model.Base):
             for argname in wrt:
                 derivname = self.first_derivative_name(fname, argname)
                 self.add_sparse_derivative(fname, argname, derivname)
-                der1[argname,] = derivname
+                jac[argname,] = derivname
         
         # Calculate second derivatives
         if derivatives >= 2:
             for pair in itertools.combinations_with_replacement(wrt, 2):
                 derivname = self.second_derivative_name(fname, pair)
                 self.add_sparse_derivative(fname, pair, derivname)
-                der2[pair] = derivname
+                hess[pair] = derivname
     
     def add_sparse_derivative(self, fname, wrt, dname, sel='tril', gen=True):
         if isinstance(wrt, str):

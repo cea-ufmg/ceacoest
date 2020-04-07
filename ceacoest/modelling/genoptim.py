@@ -2,6 +2,7 @@
 
 
 import collections
+import functools
 import inspect
 import types
 
@@ -26,10 +27,13 @@ class OptimizationFunction:
     def __init__(self, model):
         self.model = model
         """The parent model."""
+        
+        self.__signature__ = bound_signature(self.method)
+        """The object call signature."""
     
     def __call__(self, *args, **kwargs):
         return self.method(self.model, *args, **kwargs)
-
+    
     def _sparse_deriv_ind(self, deriv, dec_ext={}, out_ext=()):
         ret = collections.OrderedDict()
         for wrt, dname in deriv.items():
@@ -51,44 +55,26 @@ class OptimizationFunction:
             # Save in dictionary
             ret[wrt] = np.array(ind)
         return ret
-
     
+    def _sparse_deriv_val(self, deriv, *args, **kwargs):
+        ret = collections.OrderedDict()
+        for wrt, dname in deriv.items():
+            ret[wrt] = getattr(self.model, f'{dname}_val')(*args, **kwargs)
+        return ret
+
+
 class ConstraintFunction(OptimizationFunction):
     def jac_ind(self, dec_ext={}, out_ext=()):
-        ret = collections.OrderedDict()
-        for wrt, dname in self._jac.items():
-            wrt_ind, out_ind = getattr(self.model, f'{dname}_ind')
-            wrt_sz = shape_size(self.ModelClass.base_shapes[wrt])
-            out_sz = self.out_sz
-            wrt_ext = dec_ext.get(wrt, ())
+        return self._sparse_deriv_ind(self._jac, dec_ext, out_ext)
 
-            wrt_offsets = ndim_range(wrt_ext) * np.ones(out_ext, int) * wrt_sz
-            out_offsets = ndim_range(out_ext) * out_sz
-            
-            key = wrt, type(self).__name__
-            ret[key] = np.array([wrt_ind + wrt_offsets[..., None],
-                                 out_ind + out_offsets[..., None]])
-        return ret
+    def jac_val(self, *args, **kwargs):
+        return self._sparse_deriv_val(self._jac, *args, **kwargs)
     
     def hess_ind(self, dec_ext={}, out_ext=()):
-        ret = collections.OrderedDict()
-        for (wrt0, wrt1), dname in self._hess.items():
-            wrt0_ind, wrt1_ind, out_ind = getattr(self.model, f'{dname}_ind')
-            wrt0_sz = shape_size(self.ModelClass.base_shapes[wrt0])
-            wrt1_sz = shape_size(self.ModelClass.base_shapes[wrt1])
-            out_sz = self.out_sz
-            wrt0_ext = dec_ext.get(wrt0, ())
-            wrt1_ext = dec_ext.get(wrt1, ())
+        return self._sparse_deriv_ind(self._hess, dec_ext, out_ext)
 
-            wrt0_off = ndim_range(wrt0_ext) * np.ones(out_ext, int) * wrt0_sz
-            wrt1_off = ndim_range(wrt1_ext) * np.ones(out_ext, int) * wrt1_sz
-            out_off = ndim_range(out_ext) * out_sz
-            
-            key = wrt0, wrt1, type(self).__name__
-            ret[key] = np.array([wrt0_ind + wrt0_off[..., None],
-                                 wrt1_ind + wrt1_off[..., None],
-                                 out_ind + out_off[..., None]])
-        return ret
+    def hess_val(self, *args, **kwargs):
+        return self._sparse_deriv_val(self._hess, *args, **kwargs)
 
 
 class OptimizationFunctionMeta(type):
@@ -101,10 +87,7 @@ class OptimizationFunctionMeta(type):
     def __init__(self, name, method, desc, ModelClass):
         self.method = staticmethod(method)
         """The underlying callable optimization function."""
-        
-        self.__signature__ = bound_signature(method)
-        """The class call signature."""
-       
+               
         self.ModelClass = ModelClass
         """The underlying model class."""
     
@@ -123,15 +106,20 @@ class ConstraintFunctionMeta(OptimizationFunctionMeta):
     def __init__(self, name, method, desc, ModelClass):
         # Initialize base class
         super().__init__(name, method, desc, ModelClass)
-
+        
         self.out_sz = shape_size(desc['shape'])
         """Constraint function output base size."""
         
-        self._jac = collections.OrderedDict(desc['der1'])
+        self._jac = collections.OrderedDict(desc['jac'])
         """First derivatives."""
-
-        self._hess = collections.OrderedDict(desc['der2'])
+        
+        self._hess = collections.OrderedDict(desc['hess'])
         """Second derivatives."""
+        
+        # Assign signature to the sparse value functions
+        method_sig = inspect.signature(self.method)
+        self.jac_val = with_signature(self.jac_val, method_sig)
+        self.hess_val = with_signature(self.hess_val, method_sig)
 
 
 def bound_signature(method):
@@ -139,6 +127,14 @@ def bound_signature(method):
     sig = inspect.signature(method)
     param = list(sig.parameters.values())[1:]
     return inspect.Signature(param, return_annotation=sig.return_annotation)
+
+
+def with_signature(f, sig):
+    @functools.wraps(f)
+    def new_f(*args, **kwargs):
+        return f(*args, **kwargs)
+    new_f.__signature__ = sig
+    return new_f
 
 
 def shape_size(shape):
