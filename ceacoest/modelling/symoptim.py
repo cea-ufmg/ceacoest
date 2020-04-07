@@ -69,7 +69,7 @@ class OptimizationModel(sym2num.model.Base):
                 derivname = self.first_derivative_name(fname, argname)
                 self.add_derivative(fname, argname, derivname)
                 self.generate_functions.add(derivname)
-                der1[argname] = derivname
+                der1[argname,] = derivname
         
         # Calculate second derivatives
         if derivatives >= 2:
@@ -99,7 +99,7 @@ class OptimizationModel(sym2num.model.Base):
             for argname in wrt:
                 derivname = self.first_derivative_name(fname, argname)
                 self.add_sparse_derivative(fname, argname, derivname)
-                der1[argname] = derivname
+                der1[argname,] = derivname
         
         # Calculate second derivatives
         if derivatives >= 2:

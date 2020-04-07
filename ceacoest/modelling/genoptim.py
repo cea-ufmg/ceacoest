@@ -21,6 +21,7 @@ def optimization_meta(name, bases, dict):
     
     return cls
 
+
 class OptimizationFunction:
     def __init__(self, model):
         self.model = model
@@ -28,6 +29,28 @@ class OptimizationFunction:
     
     def __call__(self, *args, **kwargs):
         return self.method(self.model, *args, **kwargs)
+
+    def _sparse_deriv_ind(self, deriv, dec_ext={}, out_ext=()):
+        ret = collections.OrderedDict()
+        for wrt, dname in deriv.items():
+            ind = []
+            base_ind = getattr(self.model, f'{dname}_ind')
+            for wrt_name, wrt_ind in zip(wrt, base_ind):
+                wrt_sz = shape_size(self.model.base_shapes[wrt_name])
+                out_sz = self.out_sz
+                wrt_ext = dec_ext.get(wrt_name, ())
+            
+                wrt_offs = ndim_range(wrt_ext) * np.ones(out_ext, int) * wrt_sz
+                ind.append(wrt_ind + wrt_offs[..., None])
+            
+            # Extend the output indices
+            out_ind = base_ind[-1]
+            out_offs = ndim_range(out_ext) * out_sz
+            ind.append(out_ind + out_offs[..., None])
+            
+            # Save in dictionary
+            ret[wrt] = np.array(ind)
+        return ret
 
     
 class ConstraintFunction(OptimizationFunction):
