@@ -13,7 +13,7 @@ from . import symoptim
 from .. import utils, rk
 
 
-class CollocatedModel(symoptim.Model):
+class CollocatedModel(symoptim.OptimizationModel):
     """Symbolic LGL-collocation model base."""
     
     Variables = sym2num.model.Variables

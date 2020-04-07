@@ -9,11 +9,11 @@ import numpy as np
 import sympy
 import sym2num.model
 
-from ceacoest.modelling import symoc, symcol, symoptim
+from ceacoest.modelling import genoptim, symoc, symcol, symoptim
 
 
 # Reload modules for testing
-for m in (symoptim, symcol, symoc):
+for m in (genoptim, symoptim, symcol, symoc):
     importlib.reload(m)
 
 
@@ -63,4 +63,9 @@ class SymbolicBrachistochroneModel(symoc.OCModel):
 if __name__ == '__main__':
     symmodel = SymbolicBrachistochroneModel()
     GeneratedBrachistochrone = symmodel.compile_class()
-    model = GeneratedBrachistochrone()
+
+    class T(GeneratedBrachistochrone, metaclass=genoptim.optimization_meta):
+        pass
+    
+    #model = GeneratedBrachistochrone()
+    

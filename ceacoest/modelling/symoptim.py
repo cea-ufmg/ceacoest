@@ -9,7 +9,7 @@ import sym2num.var
 import sympy
 
 
-class Model(sym2num.model.Base):
+class OptimizationModel(sym2num.model.Base):
     """Symbolic optimization model base."""
 
     def __init__(self):
@@ -38,7 +38,11 @@ class Model(sym2num.model.Base):
     @property
     def generate_assignments(self):
         """Dictionary of assignments in generated class code."""
-        a = dict(constraints=self.constraints, objectives=self.objectives)
+        a = dict(
+            constraints=self.constraints, 
+            objectives=self.objectives,
+            base_shapes={d: self.variables[d].shape for d in self.decision}
+        )
         for k, v in self.sparse_nzind.items():
             a[f'{k}_ind'] = v
         for k, v in self.sparse_nnz.items():
@@ -131,9 +135,10 @@ class Model(sym2num.model.Base):
         
         # Convert to ndarray
         nzexpr = np.asarray(nzexpr, dtype=object)
-
+        nzind = np.asarray(nzind, dtype=int).T.reshape(len(wrt) + 1, -1)
+        
         # Save indices and number of nonzero elements
-        self.sparse_nzind[dname] = np.asarray(nzind, dtype=int).T
+        self.sparse_nzind[dname] = nzind
         self.sparse_nnz[dname] = nzexpr.size
         
         # Create symbolic function
