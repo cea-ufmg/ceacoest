@@ -12,6 +12,12 @@ import sympy
 class OptimizationModel(sym2num.model.Base):
     """Symbolic optimization model base."""
 
+    generate_imports = ['ceacoest.modelling.genoptim as _genoptim']
+    """List of imports to generate in class code."""
+    
+    generated_metaclass = '_genoptim.optimization_meta'
+    """Metaclass of the generated model."""
+    
     def __init__(self):
         # Initialize base class
         super().__init__()

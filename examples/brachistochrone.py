@@ -40,21 +40,6 @@ class SymbolicBrachistochroneModel(symoc.OCModel):
         return xdot
     
     @sym2num.model.collect_symbols
-    def g(self, x, u, p, *, s):
-        """Path constraints."""
-        return []
-    
-    @sym2num.model.collect_symbols
-    def h(self, xe, p, *, s):
-        """Endpoint constraints."""
-        return []
-    
-    @sym2num.model.collect_symbols
-    def L(self, x, u, p, *, s):
-        """Lagrange (running) cost."""
-        return 0
-    
-    @sym2num.model.collect_symbols
     def M(self, xe, p, *, s):
         """Mayer (endpoint) cost."""
         return s.tf
@@ -62,10 +47,5 @@ class SymbolicBrachistochroneModel(symoc.OCModel):
 
 if __name__ == '__main__':
     symmodel = SymbolicBrachistochroneModel()
-    GeneratedBrachistochrone = symmodel.compile_class()
-
-    class T(GeneratedBrachistochrone, metaclass=genoptim.optimization_meta):
-        pass
-    
-    #model = GeneratedBrachistochrone()
-    
+    GeneratedBrachistochrone = symmodel.compile_class()    
+    model = GeneratedBrachistochrone()

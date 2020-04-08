@@ -15,10 +15,17 @@ def optimization_meta(name, bases, dict):
     
     for name, desc in cls.constraints.items():
         method = getattr(cls, name)
-        constraint_obj = ConstraintFunctionMeta(
+        constraint = ConstraintFunctionMeta(
             name, method, desc, cls
         )
-        setattr(cls, name, constraint_obj)
+        setattr(cls, name, constraint)
+
+    for name, desc in cls.objectives.items():
+        method = getattr(cls, name)
+        objective = ObjectiveFunctionMeta(
+            name, method, desc, cls
+        )
+        setattr(cls, name, objective)
     
     return cls
 
@@ -30,6 +37,10 @@ class OptimizationFunction:
         
         self.__signature__ = bound_signature(self.method)
         """The object call signature."""
+        
+        # Assign descriptive signature to the sparse value functions
+        method_sig = inspect.signature(self.method)
+        self.hess_val = with_signature(self.hess_val, method_sig)
     
     def __call__(self, *args, **kwargs):
         return self.method(self.model, *args, **kwargs)
@@ -61,14 +72,6 @@ class OptimizationFunction:
         for wrt, dname in deriv.items():
             ret[wrt] = getattr(self.model, f'{dname}_val')(*args, **kwargs)
         return ret
-
-
-class ConstraintFunction(OptimizationFunction):
-    def jac_ind(self, dec_ext={}, out_ext=()):
-        return self._sparse_deriv_ind(self._jac, dec_ext, out_ext)
-
-    def jac_val(self, *args, **kwargs):
-        return self._sparse_deriv_val(self._jac, *args, **kwargs)
     
     def hess_ind(self, dec_ext={}, out_ext=()):
         return self._sparse_deriv_ind(self._hess, dec_ext, out_ext)
@@ -90,12 +93,70 @@ class OptimizationFunctionMeta(type):
                
         self.ModelClass = ModelClass
         """The underlying model class."""
+        
+        self._hess = collections.OrderedDict(desc['hess'])
+        """Second derivatives."""
     
     def __get__(self, instance, owner=None):
         if instance is None:
             return self
         else:
             return self(instance)
+
+
+class ObjectiveFunction(OptimizationFunction):
+    def grad(self, *args, **kwargs):
+        arg_names = self.__signature__.parameters.keys()
+        arg_indices = {n: i for i, n in enumerate(arg_names)}
+        ret = collections.OrderedDict()
+        for wrt, dname in self._grad.items():
+            # Calculate the gradient
+            grad_fun = getattr(self.model, dname)
+            grad_val = grad_fun(*args, **kwargs)
+            
+            # Get the shape of the wrt argument
+            try:
+                wrt_shape = np.shape(kwargs[wrt])
+            except KeyError:
+                wrt_shape = np.shape(args[arg_indices[wrt]])
+            
+            # Accumulate so the gradient has the same shape as the variable
+            ret[wrt] = grad_val.reshape(-1, *wrt_shape).sum(0)
+        return ret
+
+
+class ObjectiveFunctionMeta(OptimizationFunctionMeta):
+
+    bases = ObjectiveFunction,
+    """Bases of generated class."""
+    
+    def __init__(self, name, method, desc, ModelClass):
+        # Initialize base class
+        super().__init__(name, method, desc, ModelClass)
+        
+        self.out_sz = 1
+        """Function output base size."""
+        
+        self._grad = collections.OrderedDict(desc['grad'])
+        """First derivatives."""
+        
+        # Assign descriptive signature to the gradient
+        method_sig = inspect.signature(self.method)
+        self.grad = with_signature(self.grad, method_sig)
+
+
+class ConstraintFunction(OptimizationFunction):
+    def jac_ind(self, dec_ext={}, out_ext=()):
+        return self._sparse_deriv_ind(self._jac, dec_ext, out_ext)
+
+    def jac_val(self, *args, **kwargs):
+        return self._sparse_deriv_val(self._jac, *args, **kwargs)
+    
+    def hess_ind(self, dec_ext={}, out_ext=()):
+        return self._sparse_deriv_ind(self._hess, dec_ext, out_ext)
+
+    def hess_val(self, *args, **kwargs):
+        return self._sparse_deriv_val(self._hess, *args, **kwargs)
 
 
 class ConstraintFunctionMeta(OptimizationFunctionMeta):
@@ -116,7 +177,7 @@ class ConstraintFunctionMeta(OptimizationFunctionMeta):
         self._hess = collections.OrderedDict(desc['hess'])
         """Second derivatives."""
         
-        # Assign signature to the sparse value functions
+        # Assign descriptive signature to the sparse value functions
         method_sig = inspect.signature(self.method)
         self.jac_val = with_signature(self.jac_val, method_sig)
         self.hess_val = with_signature(self.hess_val, method_sig)

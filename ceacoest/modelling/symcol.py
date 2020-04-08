@@ -31,11 +31,17 @@ class CollocatedModel(symoptim.OptimizationModel):
         for varname, varspec in variables.items():
             v[varname] = varspec
 
+        # Verify the variables and define defaults
+        v.setdefault('piece_len', 'piece_len')
+        u = v.setdefault('u', [])
+        x = v.setdefault('x')
+        if x is None:
+            raise ValueError('state vector "x" missing from model variables')
+        
         # Create and register derived variables
         ncol = self.collocation.n
-        v['piece_len'] = 'piece_len'
-        v['xp'] = [[f'{n}_piece_{k}' for n in v['x']] for k in range(ncol)]
-        v['up'] = [[f'{n}_piece_{k}' for n in v['u']] for k in range(ncol)]
+        v['xp'] = [[f'{n}_piece_{k}' for n in x] for k in range(ncol)]
+        v['up'] = [[f'{n}_piece_{k}' for n in u] for k in range(ncol)]
         
         # Register collocation constraint
         self.add_constraint('e')
