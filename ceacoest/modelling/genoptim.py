@@ -31,6 +31,13 @@ def optimization_meta(name, bases, dict):
 
 
 class OptimizationFunction:
+    
+    out_shape = ()
+    """Function output base shape."""
+    
+    out_sz = 1
+    """Function output base size."""
+    
     def __init__(self, model):
         self.model = model
         """The parent model."""
@@ -38,23 +45,42 @@ class OptimizationFunction:
         self.__signature__ = bound_signature(self.method)
         """The object call signature."""
         
-        # Assign descriptive signature to the sparse value functions
+        # Assign a descriptive signature to the sparse value functions
         method_sig = inspect.signature(self.method)
         self.hess_val = with_signature(self.hess_val, method_sig)
     
     def __call__(self, *args, **kwargs):
         return self.method(self.model, *args, **kwargs)
     
-    def _sparse_deriv_ind(self, deriv, dec_ext={}, out_ext=()):
+    def _shape_ext(self, shape=None, varname=None):
+        """Return a variable's shape extension from its base shape."""
+        if shape is None:
+            return ()
+        
+        if varname is None:
+            base_shape = self.out_shape
+        else:
+            base_shape = self.model.base_shapes[varname]
+        
+        # If the base shape is scalar (empty tuple) return the variable's shape
+        if not base_shape:
+            return shape
+        
+        assert shape[-len(base_shape):] == base_shape
+        return shape[:-len(base_shape)]
+    
+    def _sparse_deriv_ind(self, deriv, dec_shapes={}, out_shape=()):
         ret = collections.OrderedDict()
         for wrt, dname in deriv.items():
             ind = []
             base_ind = getattr(self.model, f'{dname}_ind')
             for wrt_name, wrt_ind in zip(wrt, base_ind):
+                wrt_shape = dec_shapes.get(wrt_name, None)
+                wrt_ext = self._shape_ext(wrt_shape, wrt_name)
                 wrt_sz = shape_size(self.model.base_shapes[wrt_name])
                 out_sz = self.out_sz
-                wrt_ext = dec_ext.get(wrt_name, ())
-            
+                out_ext = self._shape_ext(out_shape)
+                
                 wrt_offs = ndim_range(wrt_ext) * np.ones(out_ext, int) * wrt_sz
                 ind.append(wrt_ind + wrt_offs[..., None])
             
@@ -66,15 +92,15 @@ class OptimizationFunction:
             # Save in dictionary
             ret[wrt] = np.array(ind)
         return ret
-    
+        
     def _sparse_deriv_val(self, deriv, *args, **kwargs):
         ret = collections.OrderedDict()
         for wrt, dname in deriv.items():
             ret[wrt] = getattr(self.model, f'{dname}_val')(*args, **kwargs)
         return ret
     
-    def hess_ind(self, dec_ext={}, out_ext=()):
-        return self._sparse_deriv_ind(self._hess, dec_ext, out_ext)
+    def hess_ind(self, dec_shapes={}, out_shape=()):
+        return self._sparse_deriv_ind(self._hess, dec_shapes, out_shape)
 
     def hess_val(self, *args, **kwargs):
         return self._sparse_deriv_val(self._hess, *args, **kwargs)
@@ -133,10 +159,7 @@ class ObjectiveFunctionMeta(OptimizationFunctionMeta):
     def __init__(self, name, method, desc, ModelClass):
         # Initialize base class
         super().__init__(name, method, desc, ModelClass)
-        
-        self.out_sz = 1
-        """Function output base size."""
-        
+                
         self._grad = collections.OrderedDict(desc['grad'])
         """First derivatives."""
         
@@ -146,17 +169,11 @@ class ObjectiveFunctionMeta(OptimizationFunctionMeta):
 
 
 class ConstraintFunction(OptimizationFunction):
-    def jac_ind(self, dec_ext={}, out_ext=()):
-        return self._sparse_deriv_ind(self._jac, dec_ext, out_ext)
-
+    def jac_ind(self, dec_shapes={}, out_shape=()):
+        return self._sparse_deriv_ind(self._jac, dec_shapes, out_shape)
+    
     def jac_val(self, *args, **kwargs):
         return self._sparse_deriv_val(self._jac, *args, **kwargs)
-    
-    def hess_ind(self, dec_ext={}, out_ext=()):
-        return self._sparse_deriv_ind(self._hess, dec_ext, out_ext)
-
-    def hess_val(self, *args, **kwargs):
-        return self._sparse_deriv_val(self._hess, *args, **kwargs)
 
 
 class ConstraintFunctionMeta(OptimizationFunctionMeta):
@@ -167,6 +184,9 @@ class ConstraintFunctionMeta(OptimizationFunctionMeta):
     def __init__(self, name, method, desc, ModelClass):
         # Initialize base class
         super().__init__(name, method, desc, ModelClass)
+        
+        self.out_shape = desc['shape']
+        """Base shape of the constraint function output."""
         
         self.out_sz = shape_size(desc['shape'])
         """Constraint function output base size."""
