@@ -33,6 +33,7 @@ class CollocatedModel(symoptim.OptimizationModel):
 
         # Verify the variables and define defaults
         v.setdefault('piece_len', 'piece_len')
+        v.setdefault('p', [])
         u = v.setdefault('u', [])
         x = v.setdefault('x')
         if x is None:
@@ -49,12 +50,26 @@ class CollocatedModel(symoptim.OptimizationModel):
         # Mark `f` function for code generation
         self.generate_functions.add('f')
     
+    @property
+    def collocation_order(self):
+        return getattr(super(), 'collocation_order', 2)
+    
     @utils.cached_property
     def collocation(self):
         """Collocation method."""
-        collocation_order = getattr(self, 'collocation_order', 2)
-        return rk.LGLCollocation(collocation_order)
+        return rk.LGLCollocation(self.collocation_order)
+    
+    @property
+    def generate_assignments(self):
+        """Dictionary of assignments in generated class code."""
 
+        gen = {'nx': len(self.variables['x']),
+               'nu': len(self.variables['u']),
+               'np': len(self.variables['p']),
+               'collocation_order': self.collocation_order,
+               **getattr(super(), 'generate_assignments', {})}
+        return gen
+    
     def e(self, xp, up, p, piece_len):
         """Collocation defects (error)."""
         ncol = self.collocation.n

@@ -10,6 +10,109 @@ import numpy as np
 
 
 class Problem:
+    """Optimization problem with sparse derivatives."""
+    
+    def __init__(self):
+        self.decision = []
+        """Decision variable component specifications."""
+        
+        self.ndec = 0
+        """Size of the decision vector."""
+        
+    def add_decision(self, name, shape):
+        """Add a decision variable to this problem."""
+        if isinstance(shape, numbers.Integral):
+            shape = shape,
+        dec = Decision(shape, self.ndec, name)
+        self.ndec += dec.size
+        self.decision.append(dec)
+    
+    def variables(self, dvec):
+        """Get all variables needed to evaluate problem functions."""
+        dvec = np.asarray(dvec)
+        assert dvec.shape == (self.ndec,)
+        return {d.name: d.unpack_from(dvec) for d in self.decision}
+
+    def _remap_ind(self, varname, ind):
+        raise NotImplementedError
+
+    def _add_to_grad(self, grad, value, varname):
+        raise NotImplementedError
+
+    
+class Component:
+    """Specificiation of a problem's decision or constraint vector component."""
+    
+    def __init__(self, shape, offset):
+        self.shape = (shape,) if isinstance(shape, numbers.Integral) else shape
+        """The component's ndarray shape."""
+        
+        self.offset = offset
+        """Offset into the parent vector."""
+    
+    @property
+    def size(self):
+        """Total number of elements."""
+        return np.prod(self.shape, dtype=np.intc)
+    
+    @property
+    def slice(self):
+        """This component's slice in the parent vector."""
+        return slice(self.offset, self.offset + self.size)
+    
+    def unpack_from(self, vec):
+        """Extract component from parent vector."""
+        return np.asarray(vec)[self.slice].reshape(self.shape)
+    
+    def add_to(self, destination, value):
+        assert destination.ndim == 1
+        assert destination.size >= self.offset + self.size
+        destination[self.slice] += np.broadcast_to(value, self.shape).ravel()
+    
+    def pack_into(self, destination, value):
+        assert destination.ndim == 1
+        assert destination.size >= self.offset + self.size
+        destination[self.slice] = np.broadcast_to(value, self.shape).ravel()
+
+
+class Decision(Component):
+    """A decision variable within an optimization problem."""
+    
+    def __init__(self, shape, offset, name):
+        super().__init__(shape, offset)
+        
+        self.name = name
+        """The variable name."""
+    
+    def __repr__(self):
+        offset = self.offset
+        shape = self.shape
+        return f'<Decision var "{self.name}" {offset=} {shape=}>'
+
+
+class Constraint(Component):
+    """A constraint within an optimization problem."""
+    
+    def __init__(self, shape, offset, fun, args=None, name=None):
+        super().__init__(shape, offset)
+        
+        self.fun = fun
+        """The underlying constraint object."""
+        
+        # If the name is not given, try to guess it
+        if name is None:
+            try:
+                name = fun.__name__
+            except AttributeError:
+                pass
+        self.name = name
+        """The constraint name."""
+
+    def __call__(self, *args, **kwargs):
+        return self.fun(*args, **kwargs)
+
+
+class OldProblem:
     """Sparse optimization problem."""
     
     def __init__(self):
@@ -304,7 +407,7 @@ class IndexedComponent(Component):
             return np.arange(self.tiling)[:, None]*increment + ind + self.offset
 
 
-class Decision(IndexedComponent):
+class OldDecision(IndexedComponent):
     def __init__(self, offset, shape, tiling=None):
         super().__init__(shape, offset)
         self.set_tiling(tiling)

@@ -49,6 +49,10 @@ class OptimizationFunction:
         method_sig = inspect.signature(self.method)
         self.hess_val = with_signature(self.hess_val, method_sig)
     
+    @property
+    def __name__(self):
+        return type(self).__name__
+    
     def __call__(self, *args, **kwargs):
         return self.method(self.model, *args, **kwargs)
     

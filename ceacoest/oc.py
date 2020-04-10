@@ -5,11 +5,18 @@ import itertools
 
 import numpy as np
 
-from . import collocation, optim, utils
+from . import col, optim, utils
 
 
-class Problem(collocation.CollocatedProblem):
+class Problem(col.Problem):
     """Optimal control problem with LGL direct collocation."""
+
+    def __init__(self, model, t):
+        super().__init__(model, t)
+
+
+class OldProblem(col.OldCollocatedProblem):
+    """Optimal control problem with LGL direct col."""
     
     def __init__(self, model, t):
         super().__init__(model, t)
@@ -17,7 +24,7 @@ class Problem(collocation.CollocatedProblem):
         npieces = self.npieces
         
         u = self.register_decision('u', model.nu, npoints)
-        self.register_derived('up', collocation.PieceRavelledVariable(self,'u'))
+        self.register_derived('up', col.PieceRavelledVariable(self,'u'))
         self.register_derived('xe', XEVariable(self))
         
         self.register_constraint('g', model.g, ('x','u','p'), model.ng, npoints)

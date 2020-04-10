@@ -8,7 +8,46 @@ import numpy as np
 from . import optim, rk, utils
 
 
-class CollocatedProblem(optim.Problem):
+class Problem(optim.Problem):
+    """Collocated optimization problem base."""
+    
+    def __init__(self, model, t):
+        # Initialize base class
+        super().__init__()
+        
+        self.model = model
+        """Underlying model."""
+        
+        col = rk.LGLCollocation(model.collocation_order)
+        self.collocation = col
+        """Collocation method."""
+        
+        assert np.ndim(t) == 1
+        self.piece_len = np.diff(t)
+        """Normalized length of each collocation piece."""
+        
+        assert np.all(self.piece_len > 0)
+        npieces = len(self.piece_len)
+        self.npieces = npieces
+        """Number of collocation pieces."""
+        
+        self.tc = self.collocation.grid(t)
+        """Normalized collocation time grid."""
+        
+        npoints = self.tc.size
+        self.npoints = npoints
+        """Total number of collocation points."""
+        
+        self.add_decision('x', (self.npoints, model.nx))
+        self.add_constraint(model.e, (npieces, col.ninterv, model.nx))
+        #self.register_derived('xp', PieceRavelledVariable(self, 'x'))
+        
+        #self.register_constraint(
+        #    'e', model.e, ('xp','up','p', 'piece_len'), model.ne, npieces
+        #)
+
+
+class OldCollocatedProblem(optim.OldProblem):
     """Collocated optimization problem base."""
     
     def __init__(self, model, t):
