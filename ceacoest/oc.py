@@ -14,62 +14,53 @@ class Problem(col.Problem):
     def __init__(self, model, t):
         super().__init__(model, t)
 
+        ncol = self.collocation.n
         npoints = self.npoints
         npieces = self.npieces
         
-        self.add_decision('u', (npoints, model.nu))
+        x = self.decision['x']
+        u = self.add_decision('u', (npoints, model.nu))
         self.add_decision('p', model.np)
+        self.remapped['up'] = col.PieceRavelledVariable(u, npieces, ncol)
+        self.remapped['xe'] = XEVariable(x)
         
         self.add_objective(model.IL, npieces)
         self.add_objective(model.M, ())
         self.add_constraint(model.g, (npoints, model.ng))
-
-
-class OldProblem(col.OldCollocatedProblem):
-    """Optimal control problem with LGL direct col."""
-    
-    def __init__(self, model, t):
-        super().__init__(model, t)
-        npoints = self.npoints
-        npieces = self.npieces
-        
-        u = self.register_decision('u', model.nu, npoints)
-        self.register_derived('up', col.PieceRavelledVariable(self,'u'))
-        self.register_derived('xe', XEVariable(self))
-        
-        self.register_constraint('g', model.g, ('x','u','p'), model.ng, npoints)
-        self.register_constraint('h', model.h, ('xe', 'p'), model.nh)
-        self._register_model_constraint_derivatives('g', ('x', 'u', 'p'))
-        self._register_model_constraint_derivatives('h', ('xe', 'p'))
-        self._register_model_constraint_derivatives('e', ('xp', 'up', 'p'))
-        
-        self.register_merit('M', model.M, ('xe', 'p'))
-        self.register_merit(
-            'IL', model.IL, ('xp', 'up', 'p', 'piece_len'), npieces
-        )
-        self._register_model_merit_derivatives('M', ('xe', 'p'))
-        self._register_model_merit_derivatives('IL', ('xp', 'up', 'p'))
+        self.add_constraint(model.h, model.nh)
 
 
 class XEVariable:
-    def __init__(self, problem):
-        self.p = problem
-
+    def __init__(self, x):
+        self.x = x
+        """Specification of the state (x) variable."""
+    
     @property
     def shape(self):
-        return (2, self.p.model.nx)
+        nx = self.x.shape[-1]
+        return (2, nx)
+
     
-    def build(self, variables):
-        x = variables['x']
-        return x[::self.p.npoints-1]
+    @property
+    def shape(self):
+        """The variable's ndarray shape."""
+        return (self.npieces, self.ncol) + self.decision.shape[1:]
+    
+    @property
+    def size(self):
+        """Total number of elements."""
+        return np.prod(self.shape, dtype=np.intc)
+    
+    def unpack_from(self, vec):
+        """Extract component from parent vector."""
+        x = self.x.unpack_from(vec)
+        return x[[0, -1]]
     
     def add_to(self, destination, value):
-        assert np.shape(value) == self.shape
-        x = self.p.decision['x'].unpack_from(destination)
-        x[::self.p.npoints-1] += value
-    
-    def expand_indices(self, ind):
-        nx = self.p.model.nx
-        x_offset = self.p.decision['x'].offset
-        ind = np.asarray(ind, dtype=int)
-        return ind + x_offset + (ind >= nx) * (self.p.npoints - 2) * nx
+        value = np.asarray(value)
+        assert value.shape == self.shape
+        
+        xval = np.zeros(self.x.shape)
+        xval[0] = value[0]
+        xval[-1] = value[-1]
+        self.x.add_to(destination, xval)

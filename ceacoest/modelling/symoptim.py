@@ -81,8 +81,8 @@ class OptimizationModel(sym2num.model.Base):
         if derivatives >= 2:
             for pair in itertools.combinations_with_replacement(wrt, 2):
                 derivname = self.second_derivative_name(fname, pair)
-                self.add_sparse_derivative(fname, pair, derivname)
-                hess[pair] = derivname
+                if self.add_sparse_derivative(fname, pair, derivname):
+                    hess[pair] = derivname
     
     def add_constraint(self, fname, derivatives=2):
         fshape = self.default_function_output(fname).shape
@@ -104,15 +104,15 @@ class OptimizationModel(sym2num.model.Base):
         if derivatives >= 1:
             for argname in wrt:
                 derivname = self.first_derivative_name(fname, argname)
-                self.add_sparse_derivative(fname, argname, derivname)
-                jac[argname,] = derivname
+                if self.add_sparse_derivative(fname, argname, derivname):
+                    jac[argname,] = derivname
         
         # Calculate second derivatives
         if derivatives >= 2:
             for pair in itertools.combinations_with_replacement(wrt, 2):
                 derivname = self.second_derivative_name(fname, pair)
-                self.add_sparse_derivative(fname, pair, derivname)
-                hess[pair] = derivname
+                if self.add_sparse_derivative(fname, pair, derivname):
+                    hess[pair] = derivname
     
     def add_sparse_derivative(self, fname, wrt, dname, sel='tril', gen=True):
         if isinstance(wrt, str):
@@ -156,6 +156,9 @@ class OptimizationModel(sym2num.model.Base):
         # Include in set of functions to generate code
         if gen:
             self.generate_functions.add(valfun_name)
+        
+        # Return number of nonzero entries
+        return nzexpr.size
     
     def first_derivative_name(self, fname, wrtname):
         """Generator of default name of first derivatives."""

@@ -23,7 +23,7 @@ class Problem:
         
         self.objectives = []
         """Objective function specifications."""
-
+        
         self.constraints = []
         """Constraint function specifications."""
         
@@ -40,6 +40,7 @@ class Problem:
         dec = Decision(shape, self.ndec)
         self.ndec += dec.size
         self.decision[name] = dec
+        return dec
     
     def add_objective(self, fun, shape, args=None):
         """Add an objective function to this problem."""
@@ -59,7 +60,13 @@ class Problem:
         """Get all variables needed to evaluate problem functions."""
         dvec = np.asarray(dvec)
         assert dvec.shape == (self.ndec,)
-        return {n: d.unpack_from(dvec) for n, d in self.decision.items()}
+        
+        var = {}
+        for name, spec in self.decision.items():
+            var[name] = spec.unpack_from(dvec)
+        for name, spec in self.remapped.items():
+            var[name] = spec.unpack_from(dvec)
+        return var
     
     def obj(self, dvec):
         """Optimization problem objective function."""
@@ -69,15 +76,15 @@ class Problem:
             obj_val += np.sum(obj(variables))
         return obj_val
     
-    def obj(self, dvec):
-        raise NotImplementedError
-        
     def obj_grad(self, dvec):
+        """Objective function gradient."""
         variables = self.variables(dvec)
         grad = np.zeros(self.ndec)
         for obj in self.objectives:
             for wrt, val in obj.grad(variables).items():
                 wrt_var = self.decision.get(wrt) or self.remapped.get(wrt)
+                if wrt_var is None:
+                    raise RuntimeError(f"unrecognized variable '{wrt}'")
                 wrt_var.add_to(grad, val)
         return grad
 

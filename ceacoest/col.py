@@ -19,7 +19,6 @@ class Problem(optim.Problem):
         """Underlying model."""
         
         col = rk.LGLCollocation(model.collocation_order)
-        ninterv = col.ninterv
         self.collocation = col
         """Collocation method."""
         
@@ -39,8 +38,55 @@ class Problem(optim.Problem):
         self.npoints = npoints
         """Total number of collocation points."""
         
-        self.add_decision('x', (self.npoints, model.nx))
+        x = self.add_decision('x', (npoints, model.nx))
+        self.remapped['xp'] = PieceRavelledVariable(x, npieces, col.n)
+        
         self.add_constraint(model.e, (npieces, col.ninterv, model.nx))
+    
+    def variables(self, dvec):
+        """Get all variables needed to evaluate problem functions."""
+        return {'piece_len': self.piece_len, **super().variables(dvec)}
+
+
+class PieceRavelledVariable:
+    def __init__(self, decision, npieces, ncol):
+        self.decision = decision
+        """Specification of the underlying decision variable."""
+        
+        self.npieces = npieces
+        """Number of collocation pieces."""
+        
+        self.ncol = ncol
+        """Number of collocation points per piece."""
+    
+    @property
+    def shape(self):
+        """The variable's ndarray shape."""
+        return (self.npieces, self.ncol) + self.decision.shape[1:]
+    
+    @property
+    def size(self):
+        """Total number of elements."""
+        return np.prod(self.shape, dtype=np.intc)
+    
+    def unpack_from(self, vec):
+        """Extract component from parent vector."""
+        dec = self.decision.unpack_from(vec)
+        out = np.zeros(self.shape)
+        out[:, :-1].flat = dec[:-1].flat
+        out[:-1, -1] = out[1:, 0]
+        out[-1, -1] = dec[-1]
+        return out
+    
+    def add_to(self, destination, value):
+        value = np.asarray(value)
+        assert value.shape == self.shape
+        
+        ninterv = self.ncol - 1
+        dec = np.zeros(self.decision.shape)
+        dec[:-1].flat = value[:, :-1].flat
+        dec[ninterv::ninterv] += value[:,-1]
+        self.decision.add_to(destination, dec)
 
 
 class OldCollocatedProblem(optim.OldProblem):
@@ -71,7 +117,7 @@ class OldCollocatedProblem(optim.OldProblem):
         super().__init__()
         x = self.register_decision('x', model.nx, npoints)
         p = self.register_decision('p', model.np)
-        self.register_derived('xp', PieceRavelledVariable(self, 'x'))
+        self.register_derived('xp', OldPieceRavelledVariable(self, 'x'))
         
         self.register_constraint(
             'e', model.e, ('xp','up','p', 'piece_len'), model.ne, npieces
@@ -126,7 +172,7 @@ class OldCollocatedProblem(optim.OldProblem):
         e[(..., *index)] = value
 
 
-class PieceRavelledVariable:
+class OldPieceRavelledVariable:
     def __init__(self, problem, var_name):
         self.p = problem
         self.var_name = var_name
