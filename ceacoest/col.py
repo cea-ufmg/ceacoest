@@ -49,9 +49,9 @@ class Problem(optim.Problem):
 
 
 class PieceRavelledVariable:
-    def __init__(self, decision, npieces, ncol):
-        self.decision = decision
-        """Specification of the underlying decision variable."""
+    def __init__(self, unravelled, npieces, ncol):
+        self.unravelled = unravelled
+        """Specification of the underlying unravelled variable."""
         
         self.npieces = npieces
         """Number of collocation pieces."""
@@ -62,7 +62,7 @@ class PieceRavelledVariable:
     @property
     def shape(self):
         """The variable's ndarray shape."""
-        return (self.npieces, self.ncol) + self.decision.shape[1:]
+        return (self.npieces, self.ncol) + self.unravelled.shape[1:]
     
     @property
     def size(self):
@@ -71,11 +71,11 @@ class PieceRavelledVariable:
     
     def unpack_from(self, vec):
         """Extract component from parent vector."""
-        dec = self.decision.unpack_from(vec)
+        ur = self.unravelled.unpack_from(vec)
         out = np.zeros(self.shape)
-        out[:, :-1].flat = dec[:-1].flat
+        out[:, :-1].flat = ur[:-1].flat
         out[:-1, -1] = out[1:, 0]
-        out[-1, -1] = dec[-1]
+        out[-1, -1] = ur[-1]
         return out
     
     def add_to(self, destination, value):
@@ -83,10 +83,17 @@ class PieceRavelledVariable:
         assert value.shape == self.shape
         
         ninterv = self.ncol - 1
-        dec = np.zeros(self.decision.shape)
+        dec = np.zeros(self.unravelled.shape)
         dec[:-1].flat = value[:, :-1].flat
         dec[ninterv::ninterv] += value[:,-1]
-        self.decision.add_to(destination, dec)
+        self.unravelled.add_to(destination, dec)
+    
+    def convert_ind(self, rav_ind):
+        """Convert component indices to parent vector indices."""
+        rav_ind = np.asarray(rav_ind, dtype=int)
+        piece = rav_ind // np.prod(self.shape[1:], dtype=int)
+        ur_ind = rav_ind - piece * np.prod(self.shape[2:], dtype=int)
+        return self.unravelled.convert_ind(ur_ind)
 
 
 class OldCollocatedProblem(optim.OldProblem):

@@ -31,6 +31,8 @@ class Problem(col.Problem):
 
 
 class XEVariable:
+    """Endpoint states."""
+    
     def __init__(self, x):
         self.x = x
         """Specification of the state (x) variable."""
@@ -39,12 +41,6 @@ class XEVariable:
     def shape(self):
         nx = self.x.shape[-1]
         return (2, nx)
-
-    
-    @property
-    def shape(self):
-        """The variable's ndarray shape."""
-        return (self.npieces, self.ncol) + self.decision.shape[1:]
     
     @property
     def size(self):
@@ -64,3 +60,10 @@ class XEVariable:
         xval[0] = value[0]
         xval[-1] = value[-1]
         self.x.add_to(destination, xval)
+    
+    def convert_ind(self, xe_ind):
+        xe_ind = np.asarray(xe_ind, int)
+        npoints, nx = self.x.shape
+        x_final = xe_ind >= nx
+        x_ind = xe_ind + x_final * (npoints - 2) * nx
+        return self.x.convert_ind(x_ind)

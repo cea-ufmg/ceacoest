@@ -60,13 +60,34 @@ class Problem:
         """Get all variables needed to evaluate problem functions."""
         dvec = np.asarray(dvec)
         assert dvec.shape == (self.ndec,)
-        
-        var = {}
-        for name, spec in self.decision.items():
-            var[name] = spec.unpack_from(dvec)
-        for name, spec in self.remapped.items():
-            var[name] = spec.unpack_from(dvec)
-        return var
+        items = itertools.chain(self.decision.items(), self.remapped.items())
+        return {k: v.unpack_from(dvec) for k,v in items}
+    
+    @property
+    def variable_shapes(self):
+        items = itertools.chain(self.decision.items(), self.remapped.items())
+        return {k: v.shape for k,v in items}
+    
+    def variable_spec(self, varname):        
+        spec = self.decision.get(varname) or self.remapped.get(varname)
+        if spec is None:
+            raise ValueError(f"no such variable {varname}")
+        return spec
+
+    def _sparse_fun_val(self, dvec, nnz, components, val_fun_name):
+        variables = self.variables(dvec)
+        val = np.empty(nnz)
+        offset = 0
+        for comp in components:
+            val_fun = getattr(comp, val_fun_name)
+            for varnames, comp_val in val_fun(variables).items():
+                comp_nnz = comp_val.size
+                assert offset + comp_nnz <= nnz                
+                s = slice(offset, offset + comp_nnz)
+                val[s] = comp_val.ravel()
+                offset += comp_nnz
+        assert offset == nnz
+        return val
     
     def obj(self, dvec):
         """Optimization problem objective function."""
@@ -82,11 +103,105 @@ class Problem:
         grad = np.zeros(self.ndec)
         for obj in self.objectives:
             for wrt, val in obj.grad(variables).items():
-                wrt_var = self.decision.get(wrt) or self.remapped.get(wrt)
+                wrt_var = self.variable_spec(wrt)
                 if wrt_var is None:
                     raise RuntimeError(f"unrecognized variable '{wrt}'")
                 wrt_var.add_to(grad, val)
         return grad
+
+    @property
+    def obj_hess_nnz(self):
+        return sum(obj.hess_nnz for obj in self.objectives)
+    
+    @property
+    def obj_hess_ind(self):
+        shapes = self.variable_shapes
+        nnz = self.obj_hess_nnz
+        ind = np.empty((2, nnz), int)
+        offset = 0
+        for obj in self.objectives:
+            for (var0name, var1name), loc_ind in obj.hess_ind(shapes).items():
+                var0 = self.variable_spec(var1name)
+                var1 = self.variable_spec(var0name)
+                loc_nnz = loc_ind[0].size
+                assert offset + loc_nnz <= nnz
+                
+                s = slice(offset, offset + loc_nnz)
+                ind[0, s] = var0.convert_ind(loc_ind[0].ravel())
+                ind[1, s] = var1.convert_ind(loc_ind[1].ravel())
+                offset += loc_nnz
+        assert offset == nnz
+        return ind
+    
+    def obj_hess_val(self, dvec):
+        nnz = self.obj_hess_nnz
+        components = self.objectives
+        return self._sparse_fun_val(dvec, nnz, components, 'hess_val')
+    
+    def constr(self, dvec):
+        cvec = np.zeros(self.ncons)
+        variables = self.variables(dvec)
+        for constr in self.constraints:
+            constr.pack_into(cvec, constr(variables))
+        return cvec
+    
+    @property
+    def constr_jac_nnz(self):
+        return sum(c.jac_nnz for c in self.constraints)
+    
+    @property
+    def constr_jac_ind(self):
+        shapes = self.variable_shapes
+        nnz = self.constr_jac_nnz
+        ind = np.empty((2, nnz), int)
+        offset = 0
+        for c in self.constraints:
+            for (varname,), loc_ind in c.jac_ind(shapes).items():
+                var = self.variable_spec(varname)
+                loc_nnz = loc_ind[0].size
+                assert offset + loc_nnz <= nnz
+
+                s = slice(offset, offset + loc_nnz)
+                ind[0, s] = var.convert_ind(loc_ind[0].ravel())
+                ind[1, s] = c.convert_ind(loc_ind[1].ravel())
+                offset += loc_nnz
+        assert offset == nnz
+        return ind
+    
+    def constr_jac_val(self, dvec):
+        nnz = self.constr_jac_nnz
+        components = self.constraints
+        return self._sparse_fun_val(dvec, nnz, components, 'jac_val')
+    
+    @property
+    def constr_hess_nnz(self):
+        return sum(c.hess_nnz for c in self.constraints)
+    
+    @property
+    def constr_hess_ind(self):
+        shapes = self.variable_shapes
+        nnz = self.constr_hess_nnz
+        ind = np.empty((3, nnz), int)
+        offset = 0
+        for c in self.constraints:
+            for (var0name, var1name), loc_ind in c.hess_ind(shapes).items():
+                var0 = self.variable_spec(var1name)
+                var1 = self.variable_spec(var0name)
+                loc_nnz = loc_ind[0].size
+                assert offset + loc_nnz <= nnz
+                
+                s = slice(offset, offset + loc_nnz)
+                ind[0, s] = var0.convert_ind(loc_ind[0].ravel())
+                ind[1, s] = var1.convert_ind(loc_ind[1].ravel())
+                ind[2, s] = c.convert_ind(loc_ind[2].ravel())
+                offset += loc_nnz
+        assert offset == nnz
+        return ind
+
+    def constr_hess_val(self, dvec):
+        nnz = self.constr_hess_nnz
+        components = self.constraints
+        return self._sparse_fun_val(dvec, nnz, components, 'hess_val')
 
 
 class Component:
@@ -98,7 +213,7 @@ class Component:
         
         self.offset = offset
         """Offset into the parent vector."""
-
+    
     def __repr__(self):
         clsname = type(self).__name__
         offset = self.offset
@@ -128,6 +243,11 @@ class Component:
         assert destination.ndim == 1
         assert destination.size >= self.offset + self.size
         destination[self.slice] = np.broadcast_to(value, self.shape).ravel()
+    
+    def convert_ind(self, comp_ind):
+        """Convert component indices to parent vector indices."""
+        comp_ind = np.asarray(comp_ind, dtype=int)
+        return comp_ind + self.offset
 
 
 class Decision(Component):
@@ -149,16 +269,17 @@ class OptimizationFunction:
         args = (variables[arg] for arg in self.args)
         return self.fun(*args)
     
+    @property
     def hess_nnz(self):
         return self.fun.hess_nnz(self.shape)
-
+    
     def hess_ind(self, var_shapes):
         return self.fun.hess_ind(var_shapes, self.shape)
-
+    
     def hess_val(self, variables):
         args = (variables[arg] for arg in self.args)
         return self.fun.hess_val(*args)
-
+    
     @property
     def name(self):
         try:
@@ -175,9 +296,10 @@ class Constraint(Component, OptimizationFunction):
         Component.__init__(self, shape, offset)
         OptimizationFunction.__init__(self, shape, fun, args)
 
+    @property
     def jac_nnz(self):
         return self.fun.jac_nnz(self.shape)
-
+    
     def jac_ind(self, var_shapes):
         return self.fun.jac_ind(var_shapes, self.shape)
 
@@ -192,22 +314,6 @@ class Objective(OptimizationFunction):
     def grad(self, variables):
         args = (variables[arg] for arg in self.args)
         return self.fun.grad(*args)
-
-
-class Constraint(Component):
-    """A constraint within an optimization problem."""
-    
-    def __init__(self, shape, offset, fun, args=None):
-        super().__init__(shape, offset)
-        
-        self.fun = fun
-        """The underlying constraint object."""
-
-        self.args = utils.sig_arg_names(fun) if args is None else args
-        """The underlying function argument names."""
-        
-    def __call__(self, *args, **kwargs):
-        return self.fun(*args, **kwargs)
 
 
 class OldProblem:
