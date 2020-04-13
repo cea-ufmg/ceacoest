@@ -19,6 +19,7 @@ class Problem(optim.Problem):
         """Underlying model."""
         
         col = rk.LGLCollocation(model.collocation_order)
+        ninterv = col.ninterv
         self.collocation = col
         """Collocation method."""
         
@@ -40,11 +41,6 @@ class Problem(optim.Problem):
         
         self.add_decision('x', (self.npoints, model.nx))
         self.add_constraint(model.e, (npieces, col.ninterv, model.nx))
-        #self.register_derived('xp', PieceRavelledVariable(self, 'x'))
-        
-        #self.register_constraint(
-        #    'e', model.e, ('xp','up','p', 'piece_len'), model.ne, npieces
-        #)
 
 
 class OldCollocatedProblem(optim.OldProblem):

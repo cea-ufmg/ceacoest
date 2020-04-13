@@ -56,6 +56,13 @@ class OCModel(symcol.CollocatedModel):
         """Default (null) Mayer (endpoint) cost."""
         return np.array(0)
 
+    @property
+    def generate_assignments(self):
+        gen = {'ng': len(self.default_function_output('g')),
+               'nh': len(self.default_function_output('h')),
+               **getattr(super(), 'generate_assignments', {})}
+        return gen
+
 
 class OldModelSubclass(symcol.OldCollocatedModel):
     """Symbolic LGL-collocation optimal control model subclass."""

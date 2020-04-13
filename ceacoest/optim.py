@@ -8,38 +8,80 @@ import numbers
 
 import numpy as np
 
+from . import utils
+
 
 class Problem:
     """Optimization problem with sparse derivatives."""
     
     def __init__(self):
-        self.decision = []
+        self.decision = collections.OrderedDict()
         """Decision variable component specifications."""
+        
+        self.remapped = {}
+        """Specification of remapped variables."""
+        
+        self.objectives = []
+        """Objective function specifications."""
+
+        self.constraints = []
+        """Constraint function specifications."""
         
         self.ndec = 0
         """Size of the decision vector."""
         
+        self.ncons = 0
+        """Size of the constraint vector."""
+    
     def add_decision(self, name, shape):
         """Add a decision variable to this problem."""
         if isinstance(shape, numbers.Integral):
             shape = shape,
-        dec = Decision(shape, self.ndec, name)
+        dec = Decision(shape, self.ndec)
         self.ndec += dec.size
-        self.decision.append(dec)
+        self.decision[name] = dec
+    
+    def add_objective(self, fun, shape, args=None):
+        """Add an objective function to this problem."""
+        if isinstance(shape, numbers.Integral):
+            shape = shape,
+        self.objectives.append(Objective(shape, fun, args))
+    
+    def add_constraint(self, fun, shape, args=None):
+        """Add a constraint function to this problem."""
+        if isinstance(shape, numbers.Integral):
+            shape = shape,
+        cons = Constraint(shape, self.ncons, fun, args)
+        self.ncons += cons.size
+        self.constraints.append(cons)
     
     def variables(self, dvec):
         """Get all variables needed to evaluate problem functions."""
         dvec = np.asarray(dvec)
         assert dvec.shape == (self.ndec,)
-        return {d.name: d.unpack_from(dvec) for d in self.decision}
-
-    def _remap_ind(self, varname, ind):
-        raise NotImplementedError
-
-    def _add_to_grad(self, grad, value, varname):
-        raise NotImplementedError
-
+        return {n: d.unpack_from(dvec) for n, d in self.decision.items()}
     
+    def obj(self, dvec):
+        """Optimization problem objective function."""
+        variables = self.variables(dvec)
+        obj_val = 0.0
+        for obj in self.objectives:
+            obj_val += np.sum(obj(variables))
+        return obj_val
+    
+    def obj(self, dvec):
+        raise NotImplementedError
+        
+    def obj_grad(self, dvec):
+        variables = self.variables(dvec)
+        grad = np.zeros(self.ndec)
+        for obj in self.objectives:
+            for wrt, val in obj.grad(variables).items():
+                wrt_var = self.decision.get(wrt) or self.remapped.get(wrt)
+                wrt_var.add_to(grad, val)
+        return grad
+
+
 class Component:
     """Specificiation of a problem's decision or constraint vector component."""
     
@@ -49,6 +91,12 @@ class Component:
         
         self.offset = offset
         """Offset into the parent vector."""
+
+    def __repr__(self):
+        clsname = type(self).__name__
+        offset = self.offset
+        shape = self.shape
+        return f'<{clsname} {offset=} {shape=}>'
     
     @property
     def size(self):
@@ -77,37 +125,80 @@ class Component:
 
 class Decision(Component):
     """A decision variable within an optimization problem."""
-    
-    def __init__(self, shape, offset, name):
-        super().__init__(shape, offset)
+
+
+class OptimizationFunction:
+    def __init__(self, shape, fun, args=None):
+        self.fun = fun
+        """The underlying constraint object."""
+
+        self.args = utils.sig_arg_names(fun) if args is None else args
+        """The underlying function argument names."""
         
-        self.name = name
-        """The variable name."""
+        self.shape = shape
+        """Function output shape"""
     
-    def __repr__(self):
-        offset = self.offset
-        shape = self.shape
-        return f'<Decision var "{self.name}" {offset=} {shape=}>'
+    def __call__(self, variables):
+        args = (variables[arg] for arg in self.args)
+        return self.fun(*args)
+    
+    def hess_nnz(self):
+        return self.fun.hess_nnz(self.shape)
+
+    def hess_ind(self, var_shapes):
+        return self.fun.hess_ind(var_shapes, self.shape)
+
+    def hess_val(self, variables):
+        args = (variables[arg] for arg in self.args)
+        return self.fun.hess_val(*args)
+
+    @property
+    def name(self):
+        try:
+            return type(self.fun).__name__
+        except AttributeError:
+            pass
+
+
+class Constraint(Component, OptimizationFunction):
+    """A constraint within an optimization problem."""
+    
+    def __init__(self, shape, offset, fun, args=None):
+        # Initizalize base classes
+        Component.__init__(self, shape, offset)
+        OptimizationFunction.__init__(self, shape, fun, args)
+
+    def jac_nnz(self):
+        return self.fun.jac_nnz(self.shape)
+
+    def jac_ind(self, var_shapes):
+        return self.fun.jac_ind(var_shapes, self.shape)
+
+    def jac_val(self, variables):
+        args = (variables[arg] for arg in self.args)
+        return self.fun.jac_val(*args)
+
+
+class Objective(OptimizationFunction):
+    """An objective within an optimization problem."""
+    
+    def grad(self, variables):
+        args = (variables[arg] for arg in self.args)
+        return self.fun.grad(*args)
 
 
 class Constraint(Component):
     """A constraint within an optimization problem."""
     
-    def __init__(self, shape, offset, fun, args=None, name=None):
+    def __init__(self, shape, offset, fun, args=None):
         super().__init__(shape, offset)
         
         self.fun = fun
         """The underlying constraint object."""
-        
-        # If the name is not given, try to guess it
-        if name is None:
-            try:
-                name = fun.__name__
-            except AttributeError:
-                pass
-        self.name = name
-        """The constraint name."""
 
+        self.args = utils.sig_arg_names(fun) if args is None else args
+        """The underlying function argument names."""
+        
     def __call__(self, *args, **kwargs):
         return self.fun(*args, **kwargs)
 
@@ -347,7 +438,7 @@ class OldProblem:
             yield problem
 
 
-class Component:
+class OldComponent:
     """Specificiation of a problem's decision or constraint vector component."""
     
     def __init__(self, shape, offset):
@@ -434,7 +525,7 @@ class CallableComponent(Component):
         return out
 
 
-class Constraint(CallableComponent, IndexedComponent):
+class OldConstraint(CallableComponent, IndexedComponent):
 
     def __init__(self, offset, fun, argument_names, shape, tiling=None):
         super().__init__(shape, offset, fun, argument_names)

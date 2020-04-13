@@ -2,6 +2,7 @@
 
 
 import functools
+import inspect
 import itertools
 import re
 
@@ -140,3 +141,9 @@ def double_deriv_name(fun, wrt):
         return f'd2{fun}_d{wrt[0]}2'
     else:
         return f'd2{fun}_d{wrt[0]}_d{wrt[1]}'
+
+
+def sig_arg_names(fun):
+    """Return argument names from function signature."""
+    sig = inspect.signature(fun)
+    return tuple(sig.parameters.keys())

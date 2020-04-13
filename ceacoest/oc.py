@@ -14,6 +14,16 @@ class Problem(col.Problem):
     def __init__(self, model, t):
         super().__init__(model, t)
 
+        npoints = self.npoints
+        npieces = self.npieces
+        
+        self.add_decision('u', (npoints, model.nu))
+        self.add_decision('p', model.np)
+        
+        self.add_objective(model.IL, npieces)
+        self.add_objective(model.M, ())
+        self.add_constraint(model.g, (npoints, model.ng))
+
 
 class OldProblem(col.OldCollocatedProblem):
     """Optimal control problem with LGL direct col."""
