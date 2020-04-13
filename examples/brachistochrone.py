@@ -18,7 +18,7 @@ for m in (optim, col, oc, genoptim, symoptim, symcol, symoc):
     importlib.reload(m)
 
 
-class SymbolicBrachistochroneModel(symoc.OCModel):
+class SymbolicBrachistochroneModel(symoc.Model):
     """Symbolic Brachistochrone optimal control model."""
     
     collocation_order = 3

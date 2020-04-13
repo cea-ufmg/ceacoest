@@ -9,7 +9,7 @@ import sym2num.var
 import sympy
 
 
-class OptimizationModel(sym2num.model.Base):
+class Model(sym2num.model.Base):
     """Symbolic optimization model base."""
 
     generate_imports = ['ceacoest.modelling.genoptim as _genoptim']
