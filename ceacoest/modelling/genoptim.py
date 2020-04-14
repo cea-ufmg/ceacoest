@@ -154,6 +154,10 @@ class ObjectiveFunction(OptimizationFunction):
             # Calculate the gradient
             grad_fun = getattr(self.model, dname)
             grad_val = grad_fun(*args, **kwargs)
+
+            # skip empty gradients
+            if not np.size(grad_val):
+                continue
             
             # Get the shape of the wrt argument
             try:

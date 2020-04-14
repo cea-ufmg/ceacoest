@@ -121,8 +121,8 @@ class Problem:
         offset = 0
         for obj in self.objectives:
             for (var0name, var1name), loc_ind in obj.hess_ind(shapes).items():
-                var0 = self.variable_spec(var1name)
-                var1 = self.variable_spec(var0name)
+                var0 = self.variable_spec(var0name)
+                var1 = self.variable_spec(var1name)
                 loc_nnz = loc_ind[0].size
                 assert offset + loc_nnz <= nnz
                 
