@@ -119,7 +119,7 @@ class Model(sym2num.model.Base):
             wrt = (wrt,)
         
         fsize = self.default_function_output(fname).size
-        wrt_sizes = tuple(self.variables[name].size for name in reversed(wrt))
+        wrt_sizes = tuple(self.variables[name].size for name in wrt)
         
         self.add_derivative(fname, wrt, dname)
         expr = self.default_function_output(dname)

@@ -185,8 +185,8 @@ class Problem:
         offset = 0
         for c in self.constraints:
             for (var0name, var1name), loc_ind in c.hess_ind(shapes).items():
-                var0 = self.variable_spec(var1name)
-                var1 = self.variable_spec(var0name)
+                var0 = self.variable_spec(var0name)
+                var1 = self.variable_spec(var1name)
                 loc_nnz = loc_ind[0].size
                 assert offset + loc_nnz <= nnz
                 
@@ -202,6 +202,46 @@ class Problem:
         nnz = self.constr_hess_nnz
         components = self.constraints
         return self._sparse_fun_val(dvec, nnz, components, 'hess_val')
+    
+    @property
+    def lag_hess_nnz(self):
+        return self.obj_hess_nnz + self.constr_hess_nnz
+    
+    @property
+    def lag_hess_ind(self):
+        obj_nnz = self.obj_hess_nnz
+        nnz = self.lag_hess_nnz
+        ind = np.zeros((2, nnz), int)
+        ind[:, :obj_nnz] = self.obj_hess_ind
+        ind[:, obj_nnz:] = self.constr_hess_ind[:2]
+        return ind
+
+    def lag_hess_val(self, dvec, obj_mult, constr_mult):
+        assert np.shape(constr_mult) == (self.ncons,)
+        nnz = self.lag_hess_nnz
+        obj_nnz = self.obj_hess_nnz
+        mult_ind = self.constr_hess_ind[2]
+        
+        val = np.zeros(nnz)
+        val[:obj_nnz] = self.obj_hess_val(dvec) * obj_mult
+        val[obj_nnz:] = self.constr_hess_val(dvec) * constr_mult[mult_ind]
+        return val
+    
+    @contextlib.contextmanager
+    def ipopt(self, d_bounds, constr_bounds):
+        from mseipopt import ez
+        f = self.obj
+        g = self.constr
+        grad = self.obj_grad
+        jac_ind = lambda: self.constr_jac_ind[[1,0]]
+        hess_ind = lambda: self.lag_hess_ind
+        jac = jac_ind, self.constr_jac_val
+        hess = hess_ind, self.lag_hess_val
+        nele_jac = self.constr_jac_nnz
+        nele_hess = self.lag_hess_nnz
+        with ez.Problem(d_bounds, constr_bounds, f, g,
+                        grad, jac, nele_jac, hess, nele_hess) as problem:
+            yield problem
 
 
 class Component:
