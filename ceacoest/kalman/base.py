@@ -39,7 +39,7 @@ class DTFilter(metaclass=abc.ABCMeta):
         self.L = options.get('L', 0.0)
         """Measurement log-likelihood."""
         
-        nq = model.nq
+        nq = getattr(model, 'nq', 0)
         nx = model.nx
         base_shape = self.x.shape[:-1]
         self.base_shape = base_shape

@@ -12,11 +12,12 @@ from numpy import ma
 from scipy import stats
 
 from ceacoest import kalman
+from ceacoest.kalman import base, extended, unscented
 from ceacoest.modelling import symsde
 
 
 # Reload modules for testing
-for m in (symsde, kalman):
+for m in (symsde, base, extended, unscented, kalman):
     importlib.reload(m)
 
 
@@ -67,6 +68,21 @@ class SymbolicDuffing(sym2num.model.Base):
         return np.array([[s.X_meas_std ** 2]])
 
 
+class SymbolicDiscretizedDuffing(symsde.ItoTaylorAS15DiscretizedModel):
+    
+    ContinuousTimeModel = SymbolicDuffing
+
+    def __init__(self):
+        super().__init__()
+        
+        self.add_derivative('h', 'x', 'dh_dx')
+        self.add_derivative('f', 'x', 'df_dx')
+    
+    @property
+    def generate_functions(self):
+        return ['dh_dx', 'df_dx', *super().generate_functions]
+
+
 def sim(model, seed=1):
     np.random.seed(seed)
     
@@ -90,12 +106,12 @@ def sim(model, seed=1):
     R = model.R()
     v = np.random.multivariate_normal(np.zeros(model.ny), R, N)
     y = ma.asarray(model.h(k, x) + v)
-    return t, x, y
+    return t, x, y, x0, Px0
 
 
 if __name__ == '__main__':
     sym_cont_mdl = SymbolicDuffing()
-    sym_disc_mdl = symsde.ItoTaylorAS15DiscretizedModel(sym_cont_mdl)
+    sym_disc_mdl = SymbolicDiscretizedDuffing()
     model = sym_disc_mdl.compile_class()()
 
     params = dict(
@@ -106,7 +122,17 @@ if __name__ == '__main__':
     for k,v in params.items():
         setattr(model, k, v)
     
-    t, x, y = sim(model)
+    t, x, y, x0, Px0 = sim(model)
     
-    #kf = kalman.DTExtendedFilter(model)
-    #[xs, Pxs] = kf.smooth(y)
+    ekf = kalman.DTExtendedFilter(model, x0, Px0)
+    [xef, Pxef] = ekf.filter(y)
+    
+    ekf = kalman.DTExtendedFilter(model, x0, Px0)
+    [xes, Pxes] = ekf.smooth(y)
+    
+    ukf = kalman.DTUnscentedFilter(model, x0, Px0)
+    [xuf, Pxuf] = ukf.filter(y)
+    
+    ukf = kalman.DTUnscentedFilter(model, x0, Px0)
+    [xus, Pxus] = ukf.smooth(y)
+
