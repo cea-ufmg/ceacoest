@@ -1,5 +1,9 @@
+#!/usr/bin/env python
+
 """Test various modules using a Duffing oscillator SDE model."""
 
+
+import importlib
 
 import numpy as np
 import sympy
@@ -11,117 +15,74 @@ from ceacoest import kalman
 from ceacoest.modelling import symsde
 
 
+# Reload modules for testing
+for m in (symsde, kalman):
+    importlib.reload(m)
+
+
 class SymbolicDuffing(sym2num.model.Base):
-    """Symbolic Duffing oscillator model."""
+    """Symbolic continuous-time Duffing oscillator model."""
     
     generate_functions = ['f']
-    derivatives = [('df_dx', 'f', 'x'),
-                   ('df_dt', 'f', 't'),
-                   ('d2f_dx2', 'df_dx', 'x')]
     
-    @property
-    def variables(self):
-        """Model variables definition."""
-        v = super().variables
-        v['self'] = {'consts': 'gamma omega X0_std V0_std'}
-        v['x'] = 'X V'
-        v['p'] = 'alpha beta delta g2 X_meas_std X0 V0'
-        v['y'] = 'X_meas',
-        v['t'] = 't'
-        return v
+    def __init__(self):
+        super().__init__()
     
-    @sym2num.model.collect_symbols
-    def f(self, t, x, p, *, s):
-        """Drift function."""
-        u = s.gamma * sympy.cos(s.t * s.omega)
-        f1 = s.V
-        f2 = -s.delta * s.V - s.beta * s.X - s.alpha * s.X ** 3 + u
-        return [f1, f2]
-    
-    @sym2num.model.collect_symbols
-    def g(self, t, x, p, *, s):
-        """Diffusion matrix."""
-        return [[0], [s.g2]]
-    
-    @sym2num.model.collect_symbols
-    def h(self, t, x, p, *, s):
-        """Measurement function."""
-        return [s.X]
-    
-    @sym2num.model.collect_symbols
-    def R(self, p, *, s):
-        """Measurement covariance."""
-        return [[s.X_meas_std ** 2]]
-    
-    @sym2num.model.collect_symbols
-    def x0(self, p, *, s):
-        """Initial state prior mean."""
-        return [s.X0, s.V0]
-    
-    @sym2num.model.collect_symbols
-    def Px0(self, p, *, s):
-        """Initial state prior covariance."""
-        return sympy.diag(s.X0_std, s.V0_std)**2
-
-
-class SymbolicDiscretizedDuffing(symsde.EulerDiscretizedSDEModel):
-    ContinuousTimeModel = SymbolicDuffing
-    
-    derivatives = [('df_dx', 'f', 'x'),
-                   ('dh_dx', 'h', 'x'),]
-
-    @property
-    def generate_functions(self):
-        gen = ['df_dx', 'dh_dx']
-        return super().generate_functions + gen
-
-
-symb_mdl = SymbolicDuffing()
-disc_mdl = SymbolicDiscretizedDuffing()
-
-GeneratedDuffing = sym2num.model.compile_class(disc_mdl)
-
-class DiscretizedDuffing(GeneratedDuffing):
-    def __init__(self, dt, p, c):
-        self.dt = np.asarray(dt)
-        """Discretization time step"""
+        v = self.variables
+        v['self']['gamma'] = 'gamma'
+        v['self']['omega'] = 'omega'
+        v['self']['alpha'] = 'alpha'
+        v['self']['beta'] = 'beta'
+        v['self']['delta'] = 'delta'
+        v['self']['g2'] = 'g2'
+        v['self']['X_meas_std'] = 'X_meas_std'
         
-        self.ct_model_p = np.asarray(p)
-        """Model parameters"""
-
-        self.consts = np.asarray(c)
-        """Model constants"""
-
-    def parametrize(self, p):
-        self.ct_model_p = np.asarray(p)
+        v['x'] = ['x', 'v']
+        v['y'] = ['X_meas']
+        v['t'] = 't'
+        
+        self.set_default_members()
     
-    def t(self, k):
-        return self.dt * k
+    @sym2num.model.collect_symbols
+    def f(self, t, x, *, s):
+        """Drift function."""
+        u = s.gamma * sympy.sin(s.t * s.omega)
+        f1 = s.v
+        f2 = -s.delta * s.v - s.beta * s.x - s.alpha * s.x ** 3 + u
+        return np.array([f1, f2])
+    
+    @sym2num.model.collect_symbols
+    def g(self, t, x, *, s):
+        """Diffusion matrix."""
+        return np.array([[0], [s.g2]])
+    
+    @sym2num.model.collect_symbols
+    def h(self, t, x, *, s):
+        """Measurement function."""
+        return np.array([s.x])
+    
+    @sym2num.model.collect_symbols
+    def R(self, *, s):
+        """Measurement covariance."""
+        return np.array([[s.X_meas_std ** 2]])
 
 
-def sim():
-    np.random.seed(1)
+def sim(model, seed=1):
+    np.random.seed(seed)
     
     # Generate the time vector
-    dt = 0.05
+    dt = model.dt
     N = int(30 // dt)
     k = np.arange(N)
     t = k * dt
-
-    # Instantiate the model
-    given = dict(
-        alpha=1, beta=-1, delta=0.2, gamma=0.3, omega=1,
-        g1=0, g2=0.1, X_meas_std=0.1,
-        X0=-1, V0=1, X0_std=0.1, V0_std=0.1
-    )
-    p = np.r_[[given[v.name] for v in symb_mdl.variables['p']]]
-    c = np.r_[[given[v.name] for v in symb_mdl.variables['self'].consts]]
-    model = DiscretizedDuffing(dt, p, c)
     
+    x0 = np.array([-1, 1])
+    Px0 = np.diag([0.1, 0.1]) ** 2
+
     # Simulate the system
     w = np.random.randn(N - 1, model.nw)
     x = np.zeros((N, model.nx))
-    x[0] = stats.multivariate_normal.rvs(model.x0(), model.Px0())
+    x[0] = stats.multivariate_normal.rvs(x0, Px0)
     for k in range(N - 1):
         x[k + 1] = model.f(k, x[k])  + model.g(k, x[k]).dot(w[k])
     
@@ -129,10 +90,23 @@ def sim():
     R = model.R()
     v = np.random.multivariate_normal(np.zeros(model.ny), R, N)
     y = ma.asarray(model.h(k, x) + v)
-    return model, t, x, y, p
+    return t, x, y
 
 
 if __name__ == '__main__':
-    model, t, x, y, p = sim()
-    kf = kalman.DTExtendedFilter(model)
-    [xs, Pxs] = kf.smooth(y)
+    sym_cont_mdl = SymbolicDuffing()
+    sym_disc_mdl = symsde.ItoTaylorAS15DiscretizedModel(sym_cont_mdl)
+    model = sym_disc_mdl.compile_class()()
+
+    params = dict(
+        alpha=1, beta=-1, delta=0.2, gamma=0.3, omega=1,
+        g2=0.1, X_meas_std=0.1,
+        dt=0.05,
+    )
+    for k,v in params.items():
+        setattr(model, k, v)
+    
+    t, x, y = sim(model)
+    
+    #kf = kalman.DTExtendedFilter(model)
+    #[xs, Pxs] = kf.smooth(y)
