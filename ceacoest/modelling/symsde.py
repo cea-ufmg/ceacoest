@@ -51,6 +51,9 @@ class DiscretizedSDEModelBase(sym2num.model.Base):
 class EulerDiscretizedSDEModel(DiscretizedSDEModelBase):
     """Euler--Maruyama SDE discretization."""
     
+    generate_imports = ["ceacoest.modelling.gensde as _gensde"]
+    generated_bases = ["_gensde.ConditionalGaussianTransition"]
+    
     def f(self, k, x):
         """State transition function."""
         dt = self.dt
@@ -68,7 +71,10 @@ class EulerDiscretizedSDEModel(DiscretizedSDEModelBase):
 
 class ItoTaylorAS15DiscretizedModel(DiscretizedSDEModelBase):
     """Strong order 1.5 Ito--Taylor discretization for additive noise models."""
-
+    
+    generate_imports = ["ceacoest.modelling.gensde as _gensde"]
+    generated_bases = ["_gensde.ConditionalGaussianTransition"]
+    
     def __init__(self, ct_model=None):
         super().__init__(ct_model)
         
