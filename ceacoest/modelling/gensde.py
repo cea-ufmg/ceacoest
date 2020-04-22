@@ -35,7 +35,7 @@ class ConditionalGaussianMeasurement:
         return stats.multivariate_normal_pdf(y, h, R)
 
 
-class ConditionalGaussianModel(ConditionalGaussianTransition, 
+class ConditionalGaussianModel(ConditionalGaussianTransition,
                                ConditionalGaussianMeasurement):
     pass
 

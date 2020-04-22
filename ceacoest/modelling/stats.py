@@ -9,19 +9,22 @@ def multivariate_normal_pdf(x, mean, cov):
     # Convert to ndarray
     x = np.asanyarray(x)
     mean = np.asanyarray(mean)
-    cov = np.asanyarray(cov)
+    cov = np.asarray(cov)
     
     # Deviation from mean
     dev = x - mean
-    if np.all(np.ma.getmaskarray(dev)):
-        return np.ones(dev.shape[:-1])
+    if isinstance(dev, np.ma.MaskedArray):
+        if np.all(np.ma.getmaskarray(dev)):
+            return np.ones(dev.shape[:-1])
+        else:
+            dev = np.ma.getdata(dev) * ~np.ma.getmaskarray(dev)
     
     # Broadcast cov, if needed
     if cov.ndim <= dev.ndim:
         extra_dim = 1 + dev.ndim - cov.ndim 
         cov = np.broadcast_to(cov, (1,) * extra_dim + cov.shape)
     
-    exponent = -0.5 * np.ma.inner(dev, np.linalg.solve(cov, dev))
+    exponent = -0.5 * np.einsum('...i,...i', dev, np.linalg.solve(cov, dev))
     return np.exp(exponent) / np.sqrt(np.linalg.det(cov))
 
 
