@@ -15,16 +15,21 @@ from .. import utils
 
 class Model(symcol.Model):
     def __init__(self, variables, decision=set()):
+        # Define endpoint variables
+        x = variables.get('x')
+        if x is None:
+            raise ValueError('state vector "x" must be defined in variables')
+        xe = [[f'{n}_initial' for n in x], [f'{n}_final' for n in x]]
+        variables['xe'] = xe
+        
+        # Ensure parameters and input are in the variable set
         variables.setdefault('p', [])
         variables.setdefault('u', [])
-        decision = {'p', 'u', 'up', *decision}
+
+        # Initialize base class
+        decision = {'p', 'u', 'up', 'xe', *decision}
         super().__init__(variables, decision)
         
-        # Define endpoint variables
-        x = self.variables['x']
-        xe = [[f'{n}_initial' for n in x], [f'{n}_final' for n in x]]
-        self.variables['xe'] = xe
-    
         # Add objectives and constraints
         self.add_objective('IL')
         self.add_objective('M')
