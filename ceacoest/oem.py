@@ -5,10 +5,10 @@ import itertools
 
 import numpy as np
 
-from . import collocation, optim, utils
+from . import col, optim
 
 
-class Problem(collocation.CollocatedProblem):
+class Problem(col.Problem):
     """Output error method optimization problem with LGL direct collocation."""
     
     def __init__(self, model, t, y, u):
@@ -17,7 +17,7 @@ class Problem(collocation.CollocatedProblem):
         npieces = self.npieces
         ncoarse = len(t)
         
-        assert isinstance(y, np.ndarray)
+        y = np.asanyarray(y)
         assert y.shape == (ncoarse, self.model.ny)
         
         ymask = np.ma.getmaskarray(y)
@@ -30,7 +30,7 @@ class Problem(collocation.CollocatedProblem):
         
         self.nmeas = np.size(self.kmeas)
         """Number of measurement indices."""
-
+        
         if callable(u):
             u = u(self.tc)
         assert isinstance(u, np.ndarray)
@@ -40,20 +40,21 @@ class Problem(collocation.CollocatedProblem):
         
         self.um = self.u[self.kmeas]
         """The inputs at the measurement points."""
-
+        
         up = np.zeros((npieces, self.collocation.n, model.nu))
         up[:, :-1].flat = u[:-1, :].flat
         up[:-1, -1] = up[1:, 0]
         up[-1, -1] = u[-1]
         self.up = up
         """Piece-ravelled inputs."""
+
+        # Register problem variables
+        self.add_decision('p', model.np)
+        self.remapped['xm'] = XMVariable(self.decision['x'], self.kmeas)
         
-        self.register_derived('xm', XMVariable(self))
-        self._register_model_constraint_derivatives('e', ('xp', 'p'))
-        
-        self.register_merit('L', model.L, ('y', 'xm', 'um', 'p'), self.nmeas)
-        self._register_model_merit_derivatives('L', ('xm', 'p'))
-        
+        # Add objective function
+        self.add_objective(model.L, self.nmeas, ['y', 'xm', 'um', 'p'])
+    
     def variables(self, dvec):
         """Get all variables needed to evaluate problem functions."""
         return {'y': self.y, 'um': self.um, 'u': self.u, 'up': self.up,
@@ -61,27 +62,44 @@ class Problem(collocation.CollocatedProblem):
 
 
 class XMVariable:
-    def __init__(self, problem):
-        self.p = problem
+    def __init__(self, x, kmeas):
+        self.x = x
+        """Description of x variable."""
+        
+        self.kmeas = kmeas
+        """Collocation time indices with active measurements."""        
+        
+        self.nmeas = len(kmeas)
+        """Number of active measurement instants."""
 
     @property
-    def tiling(self):
-        return self.p.nmeas
-    
-    @property
     def shape(self):
-        return (self.p.nmeas, self.p.model.nx)
+        """The variable's ndarray shape."""
+        return (self.nmeas, self.x.shape[1])
+        
+    @property
+    def size(self):
+        """Total number of elements."""
+        return np.prod(self.shape, dtype=np.int)
     
-    def build(self, variables):
-        x = variables['x']
-        return x[self.p.kmeas]
-    
+    def unpack_from(self, vec):
+        """Extract component from parent vector."""
+        x = self.x.unpack_from(vec)
+        return x[self.kmeas]
+
     def add_to(self, destination, value):
-        assert np.shape(value) == self.shape
-        x = self.p.decision['x'].unpack_from(destination)
-        x[self.p.kmeas] += value
-    
-    def expand_indices(self, ind):
-        x_offset = self.p.decision['x'].offset
-        ind = np.asarray(ind, dtype=int)        
-        return ind + x_offset + self.p.kmeas[:, None] * self.p.model.nx
+        value = np.asarray(value)
+        assert value.shape == self.shape
+        
+        xval = np.zeros(self.x.shape)
+        xval[self.kmeas] = value
+        self.x.add_to(destination, xval)
+
+    def convert_ind(self, xm_ind):
+        """Convert component indices to parent vector indices."""
+        nx = self.x.shape[1]
+        xm_coord = np.unravel_index(xm_ind, self.shape)
+        x_coord = (self.kmeas[xm_coord[0]], xm_coord[1])
+        x_ind = np.ravel_multi_index(x_coord, self.x.shape)
+        return self.x.convert_ind(x_ind)
+

@@ -1,30 +1,38 @@
 """Output Error Method for the ATTAS aircraft short-period mode estimation."""
 
 
+import importlib
 import os
 
 import numpy as np
+import scipy.interpolate
 import scipy.io
 import sympy
 import sym2num.model
 
-from ceacoest import oem, optim
-from ceacoest.modelling import symoem, symstats
+from ceacoest import optim, col, oem
+from ceacoest.modelling import genoptim, symoptim, symcol, symoem, symstats
 
 
-@symoem.collocate(order=2)
-class AttasShortPeriod:
+# Reload modules for testing
+for m in (optim, col, oem, genoptim, symoptim, symcol, symoem, symstats):
+    importlib.reload(m)
+
+
+class SymbolicAttasShortPeriod(symoem.Model):
     """Symbolic linear short period model."""
-
-    @property
-    def variables(self):
-        v = super().variables
-        v['x'] = ['q', 'alpha']
-        v['y'] = ['q_meas', 'alpha_meas']
-        v['u'] = ['de']
-        v['p'] = ['Z0', 'Zalpha', 'Zq', 'Zde', 'M0', 'Malpha', 'Mq', 'Mde',
-                  'alpha_meas_std', 'q_meas_std']
-        return v
+    
+    collocation_order = 2
+    
+    def __init__(self):
+        v = self.Variables(
+            x=['q', 'alpha'],
+            y=['q_meas', 'alpha_meas'],
+            u=['de'],
+            p=['Z0', 'Zalpha', 'Zq', 'Zde', 'M0', 'Malpha', 'Mq', 'Mde',
+               'alpha_meas_std', 'q_meas_std']
+        )
+        super().__init__(v)
     
     @sym2num.model.collect_symbols
     def f(self, x, u, p, *, s):
@@ -53,38 +61,37 @@ def load_data():
 
 if __name__ == '__main__':
     # Compile and instantiate model
-    symb_mdl = AttasShortPeriod()
-    GeneratedAttasShortPeriod = sym2num.model.compile_class(symb_mdl)
+    symmodel = SymbolicAttasShortPeriod()
+    GeneratedAttasShortPeriod = symmodel.compile_class()
     model = GeneratedAttasShortPeriod()
     
     # Load experiment data
     t, u, y = load_data()
-
+    ufun = scipy.interpolate.interp1d(t, u, axis=0)
+    
     # Create OEM problem
-    problem = oem.Problem(model, t, y, u)
+    problem = oem.Problem(model, t, y, ufun)
     tc = problem.tc
     
     # Define problem bounds
     dec_bounds = np.repeat([[-np.inf], [np.inf]], problem.ndec, axis=-1)
     dec_L, dec_U = dec_bounds
-    problem.set_decision_item('q_meas_std', 0.00025, dec_L)
-    problem.set_decision_item('alpha_meas_std', 0.0001, dec_L)
+    dec_L[-2] = 0.0001 # alpha_meas_std
+    dec_L[-1] = 0.00025 # q_meas_std
     
-
     constr_bounds = np.zeros((2, problem.ncons))
     constr_L, constr_U = constr_bounds
-
+    
     # Define initial guess for decision variables
     dec0 = np.zeros(problem.ndec)
-    problem.set_decision('x', y, dec0)
-    problem.set_decision_item('q_meas_std', 0.0025, dec0)
-    problem.set_decision_item('alpha_meas_std', 0.001, dec0)
-
+    dec0[-2] = 0.001 # alpha_meas_std
+    dec0[-1] = 0.0025 # q_meas_std
+    
     # Define problem scaling
     dec_scale = np.ones(problem.ndec)
     constr_scale = np.ones(problem.ncons)
     obj_scale = -1.0
-    
+
     # Run ipopt
     with problem.ipopt(dec_bounds, constr_bounds) as nlp:
         nlp.add_str_option('linear_solver', 'ma57')

@@ -258,7 +258,7 @@ class Component:
         clsname = type(self).__name__
         offset = self.offset
         shape = self.shape
-        return f'<{clsname} {offset=} {shape=}>'
+        return f'<{clsname} offset={offset} shape={shape}>'
     
     @property
     def size(self):
@@ -298,27 +298,49 @@ class OptimizationFunction:
     def __init__(self, shape, fun, args=None):
         self.fun = fun
         """The underlying constraint object."""
-
+        
         self.args = utils.sig_arg_names(fun) if args is None else args
         """The underlying function argument names."""
         
         self.shape = shape
         """Function output shape"""
-    
+
+        if args is None:
+            renamed = {}
+        else:
+            renamed = dict(zip(utils.sig_arg_names(fun), args))
+        self.renamed = renamed
+        """The map of function argument names to problem variable names."""
+        
     def __call__(self, variables):
         args = (variables[arg] for arg in self.args)
         return self.fun(*args)
+    
+    def _rename_key(self, key):
+        renamed = self.renamed
+        if not renamed:
+            return key
+        if isinstance(key, str):
+            return renamed.get(key, key)
+        if isinstance(key, tuple):
+            return tuple(renamed.get(i, i) for i in key)
+    
+    def rename(self, deriv):
+        if self.renamed:
+            return {self._rename_key(k): v for (k,v) in deriv.items()}
+        else:
+            return deriv
     
     @property
     def hess_nnz(self):
         return self.fun.hess_nnz(self.shape)
     
     def hess_ind(self, var_shapes):
-        return self.fun.hess_ind(var_shapes, self.shape)
+        return self.rename(self.fun.hess_ind(var_shapes, self.shape))
     
     def hess_val(self, variables):
         args = (variables[arg] for arg in self.args)
-        return self.fun.hess_val(*args)
+        return self.rename(self.fun.hess_val(*args))
     
     @property
     def name(self):
@@ -341,11 +363,11 @@ class Constraint(Component, OptimizationFunction):
         return self.fun.jac_nnz(self.shape)
     
     def jac_ind(self, var_shapes):
-        return self.fun.jac_ind(var_shapes, self.shape)
+        return self.rename(self.fun.jac_ind(var_shapes, self.shape))
 
     def jac_val(self, variables):
         args = (variables[arg] for arg in self.args)
-        return self.fun.jac_val(*args)
+        return self.rename(self.fun.jac_val(*args))
 
 
 class Objective(OptimizationFunction):
@@ -353,4 +375,4 @@ class Objective(OptimizationFunction):
     
     def grad(self, variables):
         args = (variables[arg] for arg in self.args)
-        return self.fun.grad(*args)
+        return self.rename(self.fun.grad(*args))

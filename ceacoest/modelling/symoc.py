@@ -25,7 +25,7 @@ class Model(symcol.Model):
         # Ensure parameters and input are in the variable set
         variables.setdefault('p', [])
         variables.setdefault('u', [])
-
+        
         # Initialize base class
         decision = {'p', 'u', 'up', 'xe', *decision}
         super().__init__(variables, decision)
