@@ -22,7 +22,7 @@ for m in (optim, col, oem, genoptim, symoptim, symcol, symoem, symstats):
 class SymbolicAttasShortPeriod(symoem.Model):
     """Symbolic linear short period model."""
     
-    collocation_order = 2
+    collocation_order = 3
     
     def __init__(self):
         v = self.Variables(

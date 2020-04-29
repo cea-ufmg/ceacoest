@@ -304,7 +304,7 @@ class OptimizationFunction:
         
         self.shape = shape
         """Function output shape"""
-
+        
         if args is None:
             renamed = {}
         else:
@@ -331,12 +331,26 @@ class OptimizationFunction:
         else:
             return deriv
     
+    def rename_kwargs(self, kwargs):
+        renamed = self.renamed
+        if renamed:
+            renamed_kwargs = kwargs.copy()
+            for fun_key, prob_key in renamed.items():
+                try:
+                    renamed_kwargs[fun_key] = kwargs[prob_key]
+                except KeyError:
+                    pass
+            return renamed_kwargs
+        else:
+            return kwargs
+    
     @property
     def hess_nnz(self):
         return self.fun.hess_nnz(self.shape)
     
     def hess_ind(self, var_shapes):
-        return self.rename(self.fun.hess_ind(var_shapes, self.shape))
+        ren_var_shapes = self.rename_kwargs(var_shapes)
+        return self.rename(self.fun.hess_ind(ren_var_shapes, self.shape))
     
     def hess_val(self, variables):
         args = (variables[arg] for arg in self.args)
@@ -363,8 +377,9 @@ class Constraint(Component, OptimizationFunction):
         return self.fun.jac_nnz(self.shape)
     
     def jac_ind(self, var_shapes):
-        return self.rename(self.fun.jac_ind(var_shapes, self.shape))
-
+        ren_var_shapes = self.rename_kwargs(var_shapes)
+        return self.rename(self.fun.jac_ind(ren_var_shapes, self.shape))
+    
     def jac_val(self, variables):
         args = (variables[arg] for arg in self.args)
         return self.rename(self.fun.jac_val(*args))
