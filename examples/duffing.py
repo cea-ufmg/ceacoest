@@ -80,7 +80,7 @@ class SymbolicDiscretizedDuffing(symsde.ItoTaylorAS15DiscretizedModel):
     
     @property
     def generate_functions(self):
-        return ['dh_dx', 'df_dx', 'meas_pdf', *super().generate_functions]
+        return ['dh_dx', 'df_dx', *super().generate_functions]
 
 
 def sim(model, seed=1):

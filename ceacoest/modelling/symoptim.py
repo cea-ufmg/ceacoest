@@ -148,7 +148,7 @@ class Model(sym2num.model.Base):
         self.sparse_nnz[dname] = nzexpr.size
         
         # Create symbolic function
-        fargs = self.function_codegen_arguments(fname)
+        fargs = self.function_codegen_arguments(fname, include_self=True)
         valfun = sym2num.function.SymbolicSubsFunction(fargs, nzexpr)
         valfun_name = f'{dname}_val'
         setattr(self, valfun_name, valfun)
