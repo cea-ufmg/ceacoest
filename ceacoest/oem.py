@@ -50,7 +50,8 @@ class Problem(col.Problem):
 
         # Register problem variables
         self.add_decision('p', model.np)
-        self.remapped['xm'] = XMVariable(self.decision['x'], self.kmeas)
+        xm = XMVariable(self.decision['x'], self.kmeas)
+        self.add_dependent_variable('xm', xm)
         
         # Add objective function
         self.add_objective(model.L, self.nmeas, ['y', 'xm', 'um', 'p'])

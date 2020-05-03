@@ -18,12 +18,17 @@ class Problem(col.Problem):
         npoints = self.npoints
         npieces = self.npieces
         
+        # Register decision variables
         x = self.decision['x']
         u = self.add_decision('u', (npoints, model.nu))
         self.add_decision('p', model.np)
-        self.remapped['up'] = col.PieceRavelledVariable(u, npieces, ncol)
-        self.remapped['xe'] = XEVariable(x)
         
+        # Define and add dependent variables
+        up = col.PieceRavelledVariable(u, npieces, ncol)
+        self.add_dependent_variable('up', up)
+        self.add_dependent_variable('xe', XEVariable(x))
+        
+        # Register problem functions
         self.add_objective(model.IL, npieces)
         self.add_objective(model.M, ())
         self.add_constraint(model.g, (npoints, model.ng))

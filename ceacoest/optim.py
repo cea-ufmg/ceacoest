@@ -35,6 +35,12 @@ class Problem:
     
     def add_decision(self, name, shape):
         """Add a decision variable to this problem."""
+        if not isinstance(name, str):
+            raise TypeError(f"name must be string, got {type(name)}")
+        if name in self.decision:
+            raise ValueError(f"{name} already defined as decision variable")
+        if name in self.remapped:
+            raise ValueError(f"{name} already defined as dependent variable")
         if isinstance(shape, numbers.Integral):
             shape = shape,
         dec = Decision(shape, self.ndec)
@@ -47,6 +53,16 @@ class Problem:
         if isinstance(shape, numbers.Integral):
             shape = shape,
         self.objectives.append(Objective(shape, fun, args))
+    
+    def add_dependent_variable(self, name, spec):
+        if not isinstance(name, str):
+            raise TypeError(f"name must be string, got {type(name)}")
+        if name in self.decision:
+            raise ValueError(f"{name} already defined as decision variable")
+        if name in self.remapped:
+            raise ValueError(f"{name} already defined as auxiliary variable")
+        self.remapped[name] = spec
+        return spec
     
     def add_constraint(self, fun, shape, args=None):
         """Add a constraint function to this problem."""

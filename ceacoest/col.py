@@ -38,9 +38,12 @@ class Problem(optim.Problem):
         self.npoints = npoints
         """Total number of collocation points."""
         
+        # Register problem variables
         x = self.add_decision('x', (npoints, model.nx))
-        self.remapped['xp'] = PieceRavelledVariable(x, npieces, col.n)
+        xp = PieceRavelledVariable(x, npieces, col.n)
+        self.add_dependent_variable('xp', xp)
         
+        # Register problem functions
         self.add_constraint(model.e, (npieces, col.ninterv, model.nx))
     
     def variables(self, dvec):
