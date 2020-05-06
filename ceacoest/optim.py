@@ -90,6 +90,16 @@ class Problem:
             raise ValueError(f"no such variable {varname}")
         return spec
 
+    def unpack_constraints(self, cvec):
+        cvec = np.asarray(cvec)
+        assert cvec.ndim == 1 and cvec.size >= self.ncons
+        ret = {}
+        for cons in self.constraints:
+            name = cons.name
+            if name:
+                ret[name] = cons.unpack_from(cvec)
+        return ret
+    
     def _sparse_fun_val(self, dvec, nnz, components, val_fun_name):
         variables = self.variables(dvec)
         val = np.empty(nnz)
