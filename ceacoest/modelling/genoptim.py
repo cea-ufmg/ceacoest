@@ -73,7 +73,7 @@ class OptimizationFunction:
         assert shape[-len(base_shape):] == base_shape
         return shape[:-len(base_shape)]
 
-    def _sparse_deriv_nnz(self, deriv, out_shape=()):
+    def _sparse_deriv_nnz(self, deriv, dec_shapes, out_shape):
         nnz = 0
         ext_sz = shape_size(self._shape_ext(out_shape))
         for wrt, dname in deriv.items():
@@ -81,7 +81,7 @@ class OptimizationFunction:
             nnz += base_nnz * ext_sz
         return nnz
     
-    def _sparse_deriv_ind(self, deriv, dec_shapes={}, out_shape=()):
+    def _sparse_deriv_ind(self, deriv, dec_shapes, out_shape):
         ret = collections.OrderedDict()
         for wrt, dname in deriv.items():
             ind = []
@@ -111,10 +111,10 @@ class OptimizationFunction:
             ret[wrt] = getattr(self.model, f'{dname}_val')(*args, **kwargs)
         return ret
     
-    def hess_nnz(self, out_shape=()):
-        return self._sparse_deriv_nnz(self._hess, out_shape)
+    def hess_nnz(self, dec_shapes, out_shape):
+        return self._sparse_deriv_nnz(self._hess, dec_shapes, out_shape)
     
-    def hess_ind(self, dec_shapes={}, out_shape=()):
+    def hess_ind(self, dec_shapes, out_shape):
         return self._sparse_deriv_ind(self._hess, dec_shapes, out_shape)
 
     def hess_val(self, *args, **kwargs):
@@ -188,10 +188,10 @@ class ObjectiveFunctionMeta(OptimizationFunctionMeta):
 
 
 class ConstraintFunction(OptimizationFunction):
-    def jac_nnz(self, out_shape=()):
-        return self._sparse_deriv_nnz(self._jac, out_shape)
+    def jac_nnz(self, dec_shapes, out_shape):
+        return self._sparse_deriv_nnz(self._jac, dec_shapes, out_shape)
 
-    def jac_ind(self, dec_shapes={}, out_shape=()):
+    def jac_ind(self, dec_shapes, out_shape):
         return self._sparse_deriv_ind(self._jac, dec_shapes, out_shape)
     
     def jac_val(self, *args, **kwargs):

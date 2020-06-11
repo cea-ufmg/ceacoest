@@ -137,7 +137,8 @@ class Problem:
 
     @property
     def obj_hess_nnz(self):
-        return sum(obj.hess_nnz for obj in self.objectives)
+        shapes = self.variable_shapes
+        return sum(obj.hess_nnz(shapes) for obj in self.objectives)
     
     @property
     def obj_hess_ind(self):
@@ -173,7 +174,8 @@ class Problem:
     
     @property
     def constr_jac_nnz(self):
-        return sum(c.jac_nnz for c in self.constraints)
+        shapes = self.variable_shapes
+        return sum(c.jac_nnz(shapes) for c in self.constraints)
     
     @property
     def constr_jac_ind(self):
@@ -201,7 +203,8 @@ class Problem:
     
     @property
     def constr_hess_nnz(self):
-        return sum(c.hess_nnz for c in self.constraints)
+        shapes = self.variable_shapes
+        return sum(c.hess_nnz(shapes) for c in self.constraints)
     
     @property
     def constr_hess_ind(self):
@@ -370,9 +373,9 @@ class OptimizationFunction:
         else:
             return kwargs
     
-    @property
-    def hess_nnz(self):
-        return self.fun.hess_nnz(self.shape)
+    def hess_nnz(self, var_shapes):
+        ren_var_shapes = self.rename_kwargs(var_shapes)
+        return self.fun.hess_nnz(ren_var_shapes, self.shape)
     
     def hess_ind(self, var_shapes):
         ren_var_shapes = self.rename_kwargs(var_shapes)
@@ -398,9 +401,9 @@ class Constraint(Component, OptimizationFunction):
         Component.__init__(self, shape, offset)
         OptimizationFunction.__init__(self, shape, fun, args)
 
-    @property
-    def jac_nnz(self):
-        return self.fun.jac_nnz(self.shape)
+    def jac_nnz(self, var_shapes):
+        ren_var_shapes = self.rename_kwargs(var_shapes)
+        return self.fun.jac_nnz(ren_var_shapes, self.shape)
     
     def jac_ind(self, var_shapes):
         ren_var_shapes = self.rename_kwargs(var_shapes)
