@@ -1,8 +1,6 @@
 """Output Error Method estimator."""
 
 
-import itertools
-
 import numpy as np
 
 from . import col, optim

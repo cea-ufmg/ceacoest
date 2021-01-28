@@ -39,12 +39,16 @@ class Problem(optim.Problem):
         """Total number of collocation points."""
         
         # Register problem variables
-        x = self.add_decision('x', (npoints, model.nx))
-        xp = PieceRavelledVariable(x, npieces, col.n)
-        self.add_dependent_variable('xp', xp)
+        self._init_collocation_variables()
         
         # Register problem functions
         self.add_constraint(model.e, (npieces, col.ninterv, model.nx))
+    
+    def _init_collocation_variables(self):
+        """Register problem collocation variables."""
+        x = self.add_decision('x', (self.npoints, self.model.nx))
+        xp = PieceRavelledVariable(x, self.npieces, self.collocation.n)
+        self.add_dependent_variable('xp', xp)
     
     def variables(self, dvec):
         """Get all variables needed to evaluate problem functions."""

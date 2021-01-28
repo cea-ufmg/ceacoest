@@ -17,7 +17,7 @@ from ceacoest.modelling import symsde, symstats
 
 
 # Reload modules for testing
-for m in (symstats, symsde, base, extended, unscented, kalman):
+for m in ():
     importlib.reload(m)
 
 

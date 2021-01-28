@@ -4,6 +4,7 @@
 import collections.abc
 
 import numpy as np
+import scipy
 from numpy import linalg, polynomial
 
 
@@ -78,6 +79,9 @@ class LGLCollocation:
 
         self.JP = np.linalg.pinv(self.J)
         """Moore--Penrose pseudoinverse of the J matrix."""
+
+        self.JT_range = scipy.linalg.orth(self.J.T)
+        """Orthogonal basis for the range of the J.T matrix."""
     
     def grid(self, t_piece):
         """Construct a collocation grid (fine) from a piece grid (coarse)."""

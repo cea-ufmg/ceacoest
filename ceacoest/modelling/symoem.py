@@ -12,9 +12,9 @@ from . import symcol
 
 
 class Model(symcol.Model):
-    def __init__(self, variables):
+    def __init__(self, variables, decision=set()):
         variables.setdefault('u', [])
-        decision = {'p'}
+        decision = decision | {'p'}
         super().__init__(variables, decision)
         
         # Add objectives and constraints
