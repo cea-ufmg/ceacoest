@@ -9,7 +9,7 @@ import numpy as np
 import sympy
 import sym2num.model
 from numpy import ma
-from scipy import stats
+from scipy import interpolate, stats, signal
 
 from ceacoest import jme
 from ceacoest.modelling import symjme, symsde, symstats
@@ -35,10 +35,10 @@ class SymbolicDuffingSim(sym2num.model.Base):
         v['self']['beta'] = 'beta'
         v['self']['delta'] = 'delta'
         v['self']['g2'] = 'g2'
-        v['self']['X_meas_std'] = 'X_meas_std'
+        v['self']['x1_meas_std'] = 'x1_meas_std'
         
         v['x'] = ['x', 'v']
-        v['y'] = ['X_meas']
+        v['y'] = ['x1_meas']
         v['t'] = 't'
         
         self.set_default_members()
@@ -64,7 +64,7 @@ class SymbolicDuffingSim(sym2num.model.Base):
     @sym2num.model.collect_symbols
     def R(self, *, s):
         """Measurement covariance."""
-        return [[s.X_meas_std ** 2]]
+        return [[s.x1_meas_std ** 2]]
 
 
 class SymbolicDuffingJME(symjme.Model):
@@ -128,13 +128,21 @@ def sim(sim_model, seed=1):
     return tsim, xsim, ysim, x0, Px0
 
 
+def cdiff(x, T=1):
+    xd = np.empty_like(x)
+    xd[1:-1] = 0.5 / T * (x[2:] - x[:-2])
+    xd[0] = xd[1]
+    xd[-1] = xd[-2]
+    return xd
+
+
 if __name__ == '__main__':
     sym_disc_mdl = SymbolicDiscretizedDuffing()
     sim_model = sym_disc_mdl.compile_class()()
     
     params = dict(
         alpha=1, beta=-1, delta=0.2, gamma=0.3, omega=1,
-        g2=0.1, X_meas_std=0.1,
+        g2=0.1, x1_meas_std=0.1,
         dt_sim=0.005,
     )
     for k,v in params.items():
@@ -148,6 +156,12 @@ if __name__ == '__main__':
     mask[::3] = False
     y[mask] = ma.masked
 
+    # Make guess
+    tf = t[~y.mask.ravel()]
+    lpf = signal.butter(3, 0.3, output='sos')
+    yf0 = signal.sosfiltfilt(lpf, y.compressed())
+    yf1 = cdiff(yf0, np.diff(tf[:2]))
+    
     sym_jme_mdl = SymbolicDuffingJME()
     jme_model = sym_jme_mdl.compile_class()()
     jme_model.G = np.array([[0], [params['g2']]])
@@ -155,4 +169,33 @@ if __name__ == '__main__':
     ufun = lambda t: np.sin(np.asarray(t)[..., None]*params['omega'])
     problem = jme.Problem(jme_model, t, y, ufun)
     tc = problem.tc
+    
+    dec0 = np.zeros(problem.ndec)
+    var0 = problem.variables(dec0)
+    var0['x'][:, 0] = interpolate.interp1d(tf, yf0)(tc)
+    var0['x'][:, 1] = interpolate.interp1d(tf, yf1)(tc)
+    var0['p'][-1] = 1 # x1_meas_std
+    
+    dec_bounds = np.repeat([[-np.inf], [np.inf]], problem.ndec, axis=-1)
+    dec_L, dec_U = dec_bounds
+    var_L = problem.variables(dec_L)
+    var_U = problem.variables(dec_U)
+    var_L['p'][-1] = 1e-5 # x1_meas_std
 
+    constr_bounds = np.zeros((2, problem.ncons))
+
+    # Define problem scaling
+    dec_scale = np.ones(problem.ndec)
+    constr_scale = np.ones(problem.ncons)
+    obj_scale = -1.0
+    
+    with problem.ipopt(dec_bounds, constr_bounds) as nlp:
+        nlp.add_str_option('linear_solver', 'ma57')
+        nlp.add_num_option('ma57_pre_alloc', 10.0)
+        nlp.add_num_option('tol', 1e-6)
+        nlp.add_int_option('max_iter', 1000)
+        nlp.set_scaling(obj_scale, dec_scale, constr_scale)
+        decopt, info = nlp.solve(dec0)
+
+    opt = problem.variables(decopt)
+    xopt = opt['x']

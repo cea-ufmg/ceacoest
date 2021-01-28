@@ -20,6 +20,9 @@ class Problem(oem.Problem):
 
         # Coordinates over the basis for the process noise intensity w
         self.add_decision('wc', (self.npieces, col.ninterv, model.nw))
+
+        # Add fictitious log-density of tubes to objective function
+        self.add_objective(model.tube_L, self.npieces)
     
     def variables(self, dvec):
         """Get all variables needed to evaluate problem functions."""
