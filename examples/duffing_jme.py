@@ -103,7 +103,7 @@ def sim(sim_model, seed=1):
     np.random.seed(seed)
     
     # Problem data
-    tf = 30
+    tf = 900
     x0 = np.array([-1, 1])
     Px0 = np.diag([0.1, 0.1]) ** 2
     
@@ -170,20 +170,24 @@ if __name__ == '__main__':
     problem = jme.Problem(jme_model, t, y, ufun)
     tc = problem.tc
     
+    # Define initial guess
     dec0 = np.zeros(problem.ndec)
     var0 = problem.variables(dec0)
     var0['x'][:, 0] = interpolate.interp1d(tf, yf0)(tc)
     var0['x'][:, 1] = interpolate.interp1d(tf, yf1)(tc)
-    var0['p'][-1] = 1 # x1_meas_std
+    var0['p'][-1] = np.std(yf0 - y.compressed())  # x1_meas_std
     
+    # Define bounds on variables
     dec_bounds = np.repeat([[-np.inf], [np.inf]], problem.ndec, axis=-1)
     dec_L, dec_U = dec_bounds
     var_L = problem.variables(dec_L)
     var_U = problem.variables(dec_U)
     var_L['p'][-1] = 1e-5 # x1_meas_std
 
+    # Define bounds on constraints
     constr_bounds = np.zeros((2, problem.ncons))
-
+    constr_L, constr_U = constr_bounds
+    
     # Define problem scaling
     dec_scale = np.ones(problem.ndec)
     constr_scale = np.ones(problem.ncons)
@@ -191,7 +195,7 @@ if __name__ == '__main__':
     
     with problem.ipopt(dec_bounds, constr_bounds) as nlp:
         nlp.add_str_option('linear_solver', 'ma57')
-        nlp.add_num_option('ma57_pre_alloc', 10.0)
+        nlp.add_num_option('ma57_pre_alloc', 100.0)
         nlp.add_num_option('tol', 1e-6)
         nlp.add_int_option('max_iter', 1000)
         nlp.set_scaling(obj_scale, dec_scale, constr_scale)
@@ -199,3 +203,4 @@ if __name__ == '__main__':
 
     opt = problem.variables(decopt)
     xopt = opt['x']
+    popt = opt['p']
