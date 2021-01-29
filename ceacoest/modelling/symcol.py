@@ -52,6 +52,7 @@ class Model(symoptim.Model):
     
     @property
     def collocation_order(self):
+        """Order of collocation method."""
         return getattr(super(), 'collocation_order', 2)
     
     @utils.cached_property

@@ -13,10 +13,13 @@ from . import symoem
 
 class Model(symoem.Model):
 
-    def __init__(self, variables, decision=set(), use_penalty=False):
-        self.use_penalty = use_penalty
-        """Whether to include collocation defect penalties."""
-        
+    use_om = True
+    """Whether to use the Onsager--Machlup drift divergence."""
+    
+    use_penalty = False
+    """Whether to include collocation defect penalties."""
+
+    def __init__(self, variables, decision=set()):
         nw = variables['G'].shape[1]
         ninterv = self.collocation.ninterv
         wc = [[f'wc{j}_interv_{i}' for j in range(nw)] for i in range(ninterv)]
@@ -24,10 +27,11 @@ class Model(symoem.Model):
         decision = decision | {'wc'}
         super().__init__(variables, decision)
         
-        self.add_derivative('f', 'x', 'df_dx')
+        if self.use_om:
+            self.add_derivative('f', 'x', 'df_dx')
         self.add_objective('tube_L')
-
-        if use_penalty:
+        
+        if self.use_penalty:
             nx = len(self.variables['x'])
             self.variables['penweight'] = [f'penweight{i}' for i in range(nx)]
             self.add_objective('penalty')
@@ -36,6 +40,7 @@ class Model(symoem.Model):
     def generate_assignments(self):
         gen = {'nw': self.variables['G'].shape[1],
                'use_penalty': self.use_penalty,
+               'use_om': self.use_om,
                **getattr(super(), 'generate_assignments', {})}
         return gen
 
@@ -60,11 +65,14 @@ class Model(symoem.Model):
         JT_range = self.collocation.JT_range
         wp = JT_range @ wc
 
-        ncol = self.collocation.n
-        nw = np.shape(wc)[-1]
-        df_dx = [self.df_dx(xp[i,:], up[i,:], p) for i in range(ncol)]
-        drift_div_p = np.array([np.trace(A[-nw:, -nw:]) for A in df_dx])
-
+        if self.use_om:
+            ncol = self.collocation.n
+            nw = np.shape(wc)[-1]
+            df_dx = [self.df_dx(xp[i,:], up[i,:], p) for i in range(ncol)]
+            drift_div_p = np.array([np.trace(A[-nw:, -nw:]) for A in df_dx])
+        else:
+            drift_div_p = 0
+        
         K = self.collocation.K
         tube_L = -0.5 * (drift_div_p + np.sum(wp ** 2, 1)) @ K * piece_len
         return tube_L
