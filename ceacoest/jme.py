@@ -11,6 +11,13 @@ class Problem(oem.Problem):
     
     def __init__(self, model, t, y, u):
         super().__init__(model, t, y, u)
+        
+        # Add fictitious log-density of tubes to objective function
+        self.add_objective(model.tube_L, self.npieces)
+
+        # Add collocation defect penalty
+        if getattr(model, 'use_penalty', False):
+            self.add_objective(model.penalty, self.npieces)
     
     def _init_collocation_variables(self):
         """Register problem collocation variables."""
@@ -20,10 +27,8 @@ class Problem(oem.Problem):
 
         # Coordinates over the basis for the process noise intensity w
         self.add_decision('wc', (self.npieces, col.ninterv, model.nw))
-
-        # Add fictitious log-density of tubes to objective function
-        self.add_objective(model.tube_L, self.npieces)
     
     def variables(self, dvec):
         """Get all variables needed to evaluate problem functions."""
-        return {'G': self.model.G, **super().variables(dvec)}
+        return {'penweight': getattr(self.model, 'penweight', None),
+                'G': self.model.G, **super().variables(dvec)}
