@@ -5,6 +5,7 @@ import collections.abc
 
 import numpy as np
 import scipy
+import scipy.linalg
 from numpy import linalg, polynomial
 
 
